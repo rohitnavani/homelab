@@ -6,4 +6,4 @@ services:
     ports:
       - "8081:80"
     volumes:
-      - ${COMPOSE_BASE_PATH}/resume-site/html:/usr/share/nginx/html:ro
+      - ${COMPOSE_BASE_PATH}/resume-site/public:/usr/share/nginx/html:ro
