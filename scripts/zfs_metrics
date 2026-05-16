@@ -1,0 +1,76 @@
+#!/bin/bash
+
+METRICS_DIR="/var/lib/node_exporter/textfile_collector"
+TEMP_FILE="$METRICS_DIR/zfs.prom.$$"
+OUTPUT_FILE="$METRICS_DIR/zfs.prom"
+
+mkdir -p "$METRICS_DIR" || exit 1
+
+# ZFS Pool Allocated Space (Physical Used)
+echo "# HELP node_zfs_zpool_allocated_bytes ZFS pool allocated space in bytes (physical disk usage)." > "$TEMP_FILE"
+echo "# TYPE node_zfs_zpool_allocated_bytes gauge" >> "$TEMP_FILE"
+zpool list -p -o name,alloc | tail -n +2 | while read pool alloc; do
+  echo "node_zfs_zpool_allocated_bytes{zpool=\"$pool\"} $alloc" >> "$TEMP_FILE"
+done
+
+# ZFS Pool Free Space
+echo "# HELP node_zfs_zpool_free_bytes ZFS pool free space in bytes." >> "$TEMP_FILE"
+echo "# TYPE node_zfs_zpool_free_bytes gauge" >> "$TEMP_FILE"
+zpool list -p -o name,free | tail -n +2 | while read pool free; do
+  echo "node_zfs_zpool_free_bytes{zpool=\"$pool\"} $free" >> "$TEMP_FILE"
+done
+
+# ZFS Dataset Used Space (Logical Data Usage) <-- ADD THIS BLOCK
+echo "# HELP node_zfs_zpool_dataset_used_bytes ZFS dataset used space in bytes (logical data usage)." >> "$TEMP_FILE"
+echo "# TYPE node_zfs_zpool_dataset_used_bytes gauge" >> "$TEMP_FILE"
+zfs list -p -o name,used | tail -n +2 | while read dataset used; do
+  pool=$(echo "$dataset" | cut -d'/' -f1)
+  echo "node_zfs_zpool_dataset_used_bytes{dataset=\"$dataset\",zpool=\"$pool\"} $used" >> "$TEMP_FILE"
+done
+
+# ZFS Dataset Available Space <-- ADD THIS BLOCK
+echo "# HELP node_zfs_zpool_dataset_available_bytes ZFS dataset available space in bytes." >> "$TEMP_FILE"
+echo "# TYPE node_zfs_zpool_dataset_available_bytes gauge" >> "$TEMP_FILE"
+zfs list -p -o name,avail | tail -n +2 | while read dataset avail; do
+  pool=$(echo "$dataset" | cut -d'/' -f1)
+  echo "node_zfs_zpool_dataset_available_bytes{dataset=\"$dataset\",zpool=\"$pool\"} $avail" >> "$TEMP_FILE"
+done
+
+# ZFS Pool Health State (0 = OFFLINE/FAULTED, 0.5 = DEGRADED, 1 = ONLINE)
+echo "# HELP node_zfs_zpool_health_status ZFS pool health status (0=OFFLINE/FAULTED, 0.5=DEGRADED, 1=ONLINE)." >> "$TEMP_FILE"
+echo "# TYPE node_zfs_zpool_health_status gauge" >> "$TEMP_FILE"
+zpool list -o name,health -H | while read pool health; do
+  status_value=0
+  if [ "$health" = "ONLINE" ]; then
+    status_value=1
+  elif [ "$health" = "DEGRADED" ]; then
+    status_value=0.5
+  fi
+  echo "node_zfs_zpool_health_status{zpool=\"$pool\",health=\"$health\"} $status_value" >> "$TEMP_FILE"
+done
+
+# ZFS Pool Combined Errors (read + write + checksum)
+echo "# HELP node_zfs_zpool_errors_total ZFS pool combined error count (read+write+checksum)." >> "$TEMP_FILE"
+echo "# TYPE node_zfs_zpool_errors_total counter" >> "$TEMP_FILE"
+zpool status -v | tail -n +2 | grep 'homePool' | awk '{print $3, $4, $5}' | while read read_errors write_errors checksum_errors; do
+    total_errors=$((read_errors + write_errors + checksum_errors))
+    echo "node_zfs_zpool_errors_total{zpool=\"homePool\"} $total_errors" >> "$TEMP_FILE"
+done
+
+# NEW: ZFS Pool I/O Stats (Read/Write Operations Total)
+# Using 'zpool iostat -p' and parsing the columns
+echo "# HELP node_zfs_zpool_read_ops_total ZFS pool total read operations." >> "$TEMP_FILE"
+echo "# TYPE node_zfs_zpool_read_ops_total counter" >> "$TEMP_FILE"
+echo "# HELP node_zfs_zpool_write_ops_total ZFS pool total write operations." >> "$TEMP_FILE"
+echo "# TYPE node_zfs_zpool_write_ops_total counter" >> "$TEMP_FILE"
+
+zpool iostat -p | grep 'homePool' | awk '{print $6, $7}' | while read reads writes; do
+  echo "node_zfs_zpool_read_ops_total{zpool=\"homePool\"} $reads" >> "$TEMP_FILE"
+  echo "node_zfs_zpool_write_ops_total{zpool=\"homePool\"} $writes" >> "$TEMP_FILE"
+done
+
+mv "$TEMP_FILE" "$OUTPUT_FILE"
+rm -f "$METRICS_DIR/zfs.prom.$$" # Clean up original temp file if any
+find "$METRICS_DIR" -maxdepth 1 -name "zfs.prom.*" -type f -mmin +5 -delete
+
+exit 0

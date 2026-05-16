@@ -1,0 +1,299 @@
+#!/bin/bash
+
+# Define color codes for output
+G="\033[0;32m" # Green
+R="\033[0;31m" # Red
+Y="\033[1;33m" # Yellow
+N="\033[0m"    # No Color
+
+echo
+echo -e "${Y}Checking SMART Health Status...${N}"
+echo ""
+
+# Initialize alert variable
+_alert_summary=""
+# Define the directory where logs are stored
+LOG_DIR="/pool/drive_logs"
+# Calculate yesterday's date for the previous log file
+_yesterday=$(date -d "yesterday" +%Y-%m-%d)
+_previous_log_file="${LOG_DIR}/drive_check_${_yesterday}.log"
+
+# Function to get previous attribute value from the log file using SERIAL NUMBER
+# Usage: get_prev_attr_value "SERIAL_NUMBER" "ATTRIBUTE_IDENTIFIER" "LOG_FILE"
+# ATTRIBUTE_IDENTIFIER can be a SATA ID (e.g., "5") or NVMe attribute name (e.g., "Available Spare")
+get_prev_attr_value() {
+    local drive_serial="$1"
+    local attr_id_or_name="$2"
+    local log_file="$3"
+    local prev_value=""
+
+    if [[ ! -f "$log_file" ]]; then
+        echo "0" # Return 0 if the previous log file not found
+        return
+    fi
+
+    # Determine if it's a SATA ID or NVMe attribute name
+    if [[ "$attr_id_or_name" =~ ^[0-9]+$ ]]; then # It's a numeric ID (SATA)
+        # Use grep to find the section for the specific serial, then pipe to awk for the attribute
+        # The awk script is now on a single line for robustness
+        prev_value=$(grep -A14 "Serial: $drive_serial" "$log_file" | \
+                     awk -v id="$attr_id_or_name" '
+                     /ID# ATTRIBUTE_NAME/{found_header=1;next}
+                     found_header && $1==id{
+                         # Use gensub to clean the raw value field robustly by removing non-numeric characters
+                         val = $NF;
+                         gsub(/[^0-9]/, "", val);
+                         print val; exit
+                     }')
+    else # It's an NVMe attribute name
+        # NVMe attributes typically parsed by name
+        prev_value=$(awk -v s="$drive_serial" -v name="$attr_id_or_name" '
+            $0 ~ "^Model: " { in_current_drive_section = 0; found_serial = 0 }
+            $0 ~ "Serial: " s { found_serial = 1 }
+            found_serial && $0 ~ name {
+                gsub(/[[:space:]]+%,/, "", $NF);
+                print $NF; exit
+            }
+        ' "$log_file")
+    fi
+    echo "${prev_value:-0}" # Ensure a numeric value is always returned
+}
+
+# Main loop to check each storage drive
+for d in /dev/sd? /dev/nvme?n?; do
+    # Skip if device path does not exist
+    [ ! -e "$d" ] && continue
+
+    # Get full SMART output for the drive, suppress errors from smartctl
+    _full_smart_output=$(sudo smartctl -a "$d" 2>/dev/null)
+
+    # Extract drive identification details
+    model=$(echo "$_full_smart_output" | awk -F: '/Model( Number)?/{gsub(/^[ \t]+/, "", $2);print $2}')
+    serial=$(echo "$_full_smart_output" | awk -F: '/Serial( Number)?/{gsub(/^[ \t]+/, "", $2);print $2}')
+    capacity=$(echo "$_full_smart_output" | awk -F: '/(User Capacity|Namespace 1 Size\/Capacity)/{gsub(/^[ \t]+/, "", $2);print $2}' | head -n1 | grep -oP '\[\K[^\]]+')
+
+    # Skip drive if serial is empty, as it's crucial for identification
+    if [[ -z "$serial" ]]; then
+        echo -e "${R}WARNING: Could not retrieve serial number for $d. Skipping this drive.${N}"
+        continue
+    fi
+
+    # Display drive information
+    echo -e "${Y}$d:${N}"
+    echo -e "${Y}Model: $model, Serial: $serial, Capacity: $capacity${N}"
+
+    # Check overall SMART health status
+    status=$(echo "$_full_smart_output" | awk '/SMART overall-health|SMART Health Status/{print $NF}')
+    [[ -z "$status" ]] && status="TIMEOUT" # Default to TIMEOUT if status not found
+
+    if [[ "$status" == "PASSED" || "$status" == "OK" ]]; then
+        echo -e "${G}SMART overall-health self-assessment test result: PASSED${N}"
+    elif [[ "$status" == "FAILED" ]]; then
+        echo -e "${R}SMART overall-health self-assessment test result: FAILED${N}"
+        _alert_summary+="DRIVE (Serial: $serial): SMART overall-health FAILED.\n"
+    else
+        echo -e "${R}Timed out retrieving SMART overall-health self-assessment test result${N}"
+        _alert_summary+="DRIVE (Serial: $serial): SMART overall-health TIMEOUT.\n"
+    fi
+
+    # Check SMART error log
+    if grep -qi "SMART Error Log not supported" <<< "$_full_smart_output"; then
+        echo -e "${Y}SMART Error Log not supported${N}"
+    elif grep -Eq "No Errors Logged|ATA Error Count: 0" <<< "$_full_smart_output"; then
+        echo -e "${G}No SMART errors found${N}"
+    elif echo "$_full_smart_output" | grep -q "Error counter log:"; then
+        # Sum errors from read/write/verify in error log
+        if (( $(echo "$_full_smart_output" | awk '/^(read|write|verify):/{sum+=$NF}END{print sum}') -eq 0 )); then
+            echo -e "${G}No SMART errors found${N}"
+        else
+            echo -e "${R}SMART errors detected${N}"
+            _alert_summary+="DRIVE (Serial: $serial): SMART errors detected in Error Log.\n"
+        fi
+    elif grep -Eq "ATA Error Count: [1-9]" <<< "$_full_smart_output" || grep -qE "^Error -?[0-9]+ occurred" <<< "$_full_smart_output"; then
+        echo -e "${R}SMART errors detected${N}"
+        _alert_summary+="DRIVE (Serial: $serial): SMART errors detected via ATA Error Count/Occurred.\n"
+    else
+        echo -e "${Y}SMART error log format unknown/unparsed${N}"
+    fi
+
+    # Check SMART self-test log (SATA vs NVMe specific)
+    if [[ "$d" =~ ^/dev/sd ]]; then # SATA drives
+        # Extract only the line for the most recent self-test (Test # 1)
+        _latest_test_line=$(echo "$_full_smart_output" | awk '
+            /SMART Self-test log structure revision number/ { found_log=1; next }
+            found_log && /Num\s+Test_Description/ { next }
+            found_log && /^# 1 / { print; exit }
+            found_log && /^\s*$/ { exit }
+        ')
+
+        if grep -qi "SMART self-test log not supported" <<< "$_full_smart_output"; then
+            echo -e "${Y}SMART self-test log not supported${N}"
+        elif grep -qi "No self-tests have been logged" <<< "$_full_smart_output"; then
+            echo -e "${Y}No SMART self-tests logged${N}"
+        elif [[ -z "$_latest_test_line" ]]; then
+            echo -e "${R}Could not parse most recent SMART selftest result (log exists but no #1 entry?)${N}"
+            _alert_summary+="DRIVE (Serial: $serial): Could not parse most recent SMART selftest result.\n"
+        elif grep -qi "Completed:.*fail" <<< "$_latest_test_line"; then
+            echo -e "${R}Most recent SMART self-test failed: ${_latest_test_line}${N}"
+            _alert_summary+="DRIVE (Serial: $serial): Most recent SMART self-test FAILED.\n${_latest_test_line}\n"
+        elif grep -qi "Interrupted" <<< "$_latest_test_line"; then
+            echo -e "${R}Most recent SMART self-test was Interrupted: ${_latest_test_line}${N}"
+            _alert_summary+="DRIVE (Serial: $serial): Most recent SMART self-test was INTERRUPTED.\n${_latest_test_line}\n"
+        elif grep -qi "Completed" <<< "$_latest_test_line"; then
+            echo -e "${G}Most recent SMART self-test passed${N}"
+        else
+            echo -e "${R}Most recent SMART self-test result unknown/unparsed.${N}"
+            _alert_summary+="DRIVE (Serial: $serial): Most recent SMART self-test result UNKNOWN.\n"
+        fi
+    elif [[ "$d" =~ ^/dev/nvme ]]; then # NVMe drives
+        echo -e "${Y}SMART self-test log not supported${N}"
+    fi
+
+    # --- Section for critical attribute alerting with persistence from previous log ---
+    echo -e "${Y}Checking critical attributes...${N}"
+
+    # This 'if' block determines if it's a SATA or NVMe drive for critical attribute parsing
+    if [[ "$d" =~ ^/dev/sd ]]; then # SATA Attributes
+        # Critical SATA attributes and their required percentage increase threshold for alert
+        # Format: [ID]="Attribute_Name:Threshold_percent"
+        # A 0% threshold means any increase from previous value will trigger an alert.
+        # A 25% threshold means it needs to grow by more than 25% to trigger an alert.
+        declare -A sata_monitored_attributes=(
+            [1]="Raw_Read_Error_Rate:25"
+            [5]="Reallocated_Sector_Ct:25"
+            [7]="Seek_Error_Rate:25"
+            [196]="Reallocated_Event_Count:25"
+            [197]="Current_Pending_Sector:25"
+            [198]="Offline_Uncorrectable:0"      # Any increase from previous value alerts
+            [199]="UDMA_CRC_Error_Count:0"       # Any increase from previous value alerts
+        )
+
+        # Process all monitored SATA attributes
+        for id in "${!sata_monitored_attributes[@]}"; do
+            attr_info="${sata_monitored_attributes[$id]}"
+            attr_name=$(echo "$attr_info" | cut -d':' -f1)
+            growth_threshold=$(echo "$attr_info" | cut -d':' -f2) # This will be 0 or 25
+
+            # Extract current raw value for the attribute, cleaning non-numeric characters
+            current_raw_value=$(echo "$_full_smart_output" | awk -v id="$id" '
+                /ID# ATTRIBUTE_NAME/{found_header=1;next}
+                found_header && $1==id{
+                    val = $NF;
+                    gsub(/[^0-9]/, "", val); # Remove non-numeric characters
+                    print val; exit
+                }')
+            current_raw_value=${current_raw_value:-0} # Default to 0 if not found
+
+            # Get previous raw value using the function
+            prev_raw_value=$(get_prev_attr_value "$serial" "$id" "$_previous_log_file")
+            prev_raw_value=${prev_raw_value:-0} # Ensure it's numeric, default to 0
+
+            # Only alert if current value is GREATER than previous value
+            if [[ "$current_raw_value" -gt "$prev_raw_value" ]]; then
+                if [[ "$prev_raw_value" -eq 0 ]]; then
+                    # Alert if value changed from 0 to non-zero (first time seeing issue)
+                    echo -e "${R}ALERT: DRIVE (Serial: $serial): Attribute ${attr_name} (ID $id) changed from 0 to $current_raw_value.${N}"
+                    _alert_summary+="DRIVE (Serial: $serial): ALERT: Attribute ${attr_name} (ID $id) changed from 0 to $current_raw_value.\n"
+                else
+                    # Calculate percentage increase for existing non-zero values
+                    # Avoid division by zero if prev_raw_value somehow becomes zero here (shouldn't with the -eq 0 check above)
+                    if (( $(echo "$prev_raw_value > 0" | bc -l) )); then
+                        percentage_increase=$(echo "scale=2; (($current_raw_value - $prev_raw_value) / $prev_raw_value) * 100" | bc -l)
+                        # Alert if growth exceeds the attribute's specific threshold
+                        if (( $(echo "$percentage_increase > $growth_threshold" | bc -l) )); then
+                            echo -e "${R}ALERT: DRIVE (Serial: $serial): Attribute ${attr_name} (ID $id) increased by ${percentage_increase}% (from ${prev_raw_value} to ${current_raw_value}).${N}"
+                            _alert_summary+="DRIVE (Serial: $serial): ALERT: Attribute ${attr_name} (ID $id) increased by ${percentage_increase}% (from ${prev_raw_value} to ${current_raw_value}).\n"
+                        fi
+                    fi
+                fi
+            fi
+        done
+
+        echo -e "${N}"
+        # Displaying only the specified critical SATA attributes with original smartctl header formatting
+        # This awk command is modified to stop processing attribute lines once a blank line or a new SMART section begins.
+        echo "$_full_smart_output" | awk '
+            /Vendor Specific SMART Attributes with Thresholds:/ {
+                print_next_line_as_header = 1;
+                next;
+            }
+            print_next_line_as_header && /ID# ATTRIBUTE_NAME/ {
+                print; # Print the header line
+                found_actual_data_section = 1;
+                print_next_line_as_header = 0;
+                next;
+            }
+            found_actual_data_section {
+                # Stop processing if a blank line or a new major SMART section header is encountered
+                if ($0 ~ /^\s*$/ || $0 ~ /SMART overall-health/ || $0 ~ /SMART Error Log/ || $0 ~ /SMART Self-test log/) {
+                    found_actual_data_section = 0; # End the data section
+                    next; # Skip printing this transition line
+                }
+                # Only print lines that match our desired attribute IDs
+                if ($1==1 || $1==5 || $1==7 || $1==196 || $1==197 || $1==198 || $1==199) {
+                    print;
+                }
+            }
+        '
+
+    elif [[ "$d" =~ ^/dev/nvme ]]; then # NVMe Attributes
+        available_spare=$(echo "$_full_smart_output" | grep 'Available Spare:' | awk '{print $NF}' | sed 's/%//')
+        media_integrity_errors=$(echo "$_full_smart_output" | grep 'Media and Data Integrity Errors:' | awk '{print $NF}')
+        error_log_entries=$(echo "$_full_smart_output" | grep 'Error Information Log Entries:' | awk '{print $NF}')
+
+        # Available Spare Check (under 70%)
+        if [[ -n "$available_spare" && "$available_spare" -lt 70 ]]; then
+            echo -e "${R}CRITICAL: DRIVE (Serial: $serial): Available Spare is ${available_spare}% (below 70%)${N}"
+            _alert_summary+="DRIVE (Serial: $serial): CRITICAL: Available Spare is ${available_spare}% (below 70%).\n"
+        elif [[ -z "$available_spare" ]]; then
+            echo -e "${Y}WARNING: Could not parse Available Spare for (Serial: $serial).${N}"
+            _alert_summary+="DRIVE (Serial: $serial): WARNING: Could not parse Available Spare.\n"
+        fi
+
+        # Media and Data Integrity Errors Check (>0)
+        if [[ -n "$media_integrity_errors" && "$media_integrity_errors" -gt 0 ]]; then
+            echo -e "${R}CRITICAL: DRIVE (Serial: $serial): Media and Data Integrity Errors: ${media_integrity_errors} (should be 0)${N}"
+            _alert_summary+="DRIVE (Serial: $serial): CRITICAL: Media and Data Integrity Errors: ${media_integrity_errors} (should be 0).\n"
+        elif [[ -z "$media_integrity_errors" ]]; then
+            echo -e "${Y}WARNING: Could not parse Media and Data Integrity Errors for (Serial: $serial).${N}"
+            _alert_summary+="DRIVE (Serial: $serial): WARNING: Could not parse Media and Data Integrity Errors.\n"
+        fi
+
+        # Error Information Log Entries Check (>0)
+        if [[ -n "$error_log_entries" && "$error_log_entries" -gt 0 ]]; then
+            echo -e "${R}CRITICAL: DRIVE (Serial: $serial): Error Information Log Entries: ${error_log_entries} (should be 0)${N}"
+            _alert_summary+="DRIVE (Serial: $serial): CRITICAL: Error Information Log Entries: ${error_log_entries} (should be 0).\n"
+        elif [[ -z "$error_log_entries" ]]; then
+            echo -e "${Y}WARNING: Could not parse Error Information Log Entries for (Serial: $serial).${N}"
+            _alert_summary+="DRIVE (Serial: $serial): WARNING: Could not parse Error Information Log Entries.\n"
+        fi
+
+        echo -e "${N}\nATTRIBUTE                       VALUE${N}"
+        echo -e "${N}$(echo "$_full_smart_output" | grep -E 'Available Spare:|Media and Data Integrity Errors:|Error Information Log Entries:')${N}"
+    fi
+
+    echo "" # Empty line for separation
+done
+
+echo -e "${Y}Checking for I/O errors...${N}"
+# Look for I/O errors in kernel journal logs, exclude audit messages, show last 21 lines
+io_errors=$(journalctl -k | grep -iE "i/o error|blk_update_request|buffer i/o" | grep -v audit | tail -n 21)
+
+if [[ -z "$io_errors" ]]; then
+    echo -e "${G}No I/O errors detected.${N}"
+else
+    echo -e "${R}I/O Errors Found:${N}"
+    echo -e "$io_errors"
+    _alert_summary+="SYSTEM: I/O Errors Found:\n$io_errors\n"
+fi
+
+# Final Alert Check (Email section)
+if [[ -n "$_alert_summary" ]]; then
+    _hostname=$(hostname)
+    _subject="TinyNAS Drive Check Alert"
+    _email_recipient="rohitnavani@gmail.com"
+    echo -e "Hello Rohit,\n\nThe daily drive check on $_hostname detected the following issues:\n\n$_alert_summary\n\nFor full details, check the log file: /pool/drive_logs/drive_check_$(date +\%Y-\%m-\%d).log\n\nRegards,\nYour TinyNAS" | mailx -s "$_subject" "$_email_recipient"
+fi
+
+# Unset variables for cleanup
+unset G R Y N io_errors model serial capacity status d _full_smart_output _latest_test_line _alert_summary _hostname _subject _email_recipient _yesterday _previous_log_file

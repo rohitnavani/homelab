@@ -1,0 +1,162 @@
+#!/bin/bash
+
+# ZFS GFS Snapshot Retention Script
+# Implements Grandfather-Father-Son retention policy for ZFS snapshots.
+# Designed to work with snapshots named 'dataset@<Unix timestamp>'
+
+# --- Configuration ---
+# Datasets to manage retention for (all under homePool/, excluding homePool/download)
+# This should match or be a superset of what your snapshot script targets.
+SNAPSHOT_TARGETS=$(zfs list -H -o name | grep '^homePool/' | grep -v 'homePool/download')
+
+# Retention Policy (GFS)
+# Keep the latest N daily snapshots.
+RETENTION_DAILY=7
+# Keep the latest snapshot from each of the last N full calendar weeks.
+# (Week starts on Monday, ISO 8601 week number %V)
+RETENTION_WEEKLY=4
+# Keep the latest snapshot from each of the last N full calendar months.
+RETENTION_MONTHLY=6
+# Keep the latest snapshot from each of the last N full calendar years.
+RETENTION_YEARLY=2
+
+# Dry Run Mode: Set to "true" to only show what *would* be deleted, without actually deleting.
+# Set to "false" to perform actual deletions.
+DRY_RUN="false"
+
+echo "" # Newline for readability in logs
+echo "--- $(date '+%Y-%m-%d %H:%M:%S') - ZFS GFS Retention Script Started ---"
+echo "Dry Run Mode: $DRY_RUN"
+echo "Retention Policy: Daily=${RETENTION_DAILY}, Weekly=${RETENTION_WEEKLY}, Monthly=${RETENTION_MONTHLY}, Yearly=${RETENTION_YEARLY}"
+
+for dataset in $SNAPSHOT_TARGETS; do
+    # Use an associative array to store snapshots to keep (requires bash 4+)
+    # This array is now declared INSIDE the loop to reset for each dataset
+    declare -A snapshots_to_keep
+
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Processing dataset: $dataset"
+
+    # Get all snapshots for the current dataset, sorted oldest to newest
+    # Filter for snapshots matching our timestamp naming convention (e.g., @1234567890)
+    readarray -t all_snapshots < <(zfs list -H -t snapshot -o name "$dataset" | grep "${dataset}@[0-9]\+$" | sort)
+
+    if [ ${#all_snapshots[@]} -eq 0 ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - No snapshots found for $dataset matching timestamp pattern. Skipping."
+        continue
+    fi
+
+    # Variables to track latest snapshots for GFS
+    declare -A latest_weekly_snap
+    declare -A latest_monthly_snap
+    declare -A latest_yearly_snap
+
+    local_snapshots_sorted=() # Store snapshots with parsed timestamps for easier processing
+    for snap_name in "${all_snapshots[@]}"; do
+        # Extract timestamp from snapshot name
+        timestamp_str=$(echo "$snap_name" | sed -n "s/^.*@\([0-9]\+\)$/\1/p")
+        if [[ -n "$timestamp_str" ]]; then
+            local_snapshots_sorted+=("$timestamp_str|$snap_name")
+        fi
+    done
+
+    # Sort local_snapshots_sorted by timestamp (oldest first)
+    IFS=$'\n' local_snapshots_sorted=($(sort -n -t'|' -k1 <<<"${local_snapshots_sorted[*]}"))
+    unset IFS
+
+    # --- Apply GFS Logic (Iterate oldest to newest for categorization) ---
+    for item in "${local_snapshots_sorted[@]}"; do
+        timestamp=$(echo "$item" | cut -d'|' -f1)
+        snap_name=$(echo "$item" | cut -d'|' -f2)
+
+        # Convert timestamp to date components
+        year=$(date -d "@$timestamp" +'%Y')
+        month=$(date -d "@$timestamp" +'%Y-%m') # Year-Month for unique monthly key
+        week=$(date -d "@$timestamp" +'%Y-%V') # Year-Week for unique weekly key (ISO week)
+
+        # Identify the LATEST snapshot for each GFS period based on parsed timestamp
+        latest_weekly_snap["$week"]="$snap_name"
+        latest_monthly_snap["$month"]="$snap_name"
+        latest_yearly_snap["$year"]="$snap_name"
+    done # End of snapshot categorization loop
+
+    # --- Identify Snapshots to Keep ---
+
+    # 1. Keep the N most recent daily snapshots
+    # Iterate in reverse order (newest first)
+    daily_count=0
+    for (( i=${#local_snapshots_sorted[@]}-1; i>=0; i-- )); do
+        if (( daily_count < RETENTION_DAILY )); then
+            snap_name=$(echo "${local_snapshots_sorted[i]}" | cut -d'|' -f2)
+            snapshots_to_keep["$snap_name"]=1
+            daily_count=$((daily_count + 1))
+        else
+            break
+        fi
+    done
+
+    # 2. Keep the latest snapshot from each of the last N weeks
+    weekly_keys=($(for key in "${!latest_weekly_snap[@]}"; do echo "$key"; done | sort -r))
+    weekly_count=0
+    for week_key in "${weekly_keys[@]}"; do
+        if (( weekly_count < RETENTION_WEEKLY )); then
+            snapshots_to_keep["${latest_weekly_snap[$week_key]}"]=1
+            weekly_count=$((weekly_count + 1))
+        else
+            break
+        fi
+    done
+
+    # 3. Keep the latest snapshot from each of the last N months
+    monthly_keys=($(for key in "${!latest_monthly_snap[@]}"; do echo "$key"; done | sort -r))
+    monthly_count=0
+    for month_key in "${monthly_keys[@]}"; do
+        if (( monthly_count < RETENTION_MONTHLY )); then
+            snapshots_to_keep["${latest_monthly_snap[$month_key]}"]=1
+            monthly_count=$((monthly_count + 1))
+        else
+            break
+        fi
+    done
+
+    # 4. Keep the latest snapshot from each of the last N years
+    yearly_keys=($(for key in "${!latest_yearly_snap[@]}"; do echo "$key"; done | sort -r))
+    yearly_count=0
+    for year_key in "${yearly_keys[@]}"; do
+        if (( yearly_count < RETENTION_YEARLY )); then
+            snapshots_to_keep["${latest_yearly_snap[$year_key]}"]=1
+            yearly_count=$((yearly_count + 1))
+        else
+            break
+        fi
+    done
+
+    # --- Identify and Delete Snapshots ---
+    for item in "${local_snapshots_sorted[@]}"; do
+        snap_name=$(echo "$item" | cut -d'|' -f2)
+        timestamp=$(echo "$item" | cut -d'|' -f1)
+        human_date=$(date -d "@$timestamp" +'%Y-%m-%d %H:%M:%S')
+
+        if [[ -z "${snapshots_to_keep[$snap_name]}" ]]; then
+            # Snapshot is NOT in the list of snapshots to keep, so delete it
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Deleting: $snap_name (Created: $human_date)"
+            if [[ "$DRY_RUN" == "false" ]]; then
+                sudo zfs destroy "$snap_name"
+                if [ $? -ne 0 ]; then
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR: Failed to destroy $snap_name" >&2
+                fi
+            else
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - DRY RUN: Would delete $snap_name (Created: $human_date)"
+            fi
+        else
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Retaining: $snap_name (Created: $human_date)"
+        fi
+    done
+
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Finished processing dataset: $dataset"
+    echo ""
+
+done # End of dataset loop
+
+echo "--- $(date '+%Y-%m-%d %H:%M:%S') - ZFS GFS Retention Script Finished ---"
+
+exit 0

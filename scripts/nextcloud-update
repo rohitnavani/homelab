@@ -1,0 +1,1 @@
+sudo chown -R 33:33 /pool/nextcloud/data; docker exec --user www-data -it nextcloud-aio-nextcloud php occ files:scan --all

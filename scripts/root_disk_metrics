@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Get used and total blocks for the root filesystem
+# Using df -P to ensure POSIX output for consistent parsing
+read -r total_blocks used_blocks < <(df -P / | awk 'NR==2 {print $2, $3}')
+block_size_bytes=1024 # df -k reports in 1KB blocks
+
+# Calculate total and used bytes
+total_bytes=$((total_blocks * block_size_bytes))
+used_bytes=$((used_blocks * block_size_bytes))
+
+# Convert to Gigabytes (float) for display, rounding to 2 decimal places
+total_gb=$(echo "scale=2; $total_bytes / (1024*1024*1024)" | bc)
+used_gb=$(echo "scale=2; $used_bytes / (1024*1024*1024)" | bc)
+
+# Define the output file that Homepage will read
+# Create a new, dedicated directory for Homepage's custom data on the host
+HOMEPAGE_DATA_DIR="/pool/docker/docker-compose/homepage/custom_data/"
+OUTPUT_FILE="$HOMEPAGE_DATA_DIR/root_disk_usage.txt"
+
+# Write "used_gb total_gb" to the file, separated by a space
+echo "$used_gb / $total_gb" > "$OUTPUT_FILE"
+
+# Ensure the file has read permissions for the Homepage container
+chmod 644 "$OUTPUT_FILE"
