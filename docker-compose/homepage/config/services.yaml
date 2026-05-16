@@ -1,0 +1,152 @@
+---
+# Main Homepage sections - you can customize these
+- AdGuard Home:
+    - AdGuard:
+        icon: https://developer.asustor.com/uploadIcons/0020_999_1616120577_AdGuardhome_256.png
+        href: http://10.0.0.5:81
+        ping: http://10.0.0.5:81
+- Media:
+    - Jellyfin:
+        icon: jellyfin.png
+        href: https://jellyfin-homelab.ddns.me
+        ping: http://127.0.0.1:8096
+- Cloud & Productivity:
+    - Nextcloud:
+        icon: nextcloud.png
+        href: https://nextcloud-homelab.ddns.me
+        ping: http://127.0.0.1:8080
+- Data:
+    - Netdata:
+        icon: netdata.png
+        href: http://10.0.0.5:19999
+        ping: http://127.0.0.1:19999
+- Monitoring:
+    - TinyNAS OS Health:
+        icon: https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/UbuntuCoF.svg/960px-UbuntuCoF.svg.png
+        href: http://10.0.0.5:9090
+        widget:
+            type: prometheusmetric
+            url: http://10.0.0.5:9090
+            refreshInterval: 15000
+            metrics:
+                - label: Root Disk Used
+                  query: custom_root_disk_used_gb
+                  format:
+                    type: number
+                    maximumFractionDigits: 2
+                    suffix: " GB"
+                - label: Disk Read I/O (nvme1n1)
+                  query: rate(node_disk_read_bytes_total{device="nvme1n1"}[1m]) / (1024 * 1024)
+                  format:
+                    type: number
+                    maximumFractionDigits: 2
+                    suffix: " MB/s"
+                - label: Disk Write I/O (nvme1n1)
+                  query: rate(node_disk_written_bytes_total{device="nvme1n1"}[1m]) / (1024 * 1024)
+                  format:
+                    type: number
+                    maximumFractionDigits: 2
+                    suffix: " MB/s"
+
+    - TinyNAS System I/O:
+        icon: https://cdn-icons-png.flaticon.com/512/1969/1969572.png
+        href: http://10.0.0.5:9090
+        widget:
+            type: prometheusmetric
+            url: http://10.0.0.5:9090
+            refreshInterval: 15000
+            metrics:
+                - label: Disk Read I/O (nvme0n1)
+                  query: rate(node_disk_read_bytes_total{device="nvme0n1"}[1m]) / (1024 * 1024)
+                  format:
+                    type: number
+                    maximumFractionDigits: 2
+                    suffix: " MB/s"
+                - label: Disk Write I/O (nvme0n1)
+                  query: rate(node_disk_written_bytes_total{device="nvme0n1"}[1m]) / (1024 * 1024)
+                  format:
+                    type: number
+                    maximumFractionDigits: 2
+                    suffix: " MB/s"
+                - label: ZFS Pool Read Ops
+                  query: rate(node_zfs_zpool_read_ops_total{zpool="homePool"}[1m])
+                  format:
+                    type: number
+                    maximumFractionDigits: 1
+                    suffix: " ops/s"
+                - label: ZFS Pool Write Ops
+                  query: rate(node_zfs_zpool_write_ops_total{zpool="homePool"}[1m])
+                  format:
+                    type: number
+                    maximumFractionDigits: 1
+                    suffix: " ops/s"
+
+    - Docker Stats:
+        icon: docker.svg
+        href: http://10.0.0.5:9090
+        widget:
+            type: prometheusmetric
+            url: http://10.0.0.5:9090
+            refreshInterval: 15000
+            metrics:
+                - label: Running Containers
+                  query: 'count(count by (id) (container_cpu_usage_seconds_total{cpu="total", id=~"^/system.slice/.+\\.service$", id!="/system.slice/docker.service"}))'
+                  format:
+                    type: number
+                    maximumFractionDigits: 1
+                    suffix: " container"
+                - label: Container CPU Usage
+                  query: '(sum by (instance) (rate(container_cpu_usage_seconds_total{id=~"^/system.slice/.+\\.service$", id!="/system.slice/docker.service"}[1m]))) / on(instance) group_left()(count(node_cpu_seconds_total{mode="idle"}) by (instance)) * 100'
+                  format:
+                    type: number
+                    maximumFractionDigits: 1
+                    suffix: " %"
+                - label: Container RAM Usage
+                  query: 'sum by (instance) (container_memory_usage_bytes{id=~"^/system.slice/.+\\.service$", id!="/system.slice/docker.service"}) / (1024 * 1024 * 1024)'
+                  format:
+                    type: number
+                    maximumFractionDigits: 2
+                    suffix: " GB"
+
+    - ZFS Pool Stats:
+        icon: https://cdn-icons-png.flaticon.com/512/1969/1969572.png
+        href: http://10.0.0.5:9090 # Link to your Prometheus UI for this pool
+        widget:
+            type: prometheusmetric
+            url: http://10.0.0.5:9090
+            refreshInterval: 15000
+            metrics:
+                - label: homePool Used
+                  query: node_zfs_zpool_dataset_used_bytes{dataset="homePool",zpool="homePool"} / (1024 * 1024 * 1024 * 1024)
+                  format:
+                    type: number
+                    maximumFractionDigits: 2
+                    suffix: "TB"
+                - label: homePool Available
+                  query: node_zfs_zpool_dataset_available_bytes{dataset="homePool",zpool="homePool"} / (1024 * 1024 * 1024 * 1024)
+                  format:
+                    type: number
+                    maximumFractionDigits: 2
+                    suffix: "TB"
+                - label: homePool Health
+                  query: zfs_pool_health_status_text{zpool="homePool"}
+                  template: >
+                    {% if value == 1 %}
+                      ONLINE
+                    {% elif value == 0.5 %}
+                      DEGRADED
+                    {% elif value == 0 %}
+                      OFFLINE
+                    {% else %}
+                      UNKNOWN
+                    {% endif %}
+                - label: homePool Errors
+                  query: node_zfs_zpool_errors_total{zpool="homePool"}
+                  format:
+                    type: number
+                    maximumFractionDigits: 0
+                    suffix: ""
+    - zfs:
+       provider: zfs
+       pool: homePool
+       showDetails: true

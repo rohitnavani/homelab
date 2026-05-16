@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Resume | Rohit Navani</title>
+	<style>
+		body { font-family: sans-serif; line-height: 1.6; color: #e0e0e0; background: #1a1a1a; padding: 40px; }
+		.container { max-width: 850px; margin: auto; }
+		h1, h2 { color: #d4af37; border-bottom: 1px solid #333; margin-top: 30px; }
+		.job-header { display: flex; justify-content: space-between; font-weight: bold; color: #fff; margin-top: 20px; }
+		.job-sub { font-style: italic; color: #d4af37; margin-bottom: 10px; }
+		.date { color: #888; }
+		.project-header { font-weight: bold; color: #fff; margin-top: 15px; text-decoration: underline; }
+		ul { padding-left: 20px; }
+		li { margin-bottom: 5px; }
+		a { color: #d4af37; text-decoration: none; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<a href="/">← Back</a>
+		<h1>Rohit Navani</h1>
+		<p>Support Engineer specializing in enterprise storage recovery, virtualization, and operational automation.</p>
+
+		<h2>Professional Experience</h2>
+
+		<!-- KASEYA SECTION -->
+		<div class="job-header">
+			<span>Kaseya | Orlando, FL</span>
+			<span class="date">April 2024 – Present</span>
+		</div>
+		<div class="job-sub">Technical Security Liaison (Mar 2026) / Level 2 Engineer (Mar 2025)</div>
+		<ul>
+			<li>Filter 90%+ of reported CVEs as false positives by analyzing vulnerability scans and penetration test findings, escalating only validated threats to engineering for exposure assessment and remediation.</li>
+			<li>Owned escalation point for production failures across the Datto BCDR platform (petabyte-scale storage, hundreds of thousands of physical appliances, hundreds of thousands of active cloud agents), handling 25+ L2 escalations per week.</li>
+			<li>On-call rotation covering disaster recovery escalations on off-days.</li>
+			<li>Restored 300+ production systems from ZFS-backed backups, converting to NTFS/ext4/XFS as required by client target environments; largest single recovery 70TB.</li>
+			<li>Diagnosed network faults via Wireshark packet inspection, traceroute analysis, and iperf throughput validation, isolating transmission errors and faulty NICs.</li>
+			<li>Resolved virtualization issues across KVM, VMware, and Hyper-V: USB passthrough, manual vmx modification, and recovery of virtual disks that fail to mount or display.</li>
+			<li>Performed kernel log and SEL analysis across IPMI, iDRAC, and iLO platforms to identify intermittent hardware faults in enterprise Linux fleets.</li>
+			<li>Mentored 20 L1 technicians and led new-hire onboarding for 15, authoring internal runbooks that distilled complex resolutions into reproducible procedures.</li>
+			<li>Automation Tools
+		<ul>
+			<li>Scripted ZFS snapshot mounting and loop device mapping to extract Windows crash dumps and event logs for forensic analysis.</li>
+			<li>Built ZFS size-delta calculator estimating uncompressed incremental data growth, used for storage forecasting and DR validation.</li>
+			<li>Designed ZFS send/receive pipelines through 7zip streams to maximize throughput on large-scale data migrations.</li>
+			<li>Automated bulk modification of device configuration keys and replication statuses across large agent fleets via jq, sed, grep, and input redirection.</li>
+		</ul>
+			</li>
+		</ul>
+
+                <div class="job-sub">Level 1 Blue Engineer (Apr 2024)</div>
+                <ul>
+                        <li>Built Bash automation that reduced repetitive triage steps for the support team.</li>
+			<li>Assisted higher volume clients being responsiblile for maintaining customer trust.</li>
+                </ul>
+
+                <div class="job-sub">Level 1 Engineer (Apr 2024)</div>
+		<ul>
+			<li>Achieved 99% CSAT across 83 surveys; managed end-to-end ticket triage in Windows (event log + crash dump analysis) and Linux environments (kernel log and syslog analysis).</li>
+		</ul>
+
+		<!-- PREVIOUS ROLES -->
+		<div class="job-header">
+			<span>Florida Department of Health</span>
+			<span class="date">May 2023 – April 2024</span>
+		</div>
+		<div class="job-sub">IT Technician II</div>
+		<ul>
+			<li>Managed fleet of 250 iOS devices via Intune MDM and 400 Windows devices via Active Directory and SCCM; maintained 99% uptime.</li>
+		</ul>
+
+		<div class="job-header">
+			<span>United Data Technologies</span>
+			<span class="date">Dec 2021 – March 2023</span>
+		</div>
+		<div class="job-sub">Desktop Support Technician</div>
+		<ul>
+			<li>Imaged laptops to Orange County Public Schools standards, resolved BIOS/driver conflicts, and performed QA on repaired laptops.</li>
+		</ul>
+
+		<h2>Technical Skills</h2>
+		<ul>
+			<li>Storage & Filesystems: ZFS (Zpool/Zvol recovery), gdisk/fdisk, TestDisk, Paragon, mkfs</li>
+                        <li>Virtualization: KVM/QEMU, VMware ESXi/vCenter, Hyper-V</li>
+                        <li>Networking: Wireshark packet inspection, iperf throughput validation, LACP/LAG/Round Robin bonding, VLAN tagging and bridging</li>
+                        <li>Linux/Ops: Kernel log debugging, Bash automation, SQL query optimization</li>
+                        <li>Hardware/OOB: IPMI, iDRAC, iLO, System Event Log (SEL) analysis, component level diagnosis and replacement</li>
+		</ul>
+		<h2>Education</h2>
+		<p><strong>University of Central Florida</strong> | B.G.S., Computer Engineering & Computer Science Foundations</p>
+	</div>
+</body>
+</html>

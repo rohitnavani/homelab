@@ -1,0 +1,9 @@
+services:
+  resume-site:
+    image: nginx:alpine
+    container_name: rohit-resume-container
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    volumes:
+      - ${COMPOSE_BASE_PATH}/resume-site/html:/usr/share/nginx/html:ro

@@ -1,0 +1,7 @@
+# /opt/prometheus/rules/zfs_rules.yml
+groups:
+  - name: zfs_health_status
+    rules:
+      - record: zfs_pool_health_status_text
+        expr: |
+          node_zfs_zpool_health_status{zpool="homePool"}

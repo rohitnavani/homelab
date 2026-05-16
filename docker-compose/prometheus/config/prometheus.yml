@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s # How frequently to scrape targets
+  evaluation_interval: 15s
+rule_files:
+  - "/etc/prometheus/rules/*.yml"
+scrape_configs:
+  - job_name: 'node_exporter'
+    static_configs:
+      - targets: ['10.0.0.5:9100'] # Your TinyNAS IP and Node Exporter port
+    relabel_configs:
+      # This rule takes the current 'instance' label (e.g., '192.168.0.25:8082')
+      # and rewrites it to just the IP address (e.g., '192.168.0.25')
+      - source_labels: [__address__] # Use __address__ as it contains the IP:Port used for scraping
+        regex: '([^:]+)(:\d+)?' # Captures the IP/hostname before the colon, and the optional port
+        replacement: '$1'        # Replaces with just the captured IP/hostname
+        target_label: 'instance' # Writes the result to the 'instance' label
+
+  - job_name: 'cadvisor' # This is the new job for cAdvisor
+    static_configs:
+      - targets: ['10.0.0.5:8082'] # docker stats
+    relabel_configs:
+      # This rule takes the current 'instance' label (e.g., '192.168.0.25:8082')
+      # and rewrites it to just the IP address (e.g., '192.168.0.25')
+      - source_labels: [__address__] # Use __address__ as it contains the IP:Port used for scraping
+        regex: '([^:]+)(:\d+)?' # Captures the IP/hostname before the colon, and the optional port
+        replacement: '$1'        # Replaces with just the captured IP/hostname
+        target_label: 'instance' # Writes the result to the 'instance' label

@@ -1,0 +1,7 @@
+- resources:
+    cpu: true
+    cputemp: true
+    memory: true
+    network: true
+    uptime: true
+    refresh: 2000

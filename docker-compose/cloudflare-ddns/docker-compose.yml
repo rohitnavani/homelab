@@ -1,0 +1,8 @@
+services:
+  cloudflare-ddns:
+    image: favonia/cloudflare-ddns:latest
+    restart: always
+    environment:
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - DOMAINS=rohitnavani.com,www.rohitnavani.com
+      - PROXY=true # Keeps the orange cloud active

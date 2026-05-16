@@ -1,0 +1,12 @@
+---
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/settings/
+# settings.yaml
+server:
+  host: homelab.ddns.me # <--- Add this line with your actual domain
+  # port: 3000 # This is usually not needed unless you've changed the internal port from the default.
+providers:
+  openweathermap: openweathermapapikey
+  weatherapi: weatherapiapikey
+misc:
+  loglevel: debug

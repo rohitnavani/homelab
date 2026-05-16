@@ -1,0 +1,11 @@
+services:
+  adguardhome:
+    image: adguard/adguardhome
+    container_name: adguardhome
+    restart: unless-stopped
+    # Use 'host' network mode if you want it to handle DHCP or see individual client IPs easily
+    network_mode: host 
+    volumes:
+      - ${COMPOSE_BASE_PATH}/AdGuardHome/work:/opt/adguardhome/work
+      - ${COMPOSE_BASE_PATH}/AdGuardHome/conf:/opt/adguardhome/conf
+      - ./agh-backup:/opt/adguardhome/conf/backup # Since you have an agh-backup folder

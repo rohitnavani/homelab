@@ -1,0 +1,12 @@
+.env
+*.env
+**/data/
+**/agh-backup/
+nextcloud-aio/
+docker-compose/AdGuardHome/work/
+docker-compose/AdGuardHome/conf/
+.DS_Store
+*.bak
+*.old
+*.save
+docker/
