@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+        <meta charset="UTF-8">
+        <title>Rohit Navani | Disaster Recovery Engineer</title>
+        <style>
+                body { 
+                        font-family: sans-serif; 
+                        background: #1a1a1a; 
+                        color: #e0e0e0; 
+                        display: flex; 
+                        justify-content: center; 
+                        align-items: center; 
+                        min-height: 100vh; /* Changed to min-height to ensure mobile responsiveness */
+                        margin: 0; 
+                }
+                .box { 
+                        border: 1px solid #d4af37; 
+                        padding: 30px; 
+                        text-align: center; 
+                        border-radius: 8px; 
+                        background: #222; /* Slightly lighter background to give depth */
+                        max-width: 500px;
+                        width: 90%;
+                        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+                }
+                h1 { 
+                        color: #d4af37; 
+                        margin: 0 0 5px 0; 
+                        letter-spacing: 1px;
+                }
+                p {
+                        margin: 0 0 20px 0;
+                        color: #b0b0b0;
+                }
+                nav {
+                        margin-bottom: 25px;
+                }
+                .status-container {
+                        border-top: 1px dashed #444;
+                        padding-top: 20px;
+                        margin-top: 20px;
+                }
+                .status-title {
+                        color: #d4af37;
+                        font-size: 0.9rem;
+                        text-transform: uppercase;
+                        letter-spacing: 1.5px;
+                        margin-bottom: 12px;
+                }
+                iframe {
+                        border: 1px solid #333;
+                        border-radius: 6px;
+                        background: #1e1e1e;
+                }
+        </style>
+</head>
+<body>
+        <div class="box">
+                <h1>ROHIT NAVANI</h1>
+                <p>Disaster Recovery Engineer | Orlando, FL</p>
+                
+                <nav>
+                        <a href="/resume.html" style="color: #d4af37; margin: 0 10px; text-decoration: none;">Resume</a> |
+                        <a href="https://github.com/rohitnavani/homelab/blob/main/README.md" style="color: #d4af37; margin: 0 10px; text-decoration: none;">Lab Architecture</a>
+                </nav>
+
+                <!-- Uptime Kuma Graph Section -->
+                <div class="status-container">
+                        <div class="status-title">Infrastructure Status</div>
+                        <iframe 
+                                src="http://10.0.0.5:3001/status/public" 
+                                width="100%" 
+                                height="220px" 
+                                frameborder="0" 
+                                scrolling="no"
+                                style="overflow: hidden;">
+                        </iframe>
+                </div>
+        </div>
+</body>
+</html>

@@ -1,22 +1,63 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-	<meta charset="UTF-8">
-		<title>Rohit Navani | Disaster Recovery Engineer</title>
-	<style>
-		body { font-family: sans-serif; background: #1a1a1a; color: #e0e0e0; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-		.box { border: 1px solid #d4af37; padding: 20px; text-align: center; border-radius: 8px; }
-		h1 { color: #d4af37; margin: 0; }
-	</style>
+        <meta charset="UTF-8">
+        <title>Rohit Navani | L3 Enterprise Support Engineer</title>
+        <style>
+                body { font-family: sans-serif; background: #1a1a1a; color: #e0e0e0; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                .box { border: 1px solid #d4af37; padding: 25px; text-align: center; border-radius: 8px; background: #222; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+                h1 { color: #d4af37; margin: 0; }
+                p { color: #b0b0b0; margin: 5px 0 15px 0; }
+                nav { margin-bottom: 20px; }
+                
+                .server-metric {
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 8px;
+                        background: #111;
+                        padding: 6px 14px;
+                        border-radius: 6px;
+                        border: 1px solid #333;
+                        font-family: monospace;
+                        font-size: 0.85rem;
+                        color: #b0b0b0;
+                }
+                .pulse-dot {
+                        width: 6px;
+                        height: 6px;
+                        background: #2ecc71;
+                        border-radius: 50%;
+                        box-shadow: 0 0 6px #d4af37;
+                }
+        </style>
 </head>
 <body>
-	<div class="box">
-		<h1>ROHIT NAVANI</h1>
-		<p>Disaster Recovery Engineer | Orlando, FL</p>
-		<nav>
-			<a href="/resume.html" style="color: #d4af37; margin: 0 10px;">Resume</a> | 
-			<a href="https://github.com/rohitnavani/homelab/blob/main/README.md" style="color: #d4af37; margin: 0 10px;">Lab Architecture</a>
-		</nav>
-	</div>
+        <div class="box">
+                <h1>ROHIT NAVANI</h1>
+                <p>L3 Enterprise Support Engineer | Orlando, FL</p>
+                <nav>
+                        <a href="/resume.html" style="color: #d4af37; margin: 0 10px; text-decoration: none;">Resume</a> |
+                        <a href="https://github.com/rohitnavani/homelab/blob/main/README.md" style="color: #d4af37; margin: 0 10px; text-decoration: none;">Lab Architecture</a>
+                </nav>
+
+                <div class="server-metric">
+                        <div class="pulse-dot"></div>
+                        <span>TinyNAS Uptime: <span id="uptime-display">fetching...</span></span>
+                </div>
+        </div>
+
+        <script>
+                fetch('/uptime.json')
+                        .then(res => {
+                                if (!res.ok) throw new Error();
+                                return res.json();
+                        })
+                        .then(data => {
+                                document.getElementById('uptime-display').innerText = data.uptime;
+                        })
+                        .catch(() => {
+                                document.getElementById('uptime-display').innerText = "offline";
+                        });
+        </script>
 </body>
 </html>
