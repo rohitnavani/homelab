@@ -11,7 +11,7 @@ SNAPSHOT_TARGETS=$(zfs list -H -o name | grep '^homePool/' | grep -v 'homePool/d
 
 # Retention Policy (GFS)
 # Keep the latest N daily snapshots.
-RETENTION_DAILY=7
+RETENTION_DAILY=168
 # Keep the latest snapshot from each of the last N full calendar weeks.
 # (Week starts on Monday, ISO 8601 week number %V)
 RETENTION_WEEKLY=4
