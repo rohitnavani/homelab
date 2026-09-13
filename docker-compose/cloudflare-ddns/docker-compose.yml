@@ -4,5 +4,6 @@ services:
     restart: always
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      - DOMAINS=rohitnavani.com,www.rohitnavani.com
-      - PROXY=true # Keeps the orange cloud active
+      - DOMAINS=direct-ip.rohitnavani.com
+      - PROXY=false # Keeps the orange cloud active
+      - IP6_PROVIDER=none

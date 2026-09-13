@@ -6,8 +6,8 @@ services:
       PUID: 1000 # Replace with your user ID (run 'id -u rohit')
       PGID: 1000 # Replace with your group ID (run 'id -g rohit')
       TZ: America/New_York # Replace with your timezone, e.g., Europe/London
-      HOMEPAGE_ALLOWED_HOSTS: homelab.ddns.me,tinypc:3000,localhost,127.0.0.1
-      HOMEPAGE_URL: https://homelab.ddns.me
+      HOMEPAGE_ALLOWED_HOSTS: homelab.rohitnavani.com,tinypc:3000,localhost,127.0.0.1
+      HOMEPAGE_URL: https://homelab.rohitnavani.com
     volumes:
       - ${COMPOSE_BASE_PATH}/homepage/config:/app/config
       - /var/run/docker.sock:/var/run/docker.sock:ro # Used for Docker integration (optional, but highly recommended)

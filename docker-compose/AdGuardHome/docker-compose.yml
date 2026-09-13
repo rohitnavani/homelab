@@ -3,9 +3,11 @@ services:
     image: adguard/adguardhome
     container_name: adguardhome
     restart: unless-stopped
-    # Use 'host' network mode if you want it to handle DHCP or see individual client IPs easily
-    network_mode: host 
+    network_mode: host
+    environment:
+      - ADGUARD_USER_PASSWORD=${ADGUARD_USER_PASSWORD}
     volumes:
       - ${COMPOSE_BASE_PATH}/AdGuardHome/work:/opt/adguardhome/work
       - ${COMPOSE_BASE_PATH}/AdGuardHome/conf:/opt/adguardhome/conf
-      - ./agh-backup:/opt/adguardhome/conf/backup # Since you have an agh-backup folder
+      - ./agh-backup:/opt/adguardhome/conf/backup
+    entrypoint: /bin/sh -c "sed -i \"s|ADGUARD_PASSWORD_PLACEHOLDER|${ADGUARD_USER_PASSWORD}|g\" /opt/adguardhome/conf/AdGuardHome.yaml && exec /opt/adguardhome/AdGuardHome --config /opt/adguardhome/conf/AdGuardHome.yaml --work-dir /opt/adguardhome/work"
