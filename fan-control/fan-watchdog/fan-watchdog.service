@@ -1,0 +1,10 @@
+[Unit]
+Description=R720 low fan speed with automatic fallback to iDRAC auto profile
+After=multi-user.target
+[Service]
+ExecStart=/usr/local/sbin/fan-watchdog
+ExecStopPost=/usr/bin/ipmitool raw 0x30 0x30 0x01 0x01
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target

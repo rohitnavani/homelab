@@ -1,0 +1,48 @@
+#!/bin/bash
+# Hold R720 fans at a fixed low speed; hand control back to the iDRAC's auto profile when anything runs warm.
+LOW_PCT=10
+# Switch to auto when any of these is reached
+CPU_HOT=65; EXH_HOT=45; INLET_HOT=30; DRIVE_HOT=45
+# Return to manual only after everything stays below these for COOL_SECS
+CPU_OK=58;  EXH_OK=40;  INLET_OK=27;  DRIVE_OK=42; COOL_SECS=300
+INTERVAL=30
+
+set_auto()   { ipmitool raw 0x30 0x30 0x01 0x01 >/dev/null 2>&1; }
+set_manual() { ipmitool raw 0x30 0x30 0x01 0x00 >/dev/null && ipmitool raw 0x30 0x30 0x02 0xff $(printf '0x%02x' $LOW_PCT) >/dev/null; }
+log() { echo "$*"; echo "$(date -u '+%F %T') $*" > /run/fan-watchdog.state; }
+trap 'set_auto; log "stopped: auto"; exit 0' TERM INT EXIT
+
+read_temps() {
+  local t; t=$(ipmitool sdr type Temperature 2>/dev/null) || return 1
+  INLET=$(awk -F'|' '/Inlet/{print $5+0}' <<<"$t")
+  EXH=$(awk -F'|' '/Exhaust/{print $5+0}' <<<"$t")
+  CPU=$(awk -F'|' '$1 ~ /^Temp/{if($5+0>m)m=$5+0} END{print m+0}' <<<"$t")
+  DRIVE=0
+  for d in $(lsblk -dno NAME,MODEL | awk '/ST1200|HUSMM/{print $1}'); do
+    v=$(smartctl -A /dev/$d 2>/dev/null | grep -oP 'Current Drive Temperature:\s+\K\d+'); [ "${v:-0}" -gt $DRIVE ] && DRIVE=$v
+  done
+  [ -n "$INLET" ] && [ -n "$EXH" ] && [ "$CPU" -gt 0 ] && [ "$DRIVE" -gt 0 ]
+}
+
+mode=auto; cool_since=0
+set_manual && mode=manual && log "start: manual ${LOW_PCT}%"
+while :; do
+  sleep $INTERVAL
+  if ! read_temps; then
+    [ $mode != auto ] && { set_auto; mode=auto; log "sensor read failed: auto"; }; cool_since=0; continue; fi
+  now=$(date +%s); s="cpu=$CPU exh=$EXH inlet=$INLET drive=$DRIVE"
+  if [ $mode = manual ]; then
+    if [ $CPU -ge $CPU_HOT ] || [ $EXH -ge $EXH_HOT ] || [ $INLET -ge $INLET_HOT ] || [ $DRIVE -ge $DRIVE_HOT ]; then
+      set_auto; mode=auto; cool_since=0; log "hot ($s): auto"
+    else
+      set_manual || { set_auto; mode=auto; log "ipmi set failed: auto"; }   # re-assert in case the iDRAC reset
+      echo "$(date -u '+%F %T') manual ${LOW_PCT}% ($s)" > /run/fan-watchdog.state
+    fi
+  else
+    if [ $CPU -lt $CPU_OK ] && [ $EXH -lt $EXH_OK ] && [ $INLET -lt $INLET_OK ] && [ $DRIVE -lt $DRIVE_OK ]; then
+      [ $cool_since -eq 0 ] && cool_since=$now
+      if [ $((now-cool_since)) -ge $COOL_SECS ] && set_manual; then mode=manual; log "cool for ${COOL_SECS}s ($s): manual ${LOW_PCT}%"
+      else echo "$(date -u '+%F %T') auto, cool for $((now-cool_since))s of ${COOL_SECS}s ($s)" > /run/fan-watchdog.state; fi
+    else cool_since=0; echo "$(date -u '+%F %T') auto, waiting to cool ($s)" > /run/fan-watchdog.state; fi
+  fi
+done
