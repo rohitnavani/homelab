@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+# md1200-fan: keep the MD1200 shelf quiet via its EMM serial console (_shutup <pct>).
+# Picks a fan % from the hottest shelf drive and the EMM expander sensors once a
+# minute. The shelf drops back to its ~5000 rpm default about 10s after each
+# _shutup, so the chosen % is re-sent every few seconds to hold it.
+import glob, re, subprocess, sys, time, serial
+
+PORT = '/dev/ttyUSB0'
+INTERVAL = 30   # temp check
+RESEND = 2      # seconds between _shutup re-sends (EMMs drop the setting ~10s after a
+                # command in some states, and a watchdog restarts them every ~324s)
+# Tiers: (fan %, max drive C, max backplane C, max SIM C, max expander C).
+# The firmware's own ramp kicked in at backplane 44 / drive 48 while it still
+# tolerated SIM 49 at 10% (SES warns SIM at 65, backplane at 50), so the quiet
+# tier sits just under the firmware's ramp. 15-30% all run at ~5000 rpm.
+TIERS = [(10, 47, 43, 55, 85), (30, 49, 46, 58, 90), (50, 52, 48, 61, 95)]
+HOT = 80        # anything above the last tier
+FALLBACK = 30   # if temps can't be read for STALE seconds
+STALE = 60      # a failed read keeps the current speed until reads have failed this long
+RETRY = 5       # seconds before re-reading after a failed read
+HYST = 2        # must be this far under a tier's limits to step down into it
+
+def emm(cmd):
+    with serial.Serial(PORT, 38400, timeout=0.5) as s:
+        s.reset_input_buffer()
+        s.write((cmd + '\r').encode())
+        out, end = b'', time.time() + (2 if cmd == '_temp_rd' else 0.4)
+        while time.time() < end:
+            d = s.read(4096)
+            if d:
+                out += d
+                end = max(end, time.time() + 0.5)
+    return out.decode(errors='replace')
+
+def shelf_disks():
+    # dataPool lives entirely on the MD1200 shelf
+    out = subprocess.run(['zpool', 'list', '-vHP', 'dataPool'], capture_output=True, text=True).stdout
+    return sorted({re.sub(r'-part\d+$', '', m) for m in re.findall(r'(/dev/\S+)', out)})
+
+def drive_temp(dev):
+    out = subprocess.run(['smartctl', '-n', 'standby', '-A', dev], capture_output=True, text=True).stdout
+    m = re.search(r'Current Drive Temperature:\s+(\d+)', out) or re.search(r'^194 .*?(\d+)(?: \(.*\))?$', out, re.M)
+    return int(m.group(1)) if m else None
+
+def fits(tier, temps, margin):
+    _, d, bp, sim, exp = tier
+    return all(v <= lim - margin for v, lim in zip(temps, (d, bp, sim, exp)))
+
+def pick(current):
+    drives = [t for t in map(drive_temp, shelf_disks()) if t]
+    out = emm('_temp_rd')
+    bp = [int(x) for x in re.findall(r'BP_\d\[\d\] = (\d+)c', out)]
+    sim = [int(x) for x in re.findall(r'SIM\d\[\d\] = (\d+)c', out)]
+    exp = [int(x) for x in re.findall(r'EXP\d\[\d\] = (\d+)c', out)]
+    if not (drives and bp and sim and exp):
+        return FALLBACK, None
+    temps = (max(drives), max(bp), max(sim), max(exp))
+    for tier in TIERS:
+        # stepping down (to a quieter tier than now) needs the hysteresis margin
+        if fits(tier, temps, HYST if tier[0] < current else 0):
+            return tier[0], temps
+    return HOT, temps
+
+pct, checked, last_good = FALLBACK, 0, time.time()
+print('starting', flush=True)
+while True:
+    try:
+        if time.time() - checked >= INTERVAL:
+            new, temps = pick(pct)
+            checked = time.time()
+            if temps is None:
+                checked -= INTERVAL - RETRY          # re-read soon
+                if time.time() - last_good < STALE:  # brief glitch: keep the current speed
+                    new = pct
+            else:
+                last_good = time.time()
+            if new != pct:
+                print(f'fan {new}% (drive/backplane/SIM/expander max: {temps})', flush=True)
+            pct = new
+        emm('_shutup %d' % pct)
+    except Exception as ex:
+        print('error:', ex, file=sys.stderr, flush=True)
+        time.sleep(10)
+    time.sleep(RESEND)
