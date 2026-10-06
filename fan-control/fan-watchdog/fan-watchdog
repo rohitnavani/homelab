@@ -3,10 +3,12 @@
 # slow steps back down. Hand control to the iDRAC's auto profile only in an emergency.
 MIN_PCT=10; MAX_PCT=35; INTERVAL=30; DOWN_STEP=1   # % per interval on the way down
 # Curves: "quiet temp:temp at MAX_PCT". Fan % = the highest any sensor asks for.
-# iDRAC warns at CPU 94, exhaust 70, inlet 42; ST1200 HDDs and HUSMM SSDs are rated to 60 and 70.
-CPU_CURVE=68:82; EXH_CURVE=48:58; INLET_CURVE=30:36; HDD_CURVE=42:48; SSD_CURVE=52:62
+# iDRAC warns at CPU 94, exhaust 70, inlet 42; the ST1200 HDDs and HUSMM SSDs trip at 60 and 65 (smartctl);
+# DDR3 RDIMMs are rated to 85 (95 with double refresh). DIMM temps come from the memory controllers' TSOD
+# readings (DIMMTEMPSTAT), since the iDRAC doesn't expose them and manual fan mode bypasses its own DIMM logic.
+CPU_CURVE=68:82; EXH_CURVE=48:58; INLET_CURVE=30:36; HDD_CURVE=42:48; SSD_CURVE=52:62; DIMM_CURVE=65:80
 # Emergency: iDRAC auto at any of these, back to the curve after COOL_SECS under the curve's top
-CPU_HOT=85; EXH_HOT=62; INLET_HOT=38; HDD_HOT=52; SSD_HOT=65; COOL_SECS=300
+CPU_HOT=85; EXH_HOT=62; INLET_HOT=38; HDD_HOT=52; SSD_HOT=65; DIMM_HOT=85; COOL_SECS=300
 
 set_auto() { ipmitool raw 0x30 0x30 0x01 0x01 >/dev/null 2>&1; }
 set_pct()  { ipmitool raw 0x30 0x30 0x01 0x00 >/dev/null && ipmitool raw 0x30 0x30 0x02 0xff $(printf '0x%02x' $1) >/dev/null; }
@@ -19,13 +21,28 @@ disk_max() {  # hottest drive whose model matches $1
     v=$(smartctl -A /dev/$d 2>/dev/null | grep -oP 'Current Drive Temperature:\s+\K\d+'); [ "${v:-0}" -gt $m ] && m=$v
   done; echo $m
 }
+# Populated DIMM registers: flags byte 0x07 and a plausible temp (empty slots read 0x05/85, unused channels 0)
+DIMM_REGS=()
+for dev in $(lspci -D | awk '/Thermal Control/{print $1}'); do
+  for off in 0x150 0x154 0x158; do
+    v=$((16#$(setpci -s $dev $off.L 2>/dev/null || echo 0)))
+    [ $((v >> 24)) -eq 7 ] && [ $((v & 0xff)) -ge 10 ] && DIMM_REGS+=("$dev:$off")
+  done
+done
+dimm_max() {  # hottest DIMM, or nothing if any populated DIMM can't be read
+  local m=0 v r
+  for r in "${DIMM_REGS[@]}"; do
+    v=$(setpci -s ${r%:*} ${r##*:}.L 2>/dev/null) || return 1
+    v=$(( 16#$v & 0xff )); [ $v -ge 10 ] || return 1; [ $v -gt $m ] && m=$v
+  done; echo $m
+}
 read_temps() {
   local t; t=$(ipmitool sdr type Temperature 2>/dev/null) || return 1
   INLET=$(awk -F'|' '/Inlet/{print $5+0}' <<<"$t")
   EXH=$(awk -F'|' '/Exhaust/{print $5+0}' <<<"$t")
   CPU=$(awk -F'|' '$1 ~ /^Temp/{if($5+0>m)m=$5+0} END{print m+0}' <<<"$t")
-  HDD=$(disk_max ST1200); SSD=$(disk_max HUSMM)
-  [ -n "$INLET" ] && [ -n "$EXH" ] && [ "$CPU" -gt 0 ] && [ "$HDD" -gt 0 ] && [ "$SSD" -gt 0 ]
+  HDD=$(disk_max ST1200); SSD=$(disk_max HUSMM); DIMM=$(dimm_max) || return 1
+  [ -n "$INLET" ] && [ -n "$EXH" ] && [ "$CPU" -gt 0 ] && [ "$HDD" -gt 0 ] && [ "$SSD" -gt 0 ] && [ "${DIMM:-0}" -gt 0 ]
 }
 want() {  # want <temp> <lo:hi> -> fan % for that sensor
   local lo=${2%:*} hi=${2#*:}
@@ -34,16 +51,16 @@ want() {  # want <temp> <lo:hi> -> fan % for that sensor
 }
 
 mode=curve; pct=$MIN_PCT; cool_since=0
-set_pct $pct && log "start: ${pct}%"
+set_pct $pct && log "start: ${pct}% (watching ${#DIMM_REGS[@]} DIMMs)"
 while :; do
   sleep $INTERVAL
   if ! read_temps; then
     [ $mode != auto ] && { set_auto; mode=auto; log "sensor read failed: auto"; }; cool_since=0; continue; fi
-  s="cpu=$CPU exh=$EXH inlet=$INLET hdd=$HDD ssd=$SSD"
-  if [ $CPU -ge $CPU_HOT ] || [ $EXH -ge $EXH_HOT ] || [ $INLET -ge $INLET_HOT ] || [ $HDD -ge $HDD_HOT ] || [ $SSD -ge $SSD_HOT ]; then
+  s="cpu=$CPU exh=$EXH inlet=$INLET hdd=$HDD ssd=$SSD) (dimm=$DIMM"   # keeps "(cpu=... ssd=N)" intact for parsers
+  if [ $CPU -ge $CPU_HOT ] || [ $EXH -ge $EXH_HOT ] || [ $INLET -ge $INLET_HOT ] || [ $HDD -ge $HDD_HOT ] || [ $SSD -ge $SSD_HOT ] || [ $DIMM -ge $DIMM_HOT ]; then
     [ $mode != auto ] && { set_auto; mode=auto; log "hot ($s): auto"; }; cool_since=0; continue; fi
   tgt=$MIN_PCT
-  for w in $(want $CPU $CPU_CURVE) $(want $EXH $EXH_CURVE) $(want $INLET $INLET_CURVE) $(want $HDD $HDD_CURVE) $(want $SSD $SSD_CURVE); do
+  for w in $(want $CPU $CPU_CURVE) $(want $EXH $EXH_CURVE) $(want $INLET $INLET_CURVE) $(want $HDD $HDD_CURVE) $(want $SSD $SSD_CURVE) $(want $DIMM $DIMM_CURVE); do
     [ $w -gt $tgt ] && tgt=$w; done
   if [ $mode = auto ]; then
     if [ $tgt -lt $MAX_PCT ]; then
