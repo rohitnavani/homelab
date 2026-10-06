@@ -40,7 +40,8 @@ fixed fans before tuning a controller, and deploy every controller behind a watc
 4. **Run a 60 min idle baseline** under the production controllers, and another at the end of the day. Compare them
    with `testing/baseline_compare.py 02:20-03:00 14:30-15:30` (any two windows, local time, today).
 5. **Check `date` on each host and log epoch seconds.** ryuji's OS and BMC clocks run on UTC; mementos, sojiro,
-   tinynas and makoto on local time (EDT). Guessed times caused several confused readings on 10-06.
+   tinynas and makoto on local time (EDT), but fan-watchdog stamps `/run/fan-watchdog.state` in UTC. Guessed times
+   caused several confused readings on 10-06.
 6. **Keep the boxes otherwise quiet.** During the 10-06 overnight run another session copied and compared VM images
    on mementos and started a 4 vCPU VM. Log any such activity, and keep heavy jobs off a box under test.
 7. **Check the shelf's SES device** is still `/dev/sg39` (md1200-fan and the shelf scripts use that path): the SES
