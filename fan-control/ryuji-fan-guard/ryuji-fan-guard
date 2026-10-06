@@ -18,7 +18,8 @@
 #                  for 2 readings ('load').
 #   WARM -> QUIET: idle (CPU <= LOAD_DOWN, VR/DIMM cool) for 10 min and SIO1 <= SIO_BACK_LOAD (if load put us
 #                  there) / SIO1 <= SIO_BACK_HOT for 30 min (if the board was hot, i.e. a warm room), so QUIET does
-#                  not climb straight back to SIO_UP.
+#                  not climb straight back to SIO_UP. v2.1 (2026-10-06 14:00): SIO_BACK_HOT 68 -> 71, so a hot-room trip
+#                  ends when the room cools a little instead of holding -16 until the room is ~23C.
 #   WARM -> Performance: SIO1 >= SIO_UP for 6 readings at WARM, or CPU >= CPU_UP / VR >= VR_UP / DIMM >= DIMM_UP for 2.
 #   Performance -> WARM after 30 min with SIO1 <= 73 and CPU/VR/DIMM below their UP limits minus a margin.
 #   Full at SIO1 >= 83 or CPU >= 86; back to Performance after 5 min below.
@@ -30,7 +31,7 @@ STATE = '/run/ryuji-fan-guard.state'
 QUIET, WARM, PERF, FULL = -80, -16, 0, 127
 LEVELS = (QUIET, WARM, PERF, FULL)
 SIO_UP = 79                      # SIO Temp 1: BMC warns at 80, critical at 85
-SIO_BACK_LOAD, SIO_BACK_HOT = 72, 68
+SIO_BACK_LOAD, SIO_BACK_HOT = 72, 71   # v2.1: 71 (was 68): -80 idles ~6C above -16, so 71 at -16 = ~77 at -80, under SIO_UP
 SIO_PERF_DOWN = 73
 LOAD_UP, LOAD_DOWN = 52, 50      # hottest CPU: idle at -80 is 41-50C, 4 busy threads 54-61C
 SIO_CLIMB = 77                   # SIO1 at or above this and climbing under load -> WARM before it reaches SIO_UP
