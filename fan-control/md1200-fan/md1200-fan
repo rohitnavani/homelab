@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
 # md1200-fan: keep the MD1200 shelf quiet via its EMM serial console (_shutup <pct>).
-# Picks a fan % from the hottest shelf drive and the EMM expander sensors once a
-# minute. The shelf drops back to its ~5000 rpm default about 10s after each
-# _shutup, so the chosen % is re-sent every few seconds to hold it.
-import glob, re, subprocess, sys, time, serial
+# Picks a fan % from the hottest shelf drive and the EMM backplane/SIM/expander sensors
+# every 30s, on a stepped curve: 10% at idle, +5% per couple of degrees above that.
+# The shelf drops back to its ~5000 rpm default about 10s after each _shutup, so the
+# chosen % is re-sent every few seconds to hold it.
+# Measured 2026-10-05: 10% ~2330, 15% ~2800, 20% ~3290, 25% ~3770, 30% ~4250 rpm.
+import re, subprocess, sys, time, serial
 
 PORT = '/dev/ttyUSB0'
 INTERVAL = 30   # temp check
 RESEND = 2      # seconds between _shutup re-sends (EMMs drop the setting ~10s after a
                 # command in some states, and a watchdog restarts them every ~324s)
-# Tiers: (fan %, max drive C, max backplane C, max SIM C, max expander C).
-# The firmware's own ramp kicked in at backplane 44 / drive 48 while it still
-# tolerated SIM 49 at 10% (SES warns SIM at 65, backplane at 50), so the quiet
-# tier sits just under the firmware's ramp. 15-30% all run at ~5000 rpm.
-# Drives: step up when any hits 49, back to 10% only when all are under 45.
-TIERS = [(10, 48, 43, 55, 85), (30, 50, 46, 58, 90), (50, 52, 48, 61, 95)]
-HOT = 80        # anything above the last tier
+# Curves per sensor: (quiet limit, degrees per 5% step, (temp, %) floors near the limits).
+# 10% while at or under the quiet limit, then +5% for every started step above it.
+# Drives idle at about 43-45C at 10%; ST8000NM0075 is rated to 60C.
+# SES warns at backplane 50C and SIM 65C; the firmware itself ramps near backplane 44C.
+CURVES = {
+    'drive':     (47, 2, [(58, 80)]),
+    'backplane': (43, 2, [(48, 50), (50, 80)]),
+    'SIM':       (55, 3, [(62, 50), (65, 80)]),
+    'expander':  (85, 3, [(95, 80)]),
+}
+MIN, MAX = 10, 80
 FALLBACK = 30   # if temps can't be read for STALE seconds
 STALE = 60      # a failed read keeps the current speed until reads have failed this long
 RETRY = 5       # seconds before re-reading after a failed read
-HYST = (4, 2, 2, 2)  # drive/backplane/SIM/expander: must be this far under a tier's limits to step down into it
+HYST = 2        # step down only once temps are this far under the current step's threshold
+HOLD = 120      # and at least this many seconds after the last change
 
 def emm(cmd):
     with serial.Serial(PORT, 38400, timeout=0.5) as s:
@@ -49,41 +56,54 @@ def drive_temp(dev):
     m = re.search(r'Current Drive Temperature:\s+(\d+)', out) or re.search(r'^194 .*?(\d+)(?: \(.*\))?$', out, re.M)
     return int(m.group(1)) if m else None
 
-def fits(tier, temps, margin):
-    _, d, bp, sim, exp = tier
-    return all(v <= lim - m for v, lim, m in zip(temps, (d, bp, sim, exp), margin))
-
-def pick(current):
+def read_temps():
     drives = [t for t in map(drive_temp, shelf_disks()) if t]
     out = emm('_temp_rd')
     bp = [int(x) for x in re.findall(r'BP_\d\[\d\] = (\d+)c', out)]
     sim = [int(x) for x in re.findall(r'SIM\d\[\d\] = (\d+)c', out)]
     exp = [int(x) for x in re.findall(r'EXP\d\[\d\] = (\d+)c', out)]
     if not (drives and bp and sim and exp):
-        return FALLBACK, None
-    temps = (max(drives), max(bp), max(sim), max(exp))
-    for tier in TIERS:
-        # stepping down (to a quieter tier than now) needs the hysteresis margin
-        if fits(tier, temps, HYST if tier[0] < current else (0, 0, 0, 0)):
-            return tier[0], temps
-    return HOT, temps
+        return None
+    return {'drive': max(drives), 'backplane': max(bp), 'SIM': max(sim), 'expander': max(exp)}
 
-pct, checked, last_good = FALLBACK, 0, time.time()
+def level(temps, offset=0):
+    # fan % the temps ask for; offset > 0 reads every sensor that many degrees warmer
+    pct = MIN
+    for name, (quiet, step, floors) in CURVES.items():
+        t = temps[name] + offset
+        p = MIN if t <= quiet else MIN + 5 * -(-(t - quiet) // step)
+        for ft, fp in floors:
+            if t >= ft:
+                p = max(p, fp)
+        pct = max(pct, p)
+    return min(pct, MAX)
+
+def fmt(temps):
+    return ' '.join(f'{k}={v}' for k, v in temps.items())
+
+pct, changed, checked, last_good = None, 0, 0, time.time()
 print('starting', flush=True)
 while True:
     try:
         if time.time() - checked >= INTERVAL:
-            new, temps = pick(pct)
+            temps = read_temps()
             checked = time.time()
+            new = pct
             if temps is None:
                 checked -= INTERVAL - RETRY          # re-read soon
-                if time.time() - last_good < STALE:  # brief glitch: keep the current speed
-                    new = pct
+                if pct is None or time.time() - last_good >= STALE:
+                    new = FALLBACK                   # brief glitch: keep the current speed
             else:
                 last_good = time.time()
+                want = level(temps)
+                if pct is None or want > pct:
+                    new = want                       # start, or step up right away
+                elif want < pct and time.time() - changed >= HOLD:
+                    # one step down, only if still lower with HYST degrees of margin
+                    new = max(level(temps, HYST), pct - 5)
             if new != pct:
-                print(f'fan {new}% (drive/backplane/SIM/expander max: {temps})', flush=True)
-            pct = new
+                print(f'fan {new}% ({fmt(temps) if temps else "temps unreadable"})', flush=True)
+                pct, changed = new, time.time()
         emm('_shutup %d' % pct)
     except Exception as ex:
         print('error:', ex, file=sys.stderr, flush=True)
