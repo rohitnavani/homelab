@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+# ryuji-fan-guard: keep ryuji's BMC fan offset at Rohit's quiet -80 and raise it only when ryuji is
+# genuinely warm; the BMC's own fan curve keeps running underneath.
+# Measured 2026-10-06: in the BMC's custom-offset mode, offsets from -80 to -31 only move the CPU fans
+# (2,200 -> 3,800 rpm at idle); the system fans stay at ~1,000-1,100 rpm. SIO Temp 1 follows system-fan
+# airflow and room temperature (not CPU load), so it only gets more air at the Performance preset (0).
+# Levels, quietest first: -80 (normal), -31 (CPU fans up), 0 (Performance: system fans up), 127 (full).
+# Runs as root on ryuji; the BMC password is in PWFILE (0600). Stop the service to set the offset by hand.
+import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
+
+BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
+STATE = '/run/ryuji-fan-guard.state'
+QUIET, CPU_LVL, SIO_LVL, FULL = -80, -31, 0, 127
+SIO_UP, SIO_DOWN = 79, 73        # SIO Temp 1: BMC warns at 80, critical at 85
+CPU_UP, CPU_DOWN = 78, 65        # hottest CPU (BMC warns at 85)
+VR_UP, VR_DOWN = 90, 80
+DIMM_UP, DIMM_DOWN = 75, 65
+SIO_EMERG, CPU_EMERG = 83, 86
+HOLD = {SIO_LVL: 1800, CPU_LVL: 600, FULL: 300}   # seconds of cool readings before stepping down
+INTERVAL, VERIFY = 60, 1800
+
+def log(m):
+    print(m, flush=True)
+
+# --- BMC web API (Avocent MergePoint; same calls its Utilities page makes) ---
+def opener():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+    ctx.set_ciphers('DEFAULT@SECLEVEL=0')
+    return urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx),
+                                       urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+def esc(v):  # the login page's encodeSetValue()
+    for a, b in [('\\', '\\\\'), (':', '\\:'), (',', '\\,'), ('(', '\\('), (')', '\\)'), ('=', '\\='), ('&', '\\&'), ('?', '\\?')]:
+        v = v.replace(a, b)
+    return urllib.parse.quote(v, safe='')
+
+def bmc(action, offset=None):
+    """action 'get' -> current offset; 'set' -> offset after setting (read back)."""
+    op = opener()
+    def req(path, data=None, st2=None):
+        r = urllib.request.Request(BMC + path, data=data)
+        if data is not None:
+            r.add_header('Content-Type', 'application/x-www-form-urlencoded')
+        if st2:
+            r.add_header('ST2', st2)
+        with op.open(r, timeout=20) as resp:
+            return resp.read().decode(errors='replace')
+    pw = open(PWFILE).read().strip('\n')
+    if '<authResult>0</authResult>' not in req('/data/login', f'user={USER}&password={esc(pw)}'.encode()):
+        raise RuntimeError('BMC login failed')
+    m = re.search(r'CSRFHandler\(\s*"ST1",\s*"([^"]+)",\s*"ST2",\s*"([^"]+)"', req('/index.html'))
+    st1, st2 = m.group(1), m.group(2)
+    try:
+        def current():
+            raw = int(re.search(r'var fanCurve\s*=\s*(\d+);', req(f'/utilities.html?ST1={st1}', st2=st2)).group(1))
+            return raw if raw < 128 else 128 - raw
+        if action == 'set':
+            raw = offset if offset >= 0 else 128 - offset
+            req(f'/gbtdata?set=FanCurveSet(1,{raw})&ST1={st1}', st2=st2)
+        return current()
+    finally:
+        try:
+            req(f'/data/logout?ST1={st1}', st2=st2)
+        except Exception:
+            pass
+
+# --- sensors (in-band IPMI) ---
+def temps():
+    out = subprocess.run(['ipmitool', 'sdr', 'type', 'Temperature'], capture_output=True, text=True, timeout=30).stdout
+    t = {}
+    for line in out.splitlines():
+        f = [x.strip() for x in line.split('|')]
+        m = re.match(r'(\d+) degrees', f[4]) if len(f) >= 5 else None
+        if m:
+            t[f[0]] = int(m.group(1))
+    if 'SIO Temp 1' not in t:
+        return None
+    return {'sio': t['SIO Temp 1'],
+            'cpu': max(v for k, v in t.items() if re.match(r'CPU\d_TEMP', k)),
+            'vr': max([v for k, v in t.items() if k.startswith('VR_')] or [0]),
+            'dimm': max([v for k, v in t.items() if k.startswith('DIMM')] or [0])}
+
+def wanted(level, t, hot_count, cool_since, now):
+    """returns the level the current readings ask for (stepping down only after HOLD)."""
+    if t['sio'] >= SIO_EMERG or t['cpu'] >= CPU_EMERG:
+        return FULL
+    up = QUIET
+    if hot_count.get('sio', 0) >= 2:
+        up = SIO_LVL
+    elif hot_count.get('cpu', 0) >= 2:
+        up = CPU_LVL
+    if up > level:
+        return up
+    # stepping down: only once everything that put us here has been cool for HOLD seconds
+    if level == FULL:
+        return SIO_LVL if now - cool_since.get('full', now) >= HOLD[FULL] else FULL
+    if level == SIO_LVL:
+        if now - cool_since.get('sio', now) >= HOLD[SIO_LVL]:
+            return CPU_LVL if hot_count.get('cpu_warm', 0) else QUIET
+        return SIO_LVL
+    if level == CPU_LVL:
+        return QUIET if now - cool_since.get('cpu', now) >= HOLD[CPU_LVL] else CPU_LVL
+    return level
+
+def main():
+    level, last_verify, hot, cool = None, 0, {}, {}
+    try:
+        level = bmc('get')
+        log(f'starting; BMC offset is {level}')
+    except Exception as ex:
+        log(f'starting; could not read the BMC offset ({ex!r}); assuming {QUIET}')
+        level = QUIET
+    if level not in (QUIET, CPU_LVL, SIO_LVL, FULL):
+        log(f'offset {level} is not one of the guard levels; treating it as {QUIET}')
+        level = QUIET
+    fails = 0
+    while True:
+        now = time.time()
+        try:
+            t = temps()
+        except Exception:
+            t = None
+        if t is None:
+            fails += 1
+            if fails == 5 and level < SIO_LVL:
+                log('temps unreadable for 5 minutes; going to Performance (0) to be safe')
+                try:
+                    level = bmc('set', SIO_LVL)
+                except Exception as ex:
+                    log(f'BMC set failed: {ex!r}')
+            time.sleep(INTERVAL)
+            continue
+        fails = 0
+        hot['sio'] = hot.get('sio', 0) + 1 if t['sio'] >= SIO_UP else 0
+        hot['cpu'] = hot.get('cpu', 0) + 1 if (t['cpu'] >= CPU_UP or t['vr'] >= VR_UP or t['dimm'] >= DIMM_UP) else 0
+        hot['cpu_warm'] = 1 if (t['cpu'] > CPU_DOWN or t['vr'] > VR_DOWN or t['dimm'] > DIMM_DOWN) else 0
+        if t['sio'] <= SIO_DOWN:
+            cool.setdefault('sio', now)
+        else:
+            cool.pop('sio', None)
+        if not hot['cpu_warm']:
+            cool.setdefault('cpu', now)
+        else:
+            cool.pop('cpu', None)
+        if t['sio'] < SIO_EMERG - 2 and t['cpu'] < CPU_EMERG - 4:
+            cool.setdefault('full', now)
+        else:
+            cool.pop('full', None)
+        want = wanted(level, t, hot, cool, now)
+        if want != level:
+            try:
+                got = bmc('set', want)
+                log(f'offset {level} -> {got} (sio={t["sio"]} cpu={t["cpu"]} vr={t["vr"]} dimm={t["dimm"]})')
+                level, last_verify = got, now
+                cool.clear()
+            except Exception as ex:
+                log(f'BMC set to {want} failed: {ex!r}; retrying next minute')
+        elif now - last_verify >= VERIFY:
+            try:
+                got = bmc('get')
+                if got != level:
+                    log(f'BMC offset was changed to {got} outside the guard; putting back {level}')
+                    bmc('set', level)
+                last_verify = now
+            except Exception as ex:
+                log(f'BMC check failed: {ex!r}')
+        with open(STATE, 'w') as f:
+            json.dump({'time': time.strftime('%F %T'), 'offset': level, **t}, f)
+        time.sleep(INTERVAL)
+
+if __name__ == '__main__':
+    main()

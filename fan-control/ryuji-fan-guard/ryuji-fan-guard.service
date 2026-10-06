@@ -1,0 +1,9 @@
+[Unit]
+Description=Keep ryuji BMC fan offset quiet (-80), raise it only when warm
+After=network-online.target
+[Service]
+ExecStart=/usr/bin/python3 -W ignore /usr/local/sbin/ryuji-fan-guard
+Restart=always
+RestartSec=60
+[Install]
+WantedBy=multi-user.target
