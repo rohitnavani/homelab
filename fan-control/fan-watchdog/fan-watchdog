@@ -1,14 +1,21 @@
 #!/bin/bash
 # Hold R720 fans low with a gentle curve: 10% at idle, small steps up as things warm,
 # slow steps back down. Hand control to the iDRAC's auto profile only in an emergency.
-MIN_PCT=10; MAX_PCT=35; INTERVAL=30; DOWN_STEP=1   # % per interval on the way down
+# v4 (2026-10-06, Rohit: no power caps; "if we're under full load noise is ok, just make sure that a high load that
+# isnt full load is at medium noise level"): the CPU curve is piecewise so high-but-not-full load stays in the medium
+# range and full load is held by the curve (up to MAX_PCT) instead of flipping to iDRAC auto; auto only at CPU_HOT.
+MIN_PCT=10; MAX_PCT=60; INTERVAL=30; DOWN_STEP=1   # % per interval on the way down
+FAST_DOWN_ABOVE=35; FAST_DOWN_STEP=3               # unwind faster from full-load levels
 # Curves: "quiet temp:temp at MAX_PCT". Fan % = the highest any sensor asks for.
 # iDRAC warns at CPU 94, exhaust 70, inlet 42; the ST1200 HDDs and HUSMM SSDs trip at 60 and 65 (smartctl);
 # DDR3 RDIMMs are rated to 85 (95 with double refresh). DIMM temps come from the memory controllers' TSOD
 # readings (DIMMTEMPSTAT), since the iDRAC doesn't expose them and manual fan mode bypasses its own DIMM logic.
-CPU_CURVE=68:82; EXH_CURVE=48:58; INLET_CURVE=30:36; HDD_CURVE=42:48; SSD_CURVE=52:62; DIMM_CURVE=65:80
+# CPU: "temp:%" points, linear between them, MIN_PCT below the first, the last % above it.
+CPU_POINTS="68:10 82:35 88:55"   # = v3 (68->82: 10->35%) up to 82C, then a steep full-load range; auto at CPU_HOT
+# The other sensors keep v3's curves, topping out at TOP_OTHER (they never needed more than v3's 35%).
+TOP_OTHER=35; EXH_CURVE=48:58; INLET_CURVE=30:36; HDD_CURVE=42:48; SSD_CURVE=52:62; DIMM_CURVE=65:80
 # Emergency: iDRAC auto at any of these, back to the curve after COOL_SECS under the curve's top
-CPU_HOT=85; EXH_HOT=62; INLET_HOT=38; HDD_HOT=52; SSD_HOT=65; DIMM_HOT=85; COOL_SECS=300
+CPU_HOT=90; EXH_HOT=62; INLET_HOT=38; HDD_HOT=52; SSD_HOT=65; DIMM_HOT=85; COOL_SECS=300
 
 set_auto() { ipmitool raw 0x30 0x30 0x01 0x01 >/dev/null 2>&1; }
 set_pct()  { ipmitool raw 0x30 0x30 0x01 0x00 >/dev/null && ipmitool raw 0x30 0x30 0x02 0xff $(printf '0x%02x' $1) >/dev/null; }
@@ -44,10 +51,19 @@ read_temps() {
   HDD=$(disk_max ST1200); SSD=$(disk_max HUSMM); DIMM=$(dimm_max) || return 1
   [ -n "$INLET" ] && [ -n "$EXH" ] && [ "$CPU" -gt 0 ] && [ "$HDD" -gt 0 ] && [ "$SSD" -gt 0 ] && [ "${DIMM:-0}" -gt 0 ]
 }
-want() {  # want <temp> <lo:hi> -> fan % for that sensor
+want() {  # want <temp> <lo:hi> -> fan % for that sensor (MIN_PCT..TOP_OTHER)
   local lo=${2%:*} hi=${2#*:}
-  if [ $1 -le $lo ]; then echo $MIN_PCT; elif [ $1 -ge $hi ]; then echo $MAX_PCT
-  else echo $(( MIN_PCT + (MAX_PCT-MIN_PCT)*($1-lo)/(hi-lo) )); fi
+  if [ $1 -le $lo ]; then echo $MIN_PCT; elif [ $1 -ge $hi ]; then echo $TOP_OTHER
+  else echo $(( MIN_PCT + (TOP_OTHER-MIN_PCT)*($1-lo)/(hi-lo) )); fi
+}
+cpu_want() {  # cpu_want <temp> -> fan % from CPU_POINTS
+  local t=$1 pt=0 pp=$MIN_PCT first=1 x p
+  for xp in $CPU_POINTS; do
+    x=${xp%:*}; p=${xp#*:}
+    if [ $first = 1 ]; then first=0; [ $t -le $x ] && { echo $MIN_PCT; return; }
+    elif [ $t -le $x ]; then echo $(( pp + (p-pp)*(t-pt)/(x-pt) )); return; fi
+    pt=$x; pp=$p
+  done; echo $pp
 }
 
 mode=curve; pct=$MIN_PCT; cool_since=0
@@ -60,7 +76,7 @@ while :; do
   if [ $CPU -ge $CPU_HOT ] || [ $EXH -ge $EXH_HOT ] || [ $INLET -ge $INLET_HOT ] || [ $HDD -ge $HDD_HOT ] || [ $SSD -ge $SSD_HOT ] || [ $DIMM -ge $DIMM_HOT ]; then
     [ $mode != auto ] && { set_auto; mode=auto; log "hot ($s): auto"; }; cool_since=0; continue; fi
   tgt=$MIN_PCT
-  for w in $(want $CPU $CPU_CURVE) $(want $EXH $EXH_CURVE) $(want $INLET $INLET_CURVE) $(want $HDD $HDD_CURVE) $(want $SSD $SSD_CURVE) $(want $DIMM $DIMM_CURVE); do
+  for w in $(cpu_want $CPU) $(want $EXH $EXH_CURVE) $(want $INLET $INLET_CURVE) $(want $HDD $HDD_CURVE) $(want $SSD $SSD_CURVE) $(want $DIMM $DIMM_CURVE); do
     [ $w -gt $tgt ] && tgt=$w; done
   if [ $mode = auto ]; then
     if [ $tgt -lt $MAX_PCT ]; then
@@ -72,7 +88,9 @@ while :; do
   fi
   old=$pct
   if [ $tgt -gt $pct ]; then pct=$tgt                     # up right away
-  elif [ $tgt -lt $pct ]; then pct=$((pct-DOWN_STEP)); fi  # down slowly so it doesn't hunt
+  elif [ $tgt -lt $pct ]; then                              # down slowly so it doesn't hunt
+    step=$DOWN_STEP; [ $pct -gt $FAST_DOWN_ABOVE ] && step=$FAST_DOWN_STEP
+    pct=$((pct-step)); [ $pct -lt $tgt ] && pct=$tgt; fi
   set_pct $pct || { set_auto; mode=auto; log "ipmi set failed: auto"; continue; }   # re-assert in case the iDRAC reset
   [ $pct -ne $old ] && log "${pct}% ($s)" || echo "$(date -u '+%F %T') ${pct}% ($s)" > /run/fan-watchdog.state
 done
