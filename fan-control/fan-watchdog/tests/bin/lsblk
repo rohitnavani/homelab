@@ -1,0 +1,2 @@
+#!/bin/bash
+printf 'sda ST1200MM0007\nsdb HUSMM8080ASS20\nsdd ST8000NM0075\n'

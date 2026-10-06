@@ -16,6 +16,7 @@ This is the central repository for **TinyNAS**, a self-hosted, version-controlle
 /pool
 ├── .gitignore                  # Global exclusion rules for databases and .env secrets
 ├── README.md                   # Infrastructure documentation
+├── fan-control/                # Quiet fan controllers for the rack (MD1200 shelf, R720xd, ryuji BMC) + offline tests
 ├── docker-compose/             # Containerized services stack
 │   ├── AdGuardHome/            # DNS-layer ad-blocking & security configuration
 │   ├── cloudflare-ddns/        # Dynamic DNS syncing for domain management

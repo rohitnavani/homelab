@@ -1,0 +1,4 @@
+#!/bin/bash
+read cpu exh inlet hdd ssd fail dimm dimmfail < ${WD_DIR}/scen
+case "${@: -1}" in /dev/sda) t=$hdd;; /dev/sdb) t=$ssd;; *) t=99;; esac
+echo "Current Drive Temperature:     $t C"

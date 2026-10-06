@@ -1,0 +1,4 @@
+#!/bin/bash
+echo "0000:3f:10.4 System peripheral: Intel Corporation Xeon E5 v2 Integrated Memory Controller 1 Channel 0-3 Thermal Control 2"
+echo "0000:3f:10.0 System peripheral: Intel Corporation Xeon E5 v2 Integrated Memory Controller 1 Channel 0-3 Thermal Control 0"
+echo "0000:3f:0f.0 System peripheral: Intel Corporation Xeon E5 v2 Integrated Memory Controller 0 Target Address/Thermal Registers"

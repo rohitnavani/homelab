@@ -1,0 +1,12 @@
+#!/bin/bash
+read cpu exh inlet hdd ssd fail dimm dimmfail < ${WD_DIR}/scen
+if [ "$1 $2 $3" = "sdr type Temperature" ]; then
+  [ "$fail" = 1 ] && exit 1
+  printf 'Inlet Temp       | 04h | ok  |  7.1 | %s degrees C\n' $inlet
+  printf 'Exhaust Temp     | 01h | ok  |  7.1 | %s degrees C\n' $exh
+  printf 'Temp             | 0Eh | ok  |  3.1 | %s degrees C\n' $cpu
+  printf 'Temp             | 0Fh | ok  |  3.2 | %s degrees C\n' $((cpu-2))
+  exit 0
+fi
+[ "$1" = raw ] && echo "$(date +%s.%N) $*" >> ${WD_DIR}/raw.log
+exit 0
