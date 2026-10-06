@@ -1,48 +1,61 @@
 #!/bin/bash
-# Hold R720 fans at a fixed low speed; hand control back to the iDRAC's auto profile when anything runs warm.
-LOW_PCT=10
-# Switch to auto when any of these is reached
-CPU_HOT=65; EXH_HOT=45; INLET_HOT=30; DRIVE_HOT=45
-# Return to manual only after everything stays below these for COOL_SECS
-CPU_OK=58;  EXH_OK=40;  INLET_OK=27;  DRIVE_OK=42; COOL_SECS=300
-INTERVAL=30
+# Hold R720 fans low with a gentle curve: 10% at idle, small steps up as things warm,
+# slow steps back down. Hand control to the iDRAC's auto profile only in an emergency.
+MIN_PCT=10; MAX_PCT=35; INTERVAL=30; DOWN_STEP=1   # % per interval on the way down
+# Curves: "quiet temp:temp at MAX_PCT". Fan % = the highest any sensor asks for.
+# iDRAC warns at CPU 94, exhaust 70, inlet 42; ST1200 HDDs and HUSMM SSDs are rated to 60 and 70.
+CPU_CURVE=68:82; EXH_CURVE=48:58; INLET_CURVE=30:36; HDD_CURVE=42:48; SSD_CURVE=52:62
+# Emergency: iDRAC auto at any of these, back to the curve after COOL_SECS under the curve's top
+CPU_HOT=85; EXH_HOT=62; INLET_HOT=38; HDD_HOT=52; SSD_HOT=65; COOL_SECS=300
 
-set_auto()   { ipmitool raw 0x30 0x30 0x01 0x01 >/dev/null 2>&1; }
-set_manual() { ipmitool raw 0x30 0x30 0x01 0x00 >/dev/null && ipmitool raw 0x30 0x30 0x02 0xff $(printf '0x%02x' $LOW_PCT) >/dev/null; }
+set_auto() { ipmitool raw 0x30 0x30 0x01 0x01 >/dev/null 2>&1; }
+set_pct()  { ipmitool raw 0x30 0x30 0x01 0x00 >/dev/null && ipmitool raw 0x30 0x30 0x02 0xff $(printf '0x%02x' $1) >/dev/null; }
 log() { echo "$*"; echo "$(date -u '+%F %T') $*" > /run/fan-watchdog.state; }
 trap 'set_auto; log "stopped: auto"; exit 0' TERM INT EXIT
 
+disk_max() {  # hottest drive whose model matches $1
+  local m=0 v d
+  for d in $(lsblk -dno NAME,MODEL | awk -v p="$1" '$0 ~ p {print $1}'); do
+    v=$(smartctl -A /dev/$d 2>/dev/null | grep -oP 'Current Drive Temperature:\s+\K\d+'); [ "${v:-0}" -gt $m ] && m=$v
+  done; echo $m
+}
 read_temps() {
   local t; t=$(ipmitool sdr type Temperature 2>/dev/null) || return 1
   INLET=$(awk -F'|' '/Inlet/{print $5+0}' <<<"$t")
   EXH=$(awk -F'|' '/Exhaust/{print $5+0}' <<<"$t")
   CPU=$(awk -F'|' '$1 ~ /^Temp/{if($5+0>m)m=$5+0} END{print m+0}' <<<"$t")
-  DRIVE=0
-  for d in $(lsblk -dno NAME,MODEL | awk '/ST1200|HUSMM/{print $1}'); do
-    v=$(smartctl -A /dev/$d 2>/dev/null | grep -oP 'Current Drive Temperature:\s+\K\d+'); [ "${v:-0}" -gt $DRIVE ] && DRIVE=$v
-  done
-  [ -n "$INLET" ] && [ -n "$EXH" ] && [ "$CPU" -gt 0 ] && [ "$DRIVE" -gt 0 ]
+  HDD=$(disk_max ST1200); SSD=$(disk_max HUSMM)
+  [ -n "$INLET" ] && [ -n "$EXH" ] && [ "$CPU" -gt 0 ] && [ "$HDD" -gt 0 ] && [ "$SSD" -gt 0 ]
+}
+want() {  # want <temp> <lo:hi> -> fan % for that sensor
+  local lo=${2%:*} hi=${2#*:}
+  if [ $1 -le $lo ]; then echo $MIN_PCT; elif [ $1 -ge $hi ]; then echo $MAX_PCT
+  else echo $(( MIN_PCT + (MAX_PCT-MIN_PCT)*($1-lo)/(hi-lo) )); fi
 }
 
-mode=auto; cool_since=0
-set_manual && mode=manual && log "start: manual ${LOW_PCT}%"
+mode=curve; pct=$MIN_PCT; cool_since=0
+set_pct $pct && log "start: ${pct}%"
 while :; do
   sleep $INTERVAL
   if ! read_temps; then
     [ $mode != auto ] && { set_auto; mode=auto; log "sensor read failed: auto"; }; cool_since=0; continue; fi
-  now=$(date +%s); s="cpu=$CPU exh=$EXH inlet=$INLET drive=$DRIVE"
-  if [ $mode = manual ]; then
-    if [ $CPU -ge $CPU_HOT ] || [ $EXH -ge $EXH_HOT ] || [ $INLET -ge $INLET_HOT ] || [ $DRIVE -ge $DRIVE_HOT ]; then
-      set_auto; mode=auto; cool_since=0; log "hot ($s): auto"
-    else
-      set_manual || { set_auto; mode=auto; log "ipmi set failed: auto"; }   # re-assert in case the iDRAC reset
-      echo "$(date -u '+%F %T') manual ${LOW_PCT}% ($s)" > /run/fan-watchdog.state
-    fi
-  else
-    if [ $CPU -lt $CPU_OK ] && [ $EXH -lt $EXH_OK ] && [ $INLET -lt $INLET_OK ] && [ $DRIVE -lt $DRIVE_OK ]; then
-      [ $cool_since -eq 0 ] && cool_since=$now
-      if [ $((now-cool_since)) -ge $COOL_SECS ] && set_manual; then mode=manual; log "cool for ${COOL_SECS}s ($s): manual ${LOW_PCT}%"
+  s="cpu=$CPU exh=$EXH inlet=$INLET hdd=$HDD ssd=$SSD"
+  if [ $CPU -ge $CPU_HOT ] || [ $EXH -ge $EXH_HOT ] || [ $INLET -ge $INLET_HOT ] || [ $HDD -ge $HDD_HOT ] || [ $SSD -ge $SSD_HOT ]; then
+    [ $mode != auto ] && { set_auto; mode=auto; log "hot ($s): auto"; }; cool_since=0; continue; fi
+  tgt=$MIN_PCT
+  for w in $(want $CPU $CPU_CURVE) $(want $EXH $EXH_CURVE) $(want $INLET $INLET_CURVE) $(want $HDD $HDD_CURVE) $(want $SSD $SSD_CURVE); do
+    [ $w -gt $tgt ] && tgt=$w; done
+  if [ $mode = auto ]; then
+    if [ $tgt -lt $MAX_PCT ]; then
+      now=$(date +%s); [ $cool_since -eq 0 ] && cool_since=$now
+      if [ $((now-cool_since)) -ge $COOL_SECS ] && set_pct $MAX_PCT; then mode=curve; pct=$MAX_PCT; log "cooled ($s): ${pct}%"
       else echo "$(date -u '+%F %T') auto, cool for $((now-cool_since))s of ${COOL_SECS}s ($s)" > /run/fan-watchdog.state; fi
     else cool_since=0; echo "$(date -u '+%F %T') auto, waiting to cool ($s)" > /run/fan-watchdog.state; fi
+    continue
   fi
+  old=$pct
+  if [ $tgt -gt $pct ]; then pct=$tgt                     # up right away
+  elif [ $tgt -lt $pct ]; then pct=$((pct-DOWN_STEP)); fi  # down slowly so it doesn't hunt
+  set_pct $pct || { set_auto; mode=auto; log "ipmi set failed: auto"; continue; }   # re-assert in case the iDRAC reset
+  [ $pct -ne $old ] && log "${pct}% ($s)" || echo "$(date -u '+%F %T') ${pct}% ($s)" > /run/fan-watchdog.state
 done
