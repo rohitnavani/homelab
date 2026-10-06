@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 # md1200-fan: keep the MD1200 shelf quiet via its EMM serial console (_shutup <pct>).
-# Holds the quietest fan % that keeps the hottest shelf drive near a target temperature: every
-# 5 minutes it nudges the speed 1% up when the (smoothed) temps are above target, 1% down when they
-# are clearly below it, and leaves it alone in between, so it settles on one steady speed instead of
-# stepping between fixed tiers. Hotter readings react faster, and hard floors cover real emergencies.
+# Holds the quietest fan % that keeps the hottest shelf drive near a target temperature: it nudges the
+# speed 1% up (at most every 10 min) when the (smoothed) temps are above target, 1% down (at most every
+# 20 min) when they are clearly below it, and leaves it alone in between, so it settles on one steady
+# speed instead of stepping between fixed tiers. Hotter readings react faster, and hard floors cover
+# real emergencies.
+# v3.1 (2026-10-06): v3 nudged every 5 min, but the shelf drives take 30-60 min to settle after a fan
+# change (measured overnight), so v3 kept stepping long after each change and, in a model with the
+# measured lag, cycled between ~18% and ~28% over ~4 h (seen live 07:40-08:50: 25 -> 27 -> 19%).
+# Slower nudges (up 10 min, down 20 min) are steady from a settled start at every lag tested (15-90 min,
+# with and without the room's hourly +-1C cycle); easing down from emergency levels stays at 5 min.
 # The cable must be on the primary EMM (the top one; the bottom one holds the SAS links and is
 # secondary). A command to the secondary only lasts ~15-20s before the primary takes over, often with
 # its ~7,600 rpm thermal ramp, so fan commands are only sent while _who answers "primary and active".
@@ -27,7 +33,9 @@ DOWN_MARGIN = {'drive': 1.5, 'backplane': 2.0, 'SIM': 3.0, 'expander': 3.0}  # c
 URGENT = {'drive': 52, 'backplane': 48, 'SIM': 61, 'expander': 90}           # raw temps: +5% every check
 FLOORS = [('drive', 56, 60), ('drive', 58, 80), ('backplane', 50, 80), ('SIM', 64, 80), ('expander', 95, 80)]
 MIN, NORMAL_MAX, MAX = 10, 45, 80   # normal range tops out at a medium level; only floors/urgent go higher
-NUDGE = 300     # seconds between 1% adjustments
+NUDGE_UP = 600     # seconds since the last change before a 1-2% step up
+NUDGE_DOWN = 1200  # seconds since the last change before a 1% step down
+EASE = 300         # seconds between 5% steps down from an emergency level
 EMA = 0.3       # smoothing per 30s reading (1C sensor resolution)
 FALLBACK = 30   # if temps can't be read for STALE seconds
 STALE = 60      # a failed read keeps the current speed until reads have failed this long
@@ -118,23 +126,21 @@ def floor_for(temps):
             f = max(f, p)
     return f
 
-def decide(pct, smooth, temps, nudge_due):
-    # returns (new %, reason) for one 30s reading
+def decide(pct, smooth, temps, since):
+    # returns (new %, reason) for one 30s reading; since = seconds since the last change
     f = floor_for(temps)
     if pct < f:
         return f, 'floor'
     if any(temps[k] >= v for k, v in URGENT.items()):
         return min(MAX, max(pct + 5, f)), 'urgent'
-    if not nudge_due:
-        return pct, None
     if pct > NORMAL_MAX:
-        return max(NORMAL_MAX, f, pct - 5), 'easing'   # leave an emergency level gradually
+        if since >= EASE:
+            return max(NORMAL_MAX, f, pct - 5), 'easing'   # leave an emergency level gradually
+        return pct, None
     over = max(smooth[k] - TARGET[k] for k in TARGET)
-    if over > 1.5:
-        return min(NORMAL_MAX, pct + 2), 'warm'
-    if over > 0.25:
-        return min(NORMAL_MAX, pct + 1), 'warm'
-    if all(smooth[k] < TARGET[k] - DOWN_MARGIN[k] for k in TARGET):
+    if over > 0.25 and since >= NUDGE_UP:
+        return min(NORMAL_MAX, pct + (2 if over > 1.5 else 1)), 'warm'
+    if all(smooth[k] < TARGET[k] - DOWN_MARGIN[k] for k in TARGET) and since >= NUDGE_DOWN:
         return max(MIN, f, pct - 1), 'cool'
     return pct, None
 
@@ -192,14 +198,12 @@ while True:
                 if pct is None:
                     new, why = start_pct(temps), 'start'
                 else:
-                    due = time.time() - last_nudge >= NUDGE
-                    new, why = decide(pct, smooth, temps, due)
-                    if due:
-                        last_nudge = time.time()
+                    new, why = decide(pct, smooth, temps, time.time() - last_nudge)
             if new != pct:
                 sm = ' '.join(f'{k}={v:.1f}' for k, v in smooth.items()) if smooth else ''
                 log(f'fan {new}% ({why if temps else "temps unreadable"}: {fmt(temps) if temps else ""}; smoothed {sm})')
                 pct, changed, drift_since, send_now = new, time.time(), None, True
+                last_nudge = time.time()     # any change restarts the nudge timers
         if role == 'primary' and (send_now or time.time() - last_send >= RESEND):
             reply = con.cmd('_shutup %d' % pct, secs=0.6)
             last_send, send_now = time.time(), False
