@@ -27,6 +27,8 @@ This is the central repository for **TinyNAS**, a self-hosted, version-controlle
 └── scripts/                    # System monitoring and management scripts
     ├── autorar                 # Automated compression pipeline for finished downloads
     ├── drivecheck              # SMART disk health monitoring and alerting
+    ├── md1200-fan              # mementos: holds the MD1200 shelf fans quiet via EMM serial (_shutup), temp-tiered
+    ├── md1200-fan.service      # systemd unit for md1200-fan (/usr/local/bin on mementos)
     ├── nextcloud-update        # Automated maintenance lifecycle for Nextcloud AIO
     ├── retention               # Backup pruning engine
     ├── root_disk_metrics       # Host disk tracking utility for Prometheus scraping
