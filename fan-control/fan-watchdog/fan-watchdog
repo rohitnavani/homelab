@@ -4,8 +4,11 @@
 # v4 (2026-10-06, Rohit: no power caps; "if we're under full load noise is ok, just make sure that a high load that
 # isnt full load is at medium noise level"): the CPU curve is piecewise so high-but-not-full load stays in the medium
 # range and full load is held by the curve (up to MAX_PCT) instead of flipping to iDRAC auto; auto only at CPU_HOT.
+# v4.1 (2026-10-06 13:xx): 2% hysteresis (HYST) so a steady load holds one speed instead of toggling 1% each loop.
 MIN_PCT=10; MAX_PCT=60; INTERVAL=30; DOWN_STEP=1   # % per interval on the way down
 FAST_DOWN_ABOVE=35; FAST_DOWN_STEP=3               # unwind faster from full-load levels
+HYST=2; CPU_URGENT=85   # v4.1: change only when the target is >= HYST % away (stops 1% toggling as the integer CPU
+                        # reading flips between two values); above CPU_URGENT any rise is followed at once
 # Curves: "quiet temp:temp at MAX_PCT". Fan % = the highest any sensor asks for.
 # iDRAC warns at CPU 94, exhaust 70, inlet 42; the ST1200 HDDs and HUSMM SSDs trip at 60 and 65 (smartctl);
 # DDR3 RDIMMs are rated to 85 (95 with double refresh). DIMM temps come from the memory controllers' TSOD
@@ -87,8 +90,8 @@ while :; do
     continue
   fi
   old=$pct
-  if [ $tgt -gt $pct ]; then pct=$tgt                     # up right away
-  elif [ $tgt -lt $pct ]; then                              # down slowly so it doesn't hunt
+  if [ $tgt -ge $((pct+HYST)) ] || { [ $tgt -gt $pct ] && [ $CPU -ge $CPU_URGENT ]; }; then pct=$tgt   # up right away
+  elif [ $tgt -le $((pct-HYST)) ]; then                    # down slowly so it doesn't hunt
     step=$DOWN_STEP; [ $pct -gt $FAST_DOWN_ABOVE ] && step=$FAST_DOWN_STEP
     pct=$((pct-step)); [ $pct -lt $tgt ] && pct=$tgt; fi
   set_pct $pct || { set_auto; mode=auto; log "ipmi set failed: auto"; continue; }   # re-assert in case the iDRAC reset
