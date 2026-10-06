@@ -13,12 +13,13 @@ RESEND = 2      # seconds between _shutup re-sends (EMMs drop the setting ~10s a
 # The firmware's own ramp kicked in at backplane 44 / drive 48 while it still
 # tolerated SIM 49 at 10% (SES warns SIM at 65, backplane at 50), so the quiet
 # tier sits just under the firmware's ramp. 15-30% all run at ~5000 rpm.
-TIERS = [(10, 47, 43, 55, 85), (30, 49, 46, 58, 90), (50, 52, 48, 61, 95)]
+# Drives: step up when any hits 49, back to 10% only when all are under 45.
+TIERS = [(10, 48, 43, 55, 85), (30, 50, 46, 58, 90), (50, 52, 48, 61, 95)]
 HOT = 80        # anything above the last tier
 FALLBACK = 30   # if temps can't be read for STALE seconds
 STALE = 60      # a failed read keeps the current speed until reads have failed this long
 RETRY = 5       # seconds before re-reading after a failed read
-HYST = 2        # must be this far under a tier's limits to step down into it
+HYST = (4, 2, 2, 2)  # drive/backplane/SIM/expander: must be this far under a tier's limits to step down into it
 
 def emm(cmd):
     with serial.Serial(PORT, 38400, timeout=0.5) as s:
@@ -33,9 +34,15 @@ def emm(cmd):
     return out.decode(errors='replace')
 
 def shelf_disks():
-    # dataPool lives entirely on the MD1200 shelf
+    # dataPool's data vdevs live on the MD1200 shelf; its log SSD (and any cache/special
+    # vdevs) sit in the R720xd, so stop at the first section header (logs, cache, ...)
     out = subprocess.run(['zpool', 'list', '-vHP', 'dataPool'], capture_output=True, text=True).stdout
-    return sorted({re.sub(r'-part\d+$', '', m) for m in re.findall(r'(/dev/\S+)', out)})
+    devs = []
+    for line in out.splitlines()[1:]:
+        if line and not line[0].isspace():
+            break
+        devs += re.findall(r'(/dev/\S+)', line)
+    return sorted({re.sub(r'-part\d+$', '', d) for d in devs})
 
 def drive_temp(dev):
     out = subprocess.run(['smartctl', '-n', 'standby', '-A', dev], capture_output=True, text=True).stdout
@@ -44,7 +51,7 @@ def drive_temp(dev):
 
 def fits(tier, temps, margin):
     _, d, bp, sim, exp = tier
-    return all(v <= lim - margin for v, lim in zip(temps, (d, bp, sim, exp)))
+    return all(v <= lim - m for v, lim, m in zip(temps, (d, bp, sim, exp), margin))
 
 def pick(current):
     drives = [t for t in map(drive_temp, shelf_disks()) if t]
@@ -57,7 +64,7 @@ def pick(current):
     temps = (max(drives), max(bp), max(sim), max(exp))
     for tier in TIERS:
         # stepping down (to a quieter tier than now) needs the hysteresis margin
-        if fits(tier, temps, HYST if tier[0] < current else 0):
+        if fits(tier, temps, HYST if tier[0] < current else (0, 0, 0, 0)):
             return tier[0], temps
     return HOT, temps
 
