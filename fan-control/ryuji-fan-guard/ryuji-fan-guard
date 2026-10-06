@@ -1,22 +1,43 @@
 #!/usr/bin/env python3
-# ryuji-fan-guard: keep ryuji's BMC fan offset at Rohit's quiet -80 and raise it only when ryuji is
-# genuinely warm; the BMC's own fan curve keeps running underneath.
-# Measured 2026-10-06: in the BMC's custom-offset mode, offsets from -80 to -31 only move the CPU fans
-# (2,200 -> 3,800 rpm at idle); the system fans stay at ~1,000-1,100 rpm. SIO Temp 1 follows system-fan
-# airflow and room temperature (not CPU load), so it only gets more air at the Performance preset (0).
-# Levels, quietest first: -80 (normal), -31 (CPU fans up), 0 (Performance: system fans up), 127 (full).
+# ryuji-fan-guard v2: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle, step to a moderate -16 under load
+# or when the board runs hot, and use Performance / Full only if -16 is not enough. The BMC's own curves keep
+# running underneath (the offset shifts both the CPU and the system fan curves).
+# Measured 2026-10-06 (room ~27C; ryuji-profile sweeps, STATUS-LOG.md):
+#   offset  idle CPU/sys fans   SIO Temp 1 idle   4 busy threads: CPU/sys fans, SIO1  full load: CPU/sys fans, SIO1
+#   -80     ~2,300 / 1,050       77-78C            3,770 / 1,050, climbs past 79       4,890 / 3,175, 55C (CPU 70C)
+#   -16     ~4,050 / 1,260       ~71.5C            4,940 / 3,325, 54C                  5,730 / 4,815, 46C
+#     0     ~4,500 / 2,250       ~59-60C           5,300 / 4,065, 48C                  5,990 / 5,350, 44C
+# SIO Temp 1 (BMC warns at 80, critical 85) follows system-fan airflow: it falls within ~3 min when they speed up and
+# rises with a ~10 min time constant at the -80 floor. At -80 the system fans stay at their floor until the CPUs
+# reach ~65-70C, so light-to-moderate load in a warm room lets SIO1 creep past 79 and v1 (-80 -> Performance)
+# flipped between quiet and loud. Full load is fine at -80 (the BMC curve raises the system fans itself), so v2
+# only leaves -80 when SIO1 is actually climbing near its limit, not on CPU load alone.
+# Levels, quietest first: -80 (QUIET), -16 (WARM), 0 (Performance), 127 (Full).
+#   QUIET -> WARM: SIO1 >= SIO_UP for 2 readings ('hot'), or SIO1 >= SIO_CLIMB, rising >= 1C over 5 min while the
+#                  CPUs are busy (>= LOAD_UP) for 2 readings ('load'), or CPU >= CPU_UP / VR >= VR_UP / DIMM >= DIMM_UP
+#                  for 2 readings ('load').
+#   WARM -> QUIET: idle (CPU <= LOAD_DOWN, VR/DIMM cool) for 10 min and SIO1 <= SIO_BACK_LOAD (if load put us
+#                  there) / SIO1 <= SIO_BACK_HOT for 30 min (if the board was hot, i.e. a warm room), so QUIET does
+#                  not climb straight back to SIO_UP.
+#   WARM -> Performance: SIO1 >= SIO_UP for 6 readings at WARM, or CPU >= CPU_UP / VR >= VR_UP / DIMM >= DIMM_UP for 2.
+#   Performance -> WARM after 30 min with SIO1 <= 73 and CPU/VR/DIMM below their UP limits minus a margin.
+#   Full at SIO1 >= 83 or CPU >= 86; back to Performance after 5 min below.
 # Runs as root on ryuji; the BMC password is in PWFILE (0600). Stop the service to set the offset by hand.
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
 STATE = '/run/ryuji-fan-guard.state'
-QUIET, CPU_LVL, SIO_LVL, FULL = -80, -31, 0, 127
-SIO_UP, SIO_DOWN = 79, 73        # SIO Temp 1: BMC warns at 80, critical at 85
-CPU_UP, CPU_DOWN = 78, 65        # hottest CPU (BMC warns at 85)
-VR_UP, VR_DOWN = 90, 80
-DIMM_UP, DIMM_DOWN = 75, 65
+QUIET, WARM, PERF, FULL = -80, -16, 0, 127
+LEVELS = (QUIET, WARM, PERF, FULL)
+SIO_UP = 79                      # SIO Temp 1: BMC warns at 80, critical at 85
+SIO_BACK_LOAD, SIO_BACK_HOT = 72, 68
+SIO_PERF_DOWN = 73
+LOAD_UP, LOAD_DOWN = 52, 50      # hottest CPU: idle at -80 is 41-50C, 4 busy threads 54-61C
+SIO_CLIMB = 77                   # SIO1 at or above this and climbing under load -> WARM before it reaches SIO_UP
+CPU_UP, VR_UP, DIMM_UP = 78, 90, 75
+VR_COOL, DIMM_COOL = 80, 65
 SIO_EMERG, CPU_EMERG = 83, 86
-HOLD = {SIO_LVL: 1800, CPU_LVL: 600, FULL: 300}   # seconds of cool readings before stepping down
+HOLD = {'load': 600, 'hot': 1800, PERF: 1800, FULL: 300}   # seconds of cool readings before stepping down
 INTERVAL, VERIFY = 60, 1800
 
 def log(m):
@@ -81,37 +102,33 @@ def temps():
             'vr': max([v for k, v in t.items() if k.startswith('VR_')] or [0]),
             'dimm': max([v for k, v in t.items() if k.startswith('DIMM')] or [0])}
 
-def wanted(level, t, hot_count, cool_since, now):
-    """returns the level the current readings ask for (stepping down only after HOLD)."""
+def wanted(level, t, hot, cool, now, why):
+    """the level the current readings ask for; stepping down only after the HOLD time of cool readings.
+    why = what put us at WARM ('load' or 'hot')."""
     if t['sio'] >= SIO_EMERG or t['cpu'] >= CPU_EMERG:
         return FULL
-    up = QUIET
-    if hot_count.get('sio', 0) >= 2:
-        up = SIO_LVL
-    elif hot_count.get('cpu', 0) >= 2:
-        up = CPU_LVL
-    if up > level:
-        return up
-    # stepping down: only once everything that put us here has been cool for HOLD seconds
     if level == FULL:
-        return SIO_LVL if now - cool_since.get('full', now) >= HOLD[FULL] else FULL
-    if level == SIO_LVL:
-        if now - cool_since.get('sio', now) >= HOLD[SIO_LVL]:
-            return CPU_LVL if hot_count.get('cpu_warm', 0) else QUIET
-        return SIO_LVL
-    if level == CPU_LVL:
-        return QUIET if now - cool_since.get('cpu', now) >= HOLD[CPU_LVL] else CPU_LVL
-    return level
+        return PERF if now - cool.get('full', now) >= HOLD[FULL] else FULL
+    if level >= WARM and (hot.get('perf_sio', 0) >= 6 or hot.get('perf_other', 0) >= 2):
+        return max(level, PERF)     # SIO1 gets 6 min at WARM first: it settles with tau ~3.5 min
+    if level == QUIET:
+        return WARM if (hot.get('load', 0) >= 2 or hot.get('sio', 0) >= 2 or hot.get('perf_other', 0) >= 2) else QUIET
+    if level == PERF:
+        return WARM if now - cool.get('perf', now) >= HOLD[PERF] else PERF
+    # WARM: back to QUIET only when idle and SIO1 is low enough that QUIET will not climb straight back
+    if why == 'hot':
+        return QUIET if now - cool.get('hot', now) >= HOLD['hot'] else WARM
+    return QUIET if now - cool.get('load', now) >= HOLD['load'] else WARM
 
 def main():
-    level, last_verify, hot, cool = None, 0, {}, {}
+    level, last_verify, hot, cool, why, sio_hist = None, 0, {}, {}, 'load', []
     try:
         level = bmc('get')
         log(f'starting; BMC offset is {level}')
     except Exception as ex:
         log(f'starting; could not read the BMC offset ({ex!r}); assuming {QUIET}')
         level = QUIET
-    if level not in (QUIET, CPU_LVL, SIO_LVL, FULL):
+    if level not in LEVELS:
         log(f'offset {level} is not one of the guard levels; treating it as {QUIET}')
         level = QUIET
     fails = 0
@@ -123,37 +140,42 @@ def main():
             t = None
         if t is None:
             fails += 1
-            if fails == 5 and level < SIO_LVL:
+            if fails == 5 and level < PERF:
                 log('temps unreadable for 5 minutes; going to Performance (0) to be safe')
                 try:
-                    level = bmc('set', SIO_LVL)
+                    level = bmc('set', PERF)
                 except Exception as ex:
                     log(f'BMC set failed: {ex!r}')
             time.sleep(INTERVAL)
             continue
         fails = 0
+        sio_hist.append(t['sio']); del sio_hist[:-6]          # last 6 readings (5 min)
+        climbing = t['sio'] >= SIO_CLIMB and len(sio_hist) == 6 and t['sio'] - sio_hist[0] >= 1 and t['cpu'] >= LOAD_UP
+        hot['load'] = hot.get('load', 0) + 1 if climbing else 0
         hot['sio'] = hot.get('sio', 0) + 1 if t['sio'] >= SIO_UP else 0
-        hot['cpu'] = hot.get('cpu', 0) + 1 if (t['cpu'] >= CPU_UP or t['vr'] >= VR_UP or t['dimm'] >= DIMM_UP) else 0
-        hot['cpu_warm'] = 1 if (t['cpu'] > CPU_DOWN or t['vr'] > VR_DOWN or t['dimm'] > DIMM_DOWN) else 0
-        if t['sio'] <= SIO_DOWN:
-            cool.setdefault('sio', now)
-        else:
-            cool.pop('sio', None)
-        if not hot['cpu_warm']:
-            cool.setdefault('cpu', now)
-        else:
-            cool.pop('cpu', None)
-        if t['sio'] < SIO_EMERG - 2 and t['cpu'] < CPU_EMERG - 4:
-            cool.setdefault('full', now)
-        else:
-            cool.pop('full', None)
-        want = wanted(level, t, hot, cool, now)
+        hot['perf_sio'] = hot.get('perf_sio', 0) + 1 if t['sio'] >= SIO_UP else 0
+        hot['perf_other'] = hot.get('perf_other', 0) + 1 if (t['cpu'] >= CPU_UP or t['vr'] >= VR_UP
+                                                           or t['dimm'] >= DIMM_UP) else 0
+        idle = t['cpu'] <= LOAD_DOWN and t['vr'] <= VR_COOL and t['dimm'] <= DIMM_COOL
+        for key, ok in (('load', idle and t['sio'] <= SIO_BACK_LOAD),
+                        ('hot', idle and t['sio'] <= SIO_BACK_HOT),
+                        ('perf', t['sio'] <= SIO_PERF_DOWN and t['cpu'] <= CPU_UP - 8 and t['vr'] <= VR_UP - 10
+                         and t['dimm'] <= DIMM_UP - 10),
+                        ('full', t['sio'] < SIO_EMERG - 2 and t['cpu'] < CPU_EMERG - 4)):
+            if ok:
+                cool.setdefault(key, now)
+            else:
+                cool.pop(key, None)
+        want = wanted(level, t, hot, cool, now, why)
         if want != level:
             try:
+                if level == QUIET and want == WARM:
+                    why = 'hot' if hot.get('sio', 0) >= 2 and hot.get('load', 0) < 2 else 'load'
                 got = bmc('set', want)
-                log(f'offset {level} -> {got} (sio={t["sio"]} cpu={t["cpu"]} vr={t["vr"]} dimm={t["dimm"]})')
+                log(f'offset {level} -> {got} (sio={t["sio"]} cpu={t["cpu"]} vr={t["vr"]} dimm={t["dimm"]}'
+                    f'{"; " + why if want == WARM and level == QUIET else ""})')
                 level, last_verify = got, now
-                cool.clear()
+                cool.clear(); hot.clear()   # every level starts its own counts
             except Exception as ex:
                 log(f'BMC set to {want} failed: {ex!r}; retrying next minute')
         elif now - last_verify >= VERIFY:
