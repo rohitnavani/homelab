@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# mic-level-log: sound level logger on arsene's internal mic (Realtek codec, card 0, "Internal Mic").
+# mic-level-log: sound level logger on morgana's (formerly arsene) internal mic (Realtek codec, card 0, "Internal Mic").
 # Records CLIP-second clips into RAM, keeps only levels (A-weighted and unweighted, octave bands, the strongest
 # tones) and deletes each clip at once. Fixed gain: Capture 23 (0 dB), Internal Mic Boost 0. The mixer state is
 # saved first and restored on exit. Levels are dBFS (relative to this mic and gain), not calibrated SPL.

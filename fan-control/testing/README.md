@@ -3,27 +3,6 @@
 The scripts used to measure the rack and validate the fan controllers, kept as they ran so the tests can be
 repeated. How they fit together, and what to change for the repeat runs, is in `../METHODOLOGY.md`.
 
-## Hardware these tools were written for
-
-The scripts assume this lab's machines by name, device path and sensor name. The three controlled boxes
-(mementos, the MD1200 shelf, ryuji) are described part by part in `../README.md` ("Hardware"); the rest of the
-setup the tests use:
-
-| Host | Hardware | Role in the tests |
-|---|---|---|
-| mementos | Dell PowerEdge R720xd, iDRAC7 2.65, 2x Xeon E5-2697 v2, 256 GB DDR3, 24x ST1200MM0007 + 2x HUSMM SSD, H710P and H810 in IT mode, FTDI FT232R serial to the MD1200 | load and fan tests; owns the MD1200 serial console and SES device; its iDRAC inlet sensor is the room reference |
-| MD1200 shelf | Dell PowerVault MD1200, 2 EMMs fw 1.06, 12x 8 TB Seagate SAS (ST8000NM0075 / ST8000NM0185) | shelf fan experiments (driven from mementos) |
-| ryuji | Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2650 v3 (E5-2696 v4 pending), 128 GB DDR4 | BMC fan offset profile and guard tests |
-| sojiro | Gigabyte MB10-series board, Xeon D-1521, 32 GB, BMC automatic fans | logging and room proxy only (no fan control) |
-| tinynas | ASUS PRIME B650M-A AX II, Ryzen 5 9600X, 64 GB DDR5, 8x HGST HUS724040AL 4 TB, 2x Crucial P3 Plus 1 TB NVMe; Nuvoton NCT6799 super I/O (`nct6775` driver) | drive-cage fan test; NVMe and SYSTIN as room proxies |
-| makoto | ASRock Rack board, Xeon D-1622, 32 GB | runs the makoto-side tools, the room logger and the PDU poller |
-| arsene | Dell Latitude 5420 (i5-1135G7), Realtek codec, internal mic | noise measurements (`mic-level-log.py`) |
-| Rack PDU | CyberPower PDU20SW8FNET (20 A, 8 switched outlets, fw 0.95) | rack current by SNMP v1 GET; bank load only, in 0.1 A. Never SET, never the web UI: both can switch the rack's power |
-
-All hosts run Ubuntu 24.04.5 LTS. On other hardware, expect to change the device paths, sensor names, drive
-model strings, IPMI commands and every limit before a script is safe to run; the safety rules in
-`../METHODOLOGY.md` section 6 still apply.
-
 ## Conventions
 
 - Scripts that touch hardware run as root on the box they test: copy them to `/var/tmp` and start them as transient
@@ -108,14 +87,15 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 
 | Script | Runs on | What it does |
 |---|---|---|
-| `mic-level-log.py <minutes> <csv> [clip s]` | arsene (root) | sound levels from the internal mic every 10 s at a fixed gain: dB(A), unweighted, octave bands, steady tones. Keeps only the levels and deletes each clip at once; needs alsa-utils and python3-numpy (installed 10-06) |
+| `mic-level-log.py <minutes> <csv> [clip s]` | morgana, formerly arsene (root) | sound levels from the internal mic every 10 s at a fixed gain: dB(A), unweighted, octave bands, steady tones. Keeps only the levels and deletes each clip at once; needs alsa-utils and python3-numpy (installed 10-06) |
 | `mic-r720.sh` | mementos (root) | R720 fans at fixed steps at idle (10, 20, 10, 30, 10%), then fan-watchdog takes them back; restore `mic-r720-restore.sh` |
 | `analyze_mic_test.py <levels.csv> <shelf-decay logs> <mic-r720.log>` | anywhere | splits the levels into states from the event logs, drops settling time and stray sounds, compares each step with the baselines on either side (dB(A) and the 1-2 kHz bands) |
 
-The A/B test from 10-06 (17 min; the shelf holds use `shelf-decay.py`; copy the scripts to `/var/tmp` first):
+The A/B test from 10-06 (17 min; the shelf holds use `shelf-decay.py`; copy the scripts to `/var/tmp` first). Place
+morgana about 1 m in front of the server rack, lid open (METHODOLOGY section 8, "Noise"):
 
 ```sh
-ssh arsene 'sudo systemd-run --collect --unit=mic-level python3 /var/tmp/mic-level-log.py 17 /var/tmp/mic-levels.csv'
+ssh morgana 'sudo systemd-run --collect --unit=mic-level python3 /var/tmp/mic-level-log.py 17 /var/tmp/mic-levels.csv'
 ssh mementos 'sudo systemd-run --collect --on-active=70 --unit=mic-shelf30 -p "ExecStopPost=/bin/systemctl start md1200-fan" python3 /var/tmp/shelf-decay.py 30 2.5 mic30 3'
 ssh mementos 'sudo systemd-run --collect --on-active=330 --unit=mic-shelf22 -p "ExecStopPost=/bin/systemctl start md1200-fan" python3 /var/tmp/shelf-decay.py 22 2.5 mic22 3'
 ssh mementos 'sudo systemd-run --collect --on-active=590 --unit=mic-r720 -p ExecStopPost=/var/tmp/mic-r720-restore.sh /bin/sh /var/tmp/mic-r720.sh'
