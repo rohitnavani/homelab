@@ -4,10 +4,13 @@
 # tones) and deletes each clip at once. Fixed gain: Capture 23 (0 dB), Internal Mic Boost 0. The mixer state is
 # saved first and restored on exit. Levels are dBFS (relative to this mic and gain), not calibrated SPL.
 # usage (root): mic-level-log.py <minutes> <csv> [clip seconds, default 10]
-import os, subprocess, sys, time, wave
+import os, signal, subprocess, sys, time, wave
 import numpy as np
 
 mins, out = float(sys.argv[1]), sys.argv[2]
+# 2026-10-07: systemctl stop sends SIGTERM, which ends Python without running the finally blocks (the mixer stayed
+# at the test gain and the last clip stayed in /dev/shm). Turn SIGTERM into a normal exit so the cleanup always runs.
+signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
 CLIP = int(sys.argv[3]) if len(sys.argv) > 3 else 10
 WAV, STATE = '/dev/shm/mic-clip.wav', '/dev/shm/mic-asound.before'
 OCT = (63, 125, 250, 500, 1000, 2000, 4000, 8000)
