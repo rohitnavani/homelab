@@ -27,7 +27,14 @@ fixed fans before tuning a controller, and deploy every controller behind a watc
    rack current, and only trusts a sensor while its own box's load and fans were steady. Start when they hold a flat
    band (within about 1C, no hourly sawtooth) at a temperature you can reproduce later. If the room cycles anyway,
    make phases whole multiples of the cycle and rely on the lagged reference (section 4).
+   History helps here: two weeks of tinynas NVMe readings (its old Prometheus) showed the room flat and cool on the
+   night of 10-03/04 with mementos, the shelf and ryuji all running, then an hourly cycle from 16:00 on 10-04 when
+   the AC developed a fault (by 10-07 it cooled about 20 minutes an hour). A steady room looks like that night.
 2. **Start the loggers** and confirm each one is writing:
+   - Prometheus on the monitoring host already records the room reference, the fan controllers' readings, the BMC
+     sensors of ryuji, sojiro and makoto, every host's hwmon temperatures and the rack PDU (`monitoring/README.md`,
+     since 2026-10-07). Start with its "Lab - Thermal" dashboard; labmon is still needed for RAPL package power and
+     per-test detail.
    - `testing/labmon.py` on every host (30 s, `/var/tmp/labmon.jsonl`): IPMI temps, fans and DCMI watts, hwmon,
      RAPL package watts per socket, CPU busy %, disk MB moved.
    - `tools/lab-inlet-guard.sh` on makoto: the mementos inlet every 60 s to `room.csv`, published to the test hosts
@@ -124,6 +131,9 @@ load. A real workload is the best validation for the shelf: the dataPool scrub (
 - Set a test's own temperature stops from the controller's design range. The first v4 validation would have stopped
   the load at CPU 84C, cutting the onset test before v4's 82-88C range could act; it ran with 89C.
 - `pkill -f` can match its own ssh command line; use `pkill -f "[p]attern"` or systemd units.
+- While Rohit sleeps, or visitors are in, tests stay quiet: no full load, the R720xd under about 24%, the shelf
+  under about 25%, no load on ryuji at all (4 busy threads spin its CPU fans to 3,700 rpm even at -80, +4.2 dB(A)
+  at the mic spot), and `testing/noise-guard.sh` running against a quiet baseline (`testing/README.md`, "Quiet runs").
 - Limits used on 10-06:
   - Room: test heat off above 27C (two readings in a row); raised to 29C for the later load tests after Rohit
     allowed a hotter room.
@@ -150,6 +160,8 @@ load. A real workload is the best validation for the shelf: the dataPool scrub (
 | ryuji at -80 idled at SIO1 77-78C in a warm room | the first load step tripped guard v1 to Performance | profile across offsets before choosing a quiet offset |
 | shelf-decay logged its start after reading every drive temperature (7-14 s) | event times lagged the fan change by that much | log the moment of the command (fixed) |
 | The mic sat on the network shelf next to tinynas with its lid closed | the rack was a tenth of what it heard and every step looked half its size | measure about 1 m in front of the server rack, lid open (steps 2-2.5x larger, spread 0.05 dB) |
+| 10-07: the mic logger stopped with `systemctl stop` | SIGTERM skipped its cleanup: the last clip stayed in /dev/shm, the mixer at the test gain | it handles SIGTERM now; check morgana's /dev/shm after a run |
+| 10-07: a 24% fan cap on the quiet night | mementos's 12-core step never settled | map with fixed fans in the daytime; use caps only for quiet runs |
 
 ## 8. Plans for the repeat runs
 
@@ -230,6 +242,14 @@ For the sweep:
 pwm1+3+4 at full 20 min, BIOS 20 min), `each` (one header at a time) or `pwm2` (the CPU-fan header). A real cage fan
 should move sda/sdc/sde by several degrees; on 10-06 pwm1/3/4 moved them 0.5C or less and the CPU-fan header at 2.5x
 speed about 1C. If one does, a drive-temperature controller with a BIOS hand-back is next.
+
+### Done on the night of 2026-10-07: quiet hot-room checks (room 26-28C, AC still faulty)
+- fan-watchdog v4.2: 6 and 12 busy cores 18-24% (CPUs up to 78C); after load it steps back to exactly 10% in
+  10.5-11 min (the change v4.2 made, now seen under load).
+- md1200-fan v3.1 through a dataPool scrub: 18 -> 21%, one step per 10 min, hottest drive 50C (0 errors, 45:22).
+- ryuji-fan-guard v2.1: -80 -> -16 -> -80 in 12.5 min after 2 min of 4-thread load (the heat soak took SIO1 to 79C).
+- Noise at the mic spot: mementos 18-24% +0.5 to +1.8 dB(A); ryuji at -16 idle about +1.0; ryuji's CPU fans on 4
+  threads at -80 +4.2 dB(A) with a ~700 Hz tone; a scrub inaudible. Include ryuji under light load in the sweep.
 
 ## 9. Checklists
 

@@ -108,7 +108,7 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 
 | Script | Runs on | What it does |
 |---|---|---|
-| `mic-level-log.py <minutes> <csv> [clip s]` | morgana, formerly arsene (root) | sound levels from the internal mic every 10 s at a fixed gain: dB(A), unweighted, octave bands, steady tones. Keeps only the levels and deletes each clip at once; needs alsa-utils and python3-numpy (installed 10-06) |
+| `mic-level-log.py <minutes> <csv> [clip s]` | morgana, formerly arsene (root) | sound levels from the internal mic every 10 s at a fixed gain: dB(A), unweighted, octave bands, steady tones. Keeps only the levels and deletes each clip at once; needs alsa-utils and python3-numpy (installed 10-06). Since 10-07 a `systemctl stop` (SIGTERM) also runs its cleanup; before that the last clip stayed in /dev/shm and the mixer at the test gain |
 | `mic-r720.sh` | mementos (root) | R720 fans at fixed steps at idle (10, 20, 10, 30, 10%), then fan-watchdog takes them back; restore `mic-r720-restore.sh` |
 | `analyze_mic_test.py <levels.csv> <shelf-decay logs> <mic-r720.log>` | anywhere | splits the levels into states from the event logs, drops settling time and stray sounds, compares each step with the baselines on either side (dB(A) and the 1-2 kHz bands) |
 
@@ -120,6 +120,33 @@ ssh morgana 'sudo systemd-run --collect --unit=mic-level python3 /var/tmp/mic-le
 ssh mementos 'sudo systemd-run --collect --on-active=70 --unit=mic-shelf30 -p "ExecStopPost=/bin/systemctl start md1200-fan" python3 /var/tmp/shelf-decay.py 30 2.5 mic30 3'
 ssh mementos 'sudo systemd-run --collect --on-active=330 --unit=mic-shelf22 -p "ExecStopPost=/bin/systemctl start md1200-fan" python3 /var/tmp/shelf-decay.py 22 2.5 mic22 3'
 ssh mementos 'sudo systemd-run --collect --on-active=590 --unit=mic-r720 -p ExecStopPost=/var/tmp/mic-r720-restore.sh /bin/sh /var/tmp/mic-r720.sh'
+```
+
+## Quiet runs (night, visitors)
+
+Added 2026-10-07, when Rohit asked for testing while he slept with nothing loud. Each test stops itself below a fan
+level, and a mic guard stops any test that makes the rack louder (limits in `../METHODOLOGY.md` section 6).
+
+| Script | Runs on | What it does |
+|---|---|---|
+| `noise-guard.sh` | makoto | every 20 s reads the newest level from morgana's mic log (`MIC`) and stops `mementos-quiet`, `scrub-quiet` and `ryuji-quiet` once dB(A) is more than `RISE` above `REF` for `HOLD` readings. 10-07: REF -68.30 (the quiet baseline's median), RISE 3.0, HOLD 3 |
+| `mementos-quiet.py` | mementos | `mementos-steps.py` with plan `quiet` (6 and 12 workers, 12 from idle, the unwinds) and a fan stop, `STOP['pct']` (24%); restore `mementos-quiet-restore.sh` |
+| `ryuji-quiet.py` | ryuji | `../tools/ryuji-profile.py` with plan `quiet` (the guard stays in control: idle, 4 threads, unwind) and tighter stops (CPU 72, SIO1 80, VR 88, DIMM 72C, or the guard above -16); restore `ryuji-quiet-restore.sh` |
+| `scrub-quiet.sh` | mementos | a dataPool scrub that cancels itself at shelf 25% or drive 51, backplane 47, SIM 60, expander 89C; `scrub-quiet-stop.sh` (ExecStopPost) cancels a scrub still running |
+| `md1200-fan-quiet` | mementos | a temporary quiet mode of `md1200-fan` v3.1 for a visit: starts at 10% and lets the hottest drive reach 50.5C (v3.1: 48.5C) before stepping up; urgent ramps and floors unchanged. In a 26-28C room 10% lasts about 30-60 min before the drives need more |
+| `window_compare.py "YYYY-MM-DD HH:MM-HH:MM" ...` | makoto | labmon means per host for dated windows, so one run's baselines compare with another's (`OLD`, `DATA`) |
+| `analyze_mic_phases.py <mic.csv> [test.csv]` | anywhere | sound level per test phase against a reference window (default: the 30 min before the first phase) |
+
+The CSV and log names inside the quiet scripts carry the run date (`-1007`); change them for a new run.
+
+```sh
+# A quiet night: the mic first, a 60 min quiet baseline, then the guard, then one test at a time.
+ssh morgana 'sudo systemd-run --collect --unit=mic-level python3 /var/tmp/mic-level-log.py 450 /var/tmp/mic-levels.csv'
+sudo systemd-run --uid=$USER --unit=noise-guard --setenv=HOME=$HOME --setenv=DATA=$DATA \
+    --setenv=MIC=/var/tmp/mic-levels.csv --setenv=REF=-68.30 --setenv=RISE=3.0 $PWD/testing/noise-guard.sh
+ssh mementos 'sudo systemd-run --unit=mementos-quiet -p ExecStopPost=/var/tmp/mementos-quiet-restore.sh python3 /var/tmp/mementos-quiet.py quiet'
+# The shelf's quiet mode for a visit (here 10 h), handing back to md1200-fan at the end:
+ssh mementos 'sudo systemctl stop md1200-fan && sudo systemd-run --unit=md1200-fan-quiet -p RuntimeMaxSec=36000 -p "ExecStopPost=/bin/systemctl start md1200-fan" python3 /var/tmp/md1200-fan-quiet'
 ```
 
 ## Deploying a controller

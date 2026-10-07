@@ -10,6 +10,9 @@ under heavy work, loud only at full load or when something is genuinely hot. Bui
 | `fan-watchdog` | mementos | Dell R720xd fans, via `ipmitool raw 0x30 0x30` | `/usr/local/sbin/fan-watchdog` |
 | `ryuji-fan-guard` | ryuji | Gigabyte MD70-HB0 BMC (Avocent) fan offset, via the BMC's own web API | `/usr/local/sbin/ryuji-fan-guard` |
 
+`monitoring/` puts the controllers' readings into Prometheus, with a Grafana dashboard and alert rules (see
+`monitoring/README.md`).
+
 These are written for the exact machines below, not for a hardware family in general. Every temperature threshold,
 fan curve and timing came from measuring these boxes in this room. Read "Hardware" and "Using this on other
 hardware" before running any of it anywhere else.
@@ -188,3 +191,11 @@ Measured while the room cycled; to be repeated with the AC working (see `METHODO
 | MD1200 shelf | 17% (~3,000 rpm), hottest drive 48C | full scrub: 17-22%, no drive above 50C |
 | mementos | 10%, CPUs ~52C, 290 W | full load 32-35%, CPUs 79-82C, ~548 W |
 | ryuji | -80, CPU/system fans 2,300/1,050 rpm, SIO1 77-78C, ~150 W | full load at -80: 4,900/3,200 rpm, SIO1 55C, CPUs 60/70C, ~360 W |
+
+## Results, night of 2026-10-07 (room 26-28C, quiet checks)
+
+| Box | What ran | Result |
+|---|---|---|
+| mementos | 6 and 12 busy cores, 12 from idle (stopped at 24%) | 18-24%, CPUs up to 78C; back to exactly 10% in 10.5-11 min |
+| MD1200 shelf | full dataPool scrub | 18 -> 21%, hottest drive 50C, 0 errors |
+| ryuji | 4 busy threads (stopped by the noise guard after 2 min) | guard -80 -> -16 -> -80; CPU fans 3,700 rpm at -80, +4.2 dB(A) |
