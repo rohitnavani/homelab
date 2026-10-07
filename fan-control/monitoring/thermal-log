@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+# thermal-log (2026-10-07): a plain, always-on record of each machine's temperatures. Once a minute it appends one JSON
+# line to /var/log/thermal.jsonl (logrotate keeps 30 days):
+#   {"ts": "2026-10-07T18:30:00-0400", "t": 1791412200, "host": "mementos", "inlet": 24,
+#    "cpu": {"pkg0": 50, "pkg1": 48}, "board": {...}, "bmc": {...}, "shelf": {...}, "drives": {"sda": 34, ...}}
+#   inlet  a real air-inlet sensor, where the machine has one (mementos's iDRAC inlet, the lab's room reference)
+#   cpu    CPU package temperatures (Intel coretemp "Package id N" -> pkgN, AMD k10temp Tctl -> tctl)
+#   board  motherboard sensors from the kernel (Super I/O SYSTIN/CPUTIN, PCH, laptop EC, DIMM SPD sensors), plus
+#          mementos's exhaust and hottest DIMM as read by fan-watchdog
+#   bmc    the BMC's temperature sensors, from the file the host's existing ipmitool collector writes every minute
+#   shelf  mementos only: the MD1200's backplane/SIM/expander temps and fan % as read by md1200-fan
+#   drives each disk's temperature (smartctl -n standby, so sleeping drives stay asleep and read null)
+# A line {"event": "drives", ...} maps kernel names to model and serial at start and whenever the set changes.
+# It never talks to a BMC itself and adds no IPMI, serial or SES traffic: on mementos an extra in-band IPMI reader
+# can make fan-watchdog's own read fail and flip the R720 to loud iDRAC auto, so mementos's inlet, exhaust, DIMM and
+# shelf values come from the fan controllers' state files. Readings older than 5 min are left out.
+# Env: THERMAL_LOG (default /var/log/thermal.jsonl), THERMAL_INTERVAL (seconds, default 60).
+import glob, json, os, re, socket, subprocess, sys, time
+
+LOG = os.environ.get('THERMAL_LOG', '/var/log/thermal.jsonl')
+INTERVAL = int(os.environ.get('THERMAL_INTERVAL', '60'))
+HOST = socket.gethostname().split('.')[0].lower()
+BMC_PROM = ['/var/lib/prometheus/node-exporter/ipmitool_sensor.prom',
+            '/var/lib/node_exporter/textfile_collector/ipmitool_sensor.prom']
+FW_STATE, MD_STATE = '/run/fan-watchdog.state', '/run/md1200-fan.state'
+FRESH = 300
+errors_seen = {}
+
+def warn(key, msg):
+    # at most one journal line per kind of problem per hour
+    if time.time() - errors_seen.get(key, 0) > 3600:
+        errors_seen[key] = time.time()
+        print(msg, file=sys.stderr, flush=True)
+
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+def key(s):
+    return re.sub(r'[^a-z0-9]+', '_', s.lower()).strip('_')
+
+def fresh(path):
+    try:
+        return time.time() - os.path.getmtime(path) < FRESH
+    except OSError:
+        return False
+
+def hwmon():
+    cpu, board = {}, {}
+    for d in sorted(glob.glob('/sys/class/hwmon/hwmon*')):
+        name = read(f'{d}/name') or ''
+        for inp in sorted(glob.glob(f'{d}/temp*_input')):
+            raw = read(inp)
+            if raw is None or not raw.lstrip('-').isdigit():
+                continue
+            v = round(int(raw) / 1000, 1)
+            label = read(inp.replace('_input', '_label')) or os.path.basename(inp).replace('_input', '')
+            if name == 'coretemp':
+                m = re.match(r'Package id (\d+)', label)
+                if m:
+                    cpu[f'pkg{m.group(1)}'] = v
+            elif name == 'k10temp':
+                if label in ('Tctl', 'Tdie') or label.startswith('Tccd'):
+                    cpu[key(label)] = v
+            elif not 0 < v < 125:
+                continue            # unconnected or bogus inputs (0, -128, 127)
+            elif name.startswith('nct6683'):
+                board[key(label)] = v
+            elif name.startswith('nct'):
+                if label in ('SYSTIN', 'CPUTIN'):   # the AUXTIN inputs are unconnected or fixed on these boards
+                    board[key(label)] = v
+            elif name.startswith('pch_'):
+                board['pch'] = v
+            elif name == 'dell_smm':
+                board[f'ec_{key(label)}'] = v
+            elif name == 'spd5118':
+                board[f'dimm{sum(1 for k in board if k.startswith("dimm"))}'] = v
+            # skipped on purpose: acpitz (fixed 27.8C on these boards), nvme (the drives section has them),
+            # amdgpu, iwlwifi, batteries
+    return cpu, board
+
+def bmc():
+    for p in BMC_PROM:
+        if fresh(p):
+            out = {}
+            for line in (read(p) or '').splitlines():
+                m = re.match(r'node_ipmi_temperature_celsius\{[^}]*sensor="([^"]+)"[^}]*\}\s+([-0-9.e+]+)', line)
+                if m:
+                    out[key(m.group(1))] = round(float(m.group(2)), 1)
+            return out
+    return {}
+
+def controller_states():
+    out = {}
+    if fresh(FW_STATE):
+        st = read(FW_STATE) or ''
+        for k, name in (('inlet', 'inlet'), ('exh', 'exhaust'), ('dimm', 'dimm_max')):
+            m = re.search(rf'\b{k}=(\d+)', st)
+            if m:
+                out[name] = int(m.group(1))
+    if fresh(MD_STATE):
+        try:
+            st = json.loads(read(MD_STATE) or '{}')
+            t = st.get('temps') or {}
+            out['shelf'] = {'backplane': t.get('backplane'), 'sim': t.get('SIM'), 'expander': t.get('expander'),
+                            'fan_pct': st.get('pct')}
+        except ValueError:
+            pass
+    return out
+
+def disks():
+    try:
+        out = subprocess.run(['lsblk', '-J', '-d', '-o', 'NAME,TYPE,TRAN,MODEL,SERIAL'], capture_output=True,
+                             text=True, timeout=30).stdout
+        devs = json.loads(out).get('blockdevices', [])
+    except Exception as ex:
+        warn('lsblk', f'lsblk failed: {ex!r}')
+        return {}
+    keep = {}
+    for d in devs:
+        if d.get('type') != 'disk' or (d.get('tran') or '') in ('iscsi', 'usb') or re.match(r'(zd|loop|zram|sr|md)', d['name']):
+            continue
+        keep[d['name']] = f"{(d.get('model') or '').strip()} {(d.get('serial') or '').strip()}".strip()
+    return keep
+
+def drive_temp(name):
+    try:
+        r = subprocess.run(['smartctl', '-n', 'standby', '-j', '-A', f'/dev/{name}'], capture_output=True, text=True,
+                           timeout=20)
+        t = (json.loads(r.stdout or '{}').get('temperature') or {}).get('current')
+        return t if isinstance(t, (int, float)) else None
+    except Exception as ex:
+        warn(f'smart-{name}', f'smartctl {name} failed: {ex!r}')
+        return None
+
+def main():
+    last_map = None
+    while True:
+        time.sleep(INTERVAL - time.time() % INTERVAL)   # on the minute
+        now = time.time()
+        rec = {'ts': time.strftime('%Y-%m-%dT%H:%M:%S%z', time.localtime(now)), 't': int(now), 'host': HOST}
+        try:
+            cs = controller_states()
+            if 'inlet' in cs:
+                rec['inlet'] = cs['inlet']
+            cpu, board = hwmon()
+            for k in ('exhaust', 'dimm_max'):
+                if k in cs:
+                    board[k] = cs[k]
+            rec['cpu'], rec['board'] = cpu, board
+            b = bmc()
+            if b:
+                rec['bmc'] = b
+            if 'shelf' in cs:
+                rec['shelf'] = cs['shelf']
+            dmap = disks()
+            if dmap != last_map:
+                with open(LOG, 'a') as f:
+                    f.write(json.dumps({'ts': rec['ts'], 't': rec['t'], 'host': HOST, 'event': 'drives', 'map': dmap}) + '\n')
+                last_map = dmap
+            rec['drives'] = {n: drive_temp(n) for n in dmap}
+        except Exception as ex:
+            warn('sample', f'sample failed: {ex!r}')
+        try:
+            with open(LOG, 'a') as f:
+                f.write(json.dumps(rec, separators=(',', ':')) + '\n')
+        except OSError as ex:
+            warn('write', f'cannot write {LOG}: {ex!r}')
+
+if __name__ == '__main__':
+    main()

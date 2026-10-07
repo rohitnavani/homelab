@@ -1,0 +1,13 @@
+[Unit]
+Description=Log basic temperatures (inlet, CPU, board, drives) to /var/log/thermal.jsonl every minute
+After=local-fs.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/sbin/thermal-log
+Restart=always
+RestartSec=30
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

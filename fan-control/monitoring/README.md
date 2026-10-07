@@ -10,10 +10,63 @@ instead of starting ad-hoc loggers.
 | `lab-thermal-textfile` (+ `.service`) | mementos, ryuji | Every 15 s, turns the state files of `md1200-fan`, `fan-watchdog` and `ryuji-fan-guard` into node_exporter textfile metrics. Reads no sensors itself |
 | `lab-thermal-rules.yml` | the Prometheus host (`rules/`) | 7 alert rules on those metrics, set to fire only on real trouble |
 | `lab-thermal.json` | the Grafana host (provisioned dashboard) | "Lab - Thermal": room proxies on four machines with the rack current, shelf, R720 and ryuji temperatures against their fan levels, controller health |
+| `thermal-log` (+ `.service`, `.logrotate`) | every Linux host | A plain local record next to Prometheus: one JSON line per minute in `/var/log/thermal.jsonl` with the inlet, CPU, board, BMC and drive temperatures (added 2026-10-07 evening; see "Local temperature log") |
 
 `lab-thermal-textfile` reads only files the controllers already write, so it adds no IPMI, serial or SES traffic.
 That matters on the R720xd: `fan-watchdog` hands the fans to the loud iDRAC auto profile when one of its own sensor
 reads fails, and a second in-band IPMI reader can make that happen. Do not add an `ipmitool` collector there.
+
+## Local temperature log (thermal-log)
+
+Every Linux host also keeps a plain record of its own temperatures, independent of the monitoring stack: `thermal-log`
+appends one JSON line per minute, on the minute, to `/var/log/thermal.jsonl`; logrotate keeps 30 days, compressed.
+
+```json
+{"ts":"2026-10-07T18:10:00-0400","t":1791411000,"host":"mementos","inlet":24,"cpu":{"pkg0":44.0,"pkg1":42.0},
+ "board":{"exhaust":41,"dimm_max":42},"shelf":{"backplane":43,"sim":50,"expander":78,"fan_pct":15},
+ "drives":{"sda":33,"sdb":43,"sdc":42,"...":"..."}}
+```
+
+| Key | What | Source |
+|---|---|---|
+| `inlet` | air inlet temperature, only where the machine has a real inlet sensor (the R720xd) | `fan-watchdog`'s state file |
+| `cpu` | CPU package temperatures: `pkgN` (Intel coretemp), `tctl` (AMD k10temp) | hwmon |
+| `board` | Super I/O SYSTIN and CPUTIN (NCT6775 family), NCT6683 inputs, PCH, the Dell laptop EC (`dell_smm`), DDR5 SPD sensors (`spd5118`); on the R720xd also the exhaust and the hottest DIMM | hwmon; `fan-watchdog`'s state file |
+| `bmc` | every BMC temperature sensor | the `ipmitool_sensor.prom` file the host's own collector writes every minute (ryuji, sojiro, makoto) |
+| `shelf` | MD1200 backplane, SIM, expander and fan % | `md1200-fan`'s state file |
+| `drives` | each disk by kernel name; `null` while a disk is asleep | `smartctl -n standby -j -A` (never wakes a disk) |
+
+A line `{"event":"drives","map":{...}}` maps kernel names to model and serial when the logger starts and whenever the
+set of disks changes. State files and BMC files older than 5 min are left out. Like `lab-thermal-textfile` it adds no
+IPMI, serial or SES traffic of its own. Left out on purpose: ACPI thermal zones (a fixed 27.8C on these boards), the
+NCT6799's AUXTIN inputs (unconnected or fixed on tinynas), inputs reading 0, NVMe hwmon entries (the drives section
+has them), GPUs, Wi-Fi, batteries, and iSCSI or USB disks (tinypc's iSCSI disk lives on tinynas).
+
+| Host | Hardware | OS | Logged (2026-10-07) |
+|---|---|---|---|
+| mementos | Dell PowerEdge R720xd, 2x Xeon E5-2697 v2, 24x Seagate ST1200MM0007 + 2x HGST HUSMM SSD, plus the MD1200's 12x 8 TB | Ubuntu 24.04.5 | inlet, 2 CPUs, exhaust, hottest DIMM, the shelf, 38 disks |
+| ryuji | Gigabyte MD70-HB0, 2x Xeon E5-2650 v3, 6x Toshiba MG04ACA400N + a boot SSD and a spare 2.5 in HDD | Ubuntu 24.04.5 | 2 CPUs, PCH, 19 BMC sensors (SIO Temp 1/2, VRs, DIMMs), 8 disks |
+| sojiro | Gigabyte MB10-series board, Xeon D-1521, 5 SATA disks | Ubuntu 24.04.5 | CPU, PCH, BMC MB_TEMP1 and CPU, 5 disks |
+| tinynas | ASUS PRIME B650M-A AX II, Ryzen 5 9600X, 8x HGST HUS724040AL, 2x Crucial P3 Plus 1 TB | Ubuntu 24.04.5 | Tctl, SYSTIN, CPUTIN, 10 disks |
+| makoto | ASRock Rack board, Xeon D-1622, 3x Crucial MX500 1 TB, Crucial P310 500 GB | Ubuntu 24.04.5 | CPU, BMC (MB, card side, CPU, DDR4), 4 disks |
+| futaba | Lenovo ThinkCentre M700 Tiny, Core i5-6500T, Kingston 256 GB SATA SSD | Ubuntu 24.04.5 | CPU, NCT6683 (PECI, diodes), 1 disk |
+| morgana | Dell Latitude 5420, Core i5-1135G7, WD SN530 256 GB | Ubuntu 24.04.5 | CPU, EC sensors, 1 disk |
+| tinypc | ASUS ROG STRIX B660-I GAMING WIFI, Core i7-12700F, Samsung 970 EVO Plus 2 TB, Crucial P1 1 TB | Fedora 44 | CPU, 2 DDR5 SPD sensors, 2 disks |
+
+Install (needs python3 and smartmontools 7.0 or later for `-j`; runs as root because of smartctl):
+
+```sh
+sudo install -m 755 monitoring/thermal-log /usr/local/sbin/thermal-log
+sudo install -m 644 monitoring/thermal-log.service /etc/systemd/system/thermal-log.service
+sudo install -m 644 monitoring/thermal-log.logrotate /etc/logrotate.d/thermal-log
+sudo systemctl daemon-reload && sudo systemctl enable --now thermal-log
+tail -1 /var/log/thermal.jsonl                       # after the next full minute
+```
+
+`THERMAL_LOG` and `THERMAL_INTERVAL` (environment) change the path and the period. On other hardware, check which
+hwmon chips the board has (`cat /sys/class/hwmon/hwmon*/name`): chips `hwmon()` does not know are skipped, so add
+yours there. The inlet, exhaust, DIMM and shelf values come from this repo's controllers' state files and are simply
+absent elsewhere.
 
 ## Hardware and software this was written for
 
