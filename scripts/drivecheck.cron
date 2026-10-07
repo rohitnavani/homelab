@@ -1,0 +1,9 @@
+# Fleet drive health monitoring + SMART self-tests (deployed 2026-10-06)
+# Daily health check (logs + node_exporter textfile), weekly short + monthly long self-tests.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+DRIVECHECK_LOG_DIR=/var/log/drive_logs
+DRIVECHECK_NO_MAIL=1
+0 0 * * * root /bin/bash -c '/usr/local/bin/drivecheck >> /var/log/drive_logs/drive_check_$(date +\%Y-\%m-\%d).log 2>&1'
+0 22 * * 6 root /usr/local/bin/drive-selftest short
+0 12 1 * * root /usr/local/bin/drive-selftest long

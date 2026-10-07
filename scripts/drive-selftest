@@ -1,0 +1,8 @@
+#!/bin/bash
+# Kick off SMART self-tests on all non-NVMe drives (SATA + SAS), robust enumeration.
+# Usage: drive-selftest short|long
+mode="${1:-short}"
+case "$mode" in short|long) ;; *) echo "usage: $0 short|long" >&2; exit 2;; esac
+for dev in $(smartctl --scan 2>/dev/null | awk '{print $1}' | grep -v nvme | sort -u); do
+    smartctl -t "$mode" "$dev" >/dev/null 2>&1
+done
