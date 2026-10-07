@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+# lab-thermal-textfile (2026-10-07): publish the fan controllers' own state files as node_exporter textfile metrics,
+# so Prometheus (futaba) keeps the room, the shelf, mementos and ryuji fan history. It reads no sensors itself:
+# everything comes from what md1200-fan, fan-watchdog and ryuji-fan-guard already measured, so it adds no IPMI,
+# serial or SES traffic (an extra in-band IPMI reader could make fan-watchdog's read fail and flip it to iDRAC auto).
+# Runs on mementos (fan-watchdog + md1200-fan) and ryuji (ryuji-fan-guard); a missing state file is skipped.
+# mementos's iDRAC inlet (lab_r720_temp_celsius{sensor="inlet"}) is the lab's room reference.
+import json, os, re, time
+
+OUT = os.environ.get('LAB_THERMAL_OUT', '/var/lib/node_exporter/textfile_collector/lab_thermal.prom')
+EVERY = 15   # seconds (Prometheus scrapes every 15 s)
+FW, MD, RG = '/run/fan-watchdog.state', '/run/md1200-fan.state', '/run/ryuji-fan-guard.state'
+FW_NAMES = {'cpu': 'cpu', 'exh': 'exhaust', 'inlet': 'inlet', 'hdd': 'hdd', 'ssd': 'ssd', 'dimm': 'dimm'}
+
+
+def metrics():
+    out, now = [], time.time()
+    head = {
+        'lab_controller_state_age_seconds': 'Seconds since the fan controller last wrote its state file',
+        'lab_r720_fan_percent': 'mementos R720 fan percent set by fan-watchdog (absent while in iDRAC auto)',
+        'lab_r720_fan_auto': '1 when fan-watchdog has handed the R720 fans to iDRAC auto',
+        'lab_r720_temp_celsius': 'mementos temperatures as read by fan-watchdog (inlet = room reference)',
+        'lab_md1200_fan_percent': 'MD1200 shelf fan percent held by md1200-fan',
+        'lab_md1200_fan_rpm': 'MD1200 shelf fan rpm from SES',
+        'lab_md1200_fan_expected_rpm': 'MD1200 shelf rpm expected for the held percent',
+        'lab_md1200_temp_celsius': 'MD1200 shelf temperatures (hottest drive, backplane, SIM, expander)',
+        'lab_md1200_primary': '1 when md1200-fan sees its EMM as primary and active',
+        'lab_md1200_takeovers': 'shelf firmware takeovers seen by md1200-fan since it started',
+        'lab_ryuji_fan_offset': 'ryuji BMC fan offset set by ryuji-fan-guard (-80 quiet, -16 warm, 0 performance, 127 full)',
+        'lab_ryuji_temp_celsius': 'ryuji temperatures read by ryuji-fan-guard (SIO Temp 1, hottest CPU, VR, DIMM)',
+    }
+    seen = set()
+
+    def add(name, value, **labels):
+        if name not in seen:
+            seen.add(name)
+            out.append(f'# HELP {name} {head[name]}\n# TYPE {name} gauge')
+        lab = ','.join(f'{k}="{v}"' for k, v in labels.items())
+        out.append(f'{name}{{{lab}}} {value}' if lab else f'{name} {value}')
+
+    if os.path.exists(FW):
+        s = open(FW).read()
+        add('lab_controller_state_age_seconds', round(now - os.path.getmtime(FW)), controller='fan-watchdog')
+        for k, v in re.findall(r'(cpu|exh|inlet|hdd|ssd|dimm)=(\d+)', s):
+            add('lab_r720_temp_celsius', v, sensor=FW_NAMES[k])
+        auto = 'auto' in s
+        add('lab_r720_fan_auto', int(auto))
+        m = re.search(r' (\d+)% ', s)
+        if m and not auto:
+            add('lab_r720_fan_percent', m.group(1))
+    if os.path.exists(MD):
+        try:
+            d = json.load(open(MD))
+            add('lab_controller_state_age_seconds', round(now - os.path.getmtime(MD)), controller='md1200-fan')
+            add('lab_md1200_fan_percent', d['pct'])
+            add('lab_md1200_fan_rpm', round(d['rpm']))
+            add('lab_md1200_fan_expected_rpm', d['expected_rpm'])
+            for k, v in d['temps'].items():
+                add('lab_md1200_temp_celsius', v, sensor=k.lower())
+            add('lab_md1200_primary', int(d.get('role') == 'primary'))
+            add('lab_md1200_takeovers', d.get('takeovers', 0))
+        except (ValueError, KeyError, TypeError):
+            pass
+    if os.path.exists(RG):
+        try:
+            d = json.load(open(RG))
+            add('lab_controller_state_age_seconds', round(now - os.path.getmtime(RG)), controller='ryuji-fan-guard')
+            add('lab_ryuji_fan_offset', d['offset'])
+            for k, lab in (('sio', 'sio1'), ('cpu', 'cpu'), ('vr', 'vr'), ('dimm', 'dimm')):
+                add('lab_ryuji_temp_celsius', d[k], sensor=lab)
+        except (ValueError, KeyError, TypeError):
+            pass
+    return '\n'.join(out) + '\n'
+
+
+while True:
+    try:
+        txt = metrics()
+        with open(OUT + '.tmp', 'w') as f:
+            f.write(txt)
+        os.replace(OUT + '.tmp', OUT)
+    except OSError:
+        pass
+    time.sleep(EVERY)

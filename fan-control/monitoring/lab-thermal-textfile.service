@@ -1,0 +1,12 @@
+[Unit]
+Description=Publish fan controller state (room, shelf, R720, ryuji) as node_exporter textfile metrics
+After=local-fs.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/lab-thermal-textfile
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
