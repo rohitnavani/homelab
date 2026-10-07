@@ -1,0 +1,751 @@
+{
+ "uid": "lab-thermal",
+ "title": "Lab - Thermal",
+ "tags": [
+  "lab"
+ ],
+ "schemaVersion": 39,
+ "version": 2,
+ "editable": true,
+ "time": {
+  "from": "now-12h",
+  "to": "now"
+ },
+ "refresh": "30s",
+ "panels": [
+  {
+   "id": 1,
+   "type": "stat",
+   "title": "Room (mementos inlet)",
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 0,
+    "y": 0
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_r720_temp_celsius{sensor=\"inlet\"}",
+     "legendFormat": "inlet"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 27
+       },
+       {
+        "color": "orange",
+        "value": 29
+       },
+       {
+        "color": "red",
+        "value": 31
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "description": "iDRAC inlet sensor, 1C steps; reads a few degrees above the room air. Pre-10-04 with the AC working: 23-25C."
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Shelf hottest drive",
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 4,
+    "y": 0
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_md1200_temp_celsius{sensor=\"drive\"}",
+     "legendFormat": "drive"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 50
+       },
+       {
+        "color": "orange",
+        "value": 52
+       },
+       {
+        "color": "red",
+        "value": 56
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "description": "md1200-fan target 48.5C (smoothed); urgent at 52; drive trip 60."
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Shelf fans",
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 8,
+    "y": 0
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_md1200_fan_percent",
+     "legendFormat": "shelf %"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 25
+       },
+       {
+        "color": "red",
+        "value": 45
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "R720 fans",
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 12,
+    "y": 0
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_r720_fan_percent",
+     "legendFormat": "R720 %"
+    },
+    {
+     "refId": "B",
+     "expr": "lab_r720_fan_auto * 100",
+     "legendFormat": "auto"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 25
+       },
+       {
+        "color": "red",
+        "value": 40
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "description": "fan-watchdog; 'auto' = 100 when it handed the fans to iDRAC auto (loud)."
+  },
+  {
+   "id": 5,
+   "type": "stat",
+   "title": "ryuji fan offset",
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 16,
+    "y": 0
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_ryuji_fan_offset",
+     "legendFormat": "offset"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": -16
+       },
+       {
+        "color": "red",
+        "value": 0
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "description": "ryuji-fan-guard: -80 quiet, -16 warm, 0 Performance, 127 Full."
+  },
+  {
+   "id": 6,
+   "type": "stat",
+   "title": "Rack current",
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 20,
+    "y": 0
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "cyberpower_pdu_bank_load_deciamps{bank=\"1\"} / 10",
+     "legendFormat": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "amp",
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 12
+       },
+       {
+        "color": "red",
+        "value": 16
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Room proxies",
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_r720_temp_celsius{sensor=\"inlet\"}",
+     "legendFormat": "mementos inlet (iDRAC)"
+    },
+    {
+     "refId": "B",
+     "expr": "node_ipmi_temperature_celsius{sensor=\"MB_TEMP1\"} * on(instance) group_left(nodename) node_uname_info{nodename=\"sojiro\"}",
+     "legendFormat": "sojiro MB_TEMP1"
+    },
+    {
+     "refId": "C",
+     "expr": "node_ipmi_temperature_celsius{sensor=\"MB Temp\"} * on(instance) group_left(nodename) node_uname_info{nodename=\"makoto\"}",
+     "legendFormat": "makoto MB"
+    },
+    {
+     "refId": "D",
+     "expr": "node_hwmon_temp_celsius{chip=\"nvme_nvme0\",sensor=\"temp1\"} * on(instance) group_left(nodename) node_uname_info{nodename=\"TinyNAS\"}",
+     "legendFormat": "tinynas nvme0"
+    },
+    {
+     "refId": "E",
+     "expr": "node_hwmon_temp_celsius{chip=\"platform_nct6775_656\",sensor=\"temp1\"} * on(instance) group_left(nodename) node_uname_info{nodename=\"TinyNAS\"}",
+     "legendFormat": "tinynas SYSTIN"
+    },
+    {
+     "refId": "F",
+     "expr": "cyberpower_pdu_bank_load_deciamps{bank=\"1\"} / 10",
+     "legendFormat": "rack A (right)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "decimals": 1,
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": 120000
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "rack A.*"
+      },
+      "properties": [
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       },
+       {
+        "id": "unit",
+        "value": "amp"
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          6,
+          4
+         ]
+        }
+       },
+       {
+        "id": "min",
+        "value": 0
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "description": "Independent room-tracking sensors on four machines (the AC's hourly cycle shows in all of them) and the rack current."
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "MD1200 shelf (md1200-fan v3.1)",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 12
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_md1200_temp_celsius",
+     "legendFormat": "{{sensor}}"
+    },
+    {
+     "refId": "B",
+     "expr": "lab_md1200_fan_percent",
+     "legendFormat": "fan % (right)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "decimals": 0,
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": 120000
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "fan %.*"
+      },
+      "properties": [
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       },
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          6,
+          4
+         ]
+        }
+       },
+       {
+        "id": "min",
+        "value": 0
+       },
+       {
+        "id": "max",
+        "value": 60
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "mementos R720 (fan-watchdog v4.2)",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 12
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_r720_temp_celsius{sensor!=\"inlet\"}",
+     "legendFormat": "{{sensor}}"
+    },
+    {
+     "refId": "B",
+     "expr": "lab_r720_fan_percent",
+     "legendFormat": "fan % (right)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "decimals": 0,
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": 120000
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "fan %.*"
+      },
+      "properties": [
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       },
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          6,
+          4
+         ]
+        }
+       },
+       {
+        "id": "min",
+        "value": 0
+       },
+       {
+        "id": "max",
+        "value": 60
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 10,
+   "type": "timeseries",
+   "title": "ryuji (ryuji-fan-guard v2.1)",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 20
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_ryuji_temp_celsius",
+     "legendFormat": "{{sensor}}"
+    },
+    {
+     "refId": "B",
+     "expr": "lab_ryuji_fan_offset",
+     "legendFormat": "offset (right)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "decimals": 0,
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": 120000
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "offset.*"
+      },
+      "properties": [
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       },
+       {
+        "id": "unit",
+        "value": "none"
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          6,
+          4
+         ]
+        }
+       },
+       {
+        "id": "min",
+        "value": -90
+       },
+       {
+        "id": "max",
+        "value": 130
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "description": "SIO Temp 1: BMC warns 80, critical 85; guard leaves -80 at 79."
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Fan controller health",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 20
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "lab_controller_state_age_seconds",
+     "legendFormat": "{{controller}} state age"
+    },
+    {
+     "refId": "B",
+     "expr": "lab_md1200_takeovers",
+     "legendFormat": "shelf takeovers (right)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "decimals": 0,
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": 120000
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "shelf takeovers.*"
+      },
+      "properties": [
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       },
+       {
+        "id": "unit",
+        "value": "none"
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          6,
+          4
+         ]
+        }
+       },
+       {
+        "id": "min",
+        "value": 0
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "description": "Seconds since each controller wrote its state file (normal: under ~60 s). A climbing line = the controller stopped."
+  }
+ ],
+ "description": "Room, shelf, R720 and ryuji fan/thermal state from the fan controllers (lab-thermal-textfile on mementos and ryuji, added 2026-10-07); hosts are picked by hostname (node_uname_info), not by address."
+}
