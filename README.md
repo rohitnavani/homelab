@@ -17,7 +17,7 @@ covers the whole lab.
 | **sojiro** | Gigabyte MB10-series board, Xeon D-1521 (4c/8t), 32 GB DDR4, 4x Toshiba MG04 (2x 2 TB, 2x 4 TB) | Backup target: pulls ZFS replicas from tinynas and mementos nightly. Moves offsite later |
 | **futaba** | Lenovo mini PC (10HY002AUS), Core i5-6500T, 32 GB DDR4, 256 GB SATA SSD | Network services: DNS (AdGuard Home), Cloudflare DDNS, strongSwan IPsec VPN, Home Assistant VM, Cockpit entry point |
 | **makoto** | ASRock Rack board, Xeon D-1622 (4c/8t), 32 GB DDR4 ECC, 3x 1 TB Crucial MX500 SATA SSD | Admin box: runs the Claude Code sessions and the lab test loggers |
-| **arsene** | Dell Latitude 5420, Core i5-1135G7, 16 GB DDR4, 256 GB NVMe | Experiments (Kubernetes candidate); its internal mic is the lab noise meter for fan tests |
+| **morgana** (formerly arsene) | Dell Latitude 5420, Core i5-1135G7, 16 GB DDR4, 256 GB NVMe | Experiments (Kubernetes candidate); its internal mic is the lab noise meter for fan tests |
 
 ### Network and rack
 
