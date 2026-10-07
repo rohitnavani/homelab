@@ -1,0 +1,55 @@
+# Lab thermal alerts (added 2026-10-07 by the overnight thermal session). Metrics come from lab-thermal-textfile on
+# mementos and ryuji (the fan controllers' own state files). Thresholds are set so they only fire on real trouble:
+# normal hot-room values on 10-06/07 were inlet 26-28C, shelf hottest drive 47-50C, ryuji SIO1 76-78C.
+groups:
+  - name: lab-thermal
+    rules:
+      - alert: FanControllerStale
+        expr: lab_controller_state_age_seconds > 300
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Fan controller {{ $labels.controller }} stopped updating on {{ $labels.instance }}"
+          description: "{{ $labels.controller }} has not written its state file for {{ $value | humanizeDuration }}. Its fans may be stuck or back on firmware control (the MD1200 then runs its loud thermal ramp). Check: systemctl status {{ $labels.controller }}."
+      - alert: ThermalMetricsMissing
+        expr: absent(lab_controller_state_age_seconds{controller="fan-watchdog"}) or absent(lab_controller_state_age_seconds{controller="md1200-fan"}) or absent(lab_controller_state_age_seconds{controller="ryuji-fan-guard"})
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "No fan controller metrics for {{ $labels.controller }}"
+          description: "lab-thermal-textfile publishes nothing for {{ $labels.controller }}: the host, node_exporter, lab-thermal-textfile or the controller itself is down."
+      - alert: R720FansInIdracAuto
+        expr: lab_r720_fan_auto == 1
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "mementos fans on iDRAC auto for 15 min (loud)"
+          description: "fan-watchdog handed the R720 fans to iDRAC auto (an emergency temperature or a failed sensor read) and has not taken them back."
+      - alert: ShelfDriveHot
+        expr: lab_md1200_temp_celsius{sensor="drive"} >= 54
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "MD1200 hottest drive {{ $value }}C"
+          description: "md1200-fan targets 48.5C, goes urgent at 52 and floors the fans at 60% from 56; the drives trip at 60C."
+      - alert: ShelfEmmNotPrimary
+        expr: lab_md1200_primary == 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "md1200-fan sees its EMM as not primary"
+          description: "The serial cable must be on the TOP (primary) EMM; while it is not primary md1200-fan holds its fan commands and the shelf runs its own curve."
+      - alert: RyujiSioHot
+        expr: lab_ryuji_temp_celsius{sensor="sio1"} >= 82
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "ryuji SIO Temp 1 {{ $value }}C"
+          description: "The BMC warns at 80 and is critical at 85; ryuji-fan-guard goes to Full at 83. Normal idle at -80 in a warm room: 76-78C."
+      - alert: LabRoomHot
+        expr: lab_r720_temp_celsius{sensor="inlet"} >= 31
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Room hot: mementos inlet {{ $value }}C for 30 min"
+          description: "Check the AC. With the AC working the inlet reads 23-25C; with the AC faulty (10-04 to 10-07) 26-28C."
