@@ -24,6 +24,9 @@
 #   Performance -> WARM after 30 min with SIO1 <= 73 and CPU/VR/DIMM below their UP limits minus a margin.
 #   Full at SIO1 >= 83 or CPU >= 86; back to Performance after 5 min below.
 # Runs as root on ryuji; the BMC password is in PWFILE (0600). Stop the service to set the offset by hand.
+# v2.2 (2026-10-08): at boot the guard starts right after network-online.target, but ryuji's address is not usable yet
+# (seen at both boots on 10-06 and 10-07: "Network is unreachable"), so the first BMC read is retried every 10 s for
+# up to 2 min before assuming QUIET. The unit also gets Wants=network-online.target.
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
@@ -123,12 +126,17 @@ def wanted(level, t, hot, cool, now, why):
 
 def main():
     level, last_verify, hot, cool, why, sio_hist = None, 0, {}, {}, 'load', []
-    try:
-        level = bmc('get')
-        log(f'starting; BMC offset is {level}')
-    except Exception as ex:
-        log(f'starting; could not read the BMC offset ({ex!r}); assuming {QUIET}')
-        level = QUIET
+    for attempt in range(13):   # the network can lag network-online.target at boot: retry for up to 2 min
+        try:
+            level = bmc('get')
+            log(f'starting; BMC offset is {level}' + (f' (after {attempt * 10} s)' if attempt else ''))
+            break
+        except Exception as ex:
+            if attempt == 12:
+                log(f'starting; could not read the BMC offset for 2 min ({ex!r}); assuming {QUIET}')
+                level = QUIET
+            else:
+                time.sleep(10)
     if level not in LEVELS:
         log(f'offset {level} is not one of the guard levels; treating it as {QUIET}')
         level = QUIET

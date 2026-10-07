@@ -136,6 +136,9 @@ thresholds from the hardware above. What carries over and what to change:
   busy, or a CPU reaches 78C, a VR 90C or a DIMM 75C. -16 to Performance if that is not enough. Full at SIO1 83C or
   CPU 86C. Back to -80 after 10 idle minutes once SIO1 is 72C or lower (30 min at 71C or lower after a hot room).
 - Re-checks the BMC offset every 30 min and puts its level back; temps unreadable for 5 min means Performance.
+- At start it reads the BMC offset, retrying every 10 s for up to 2 min (v2.2): at boot ryuji's address is not
+  usable yet when network-online.target is reached, which made that first read fail on 10-06 and 10-07. The unit
+  wants network-online.target.
 - Needs the BMC password in `/root/.bmc-pass` (0600, root only); the BMC web API needs legacy TLS.
   `gbt-fan-offset.py <bmc ip> get|set N` reads or sets the offset by hand (stop the guard first).
 - Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2650 v3 (E5-2696 v4 upgrade pending);
@@ -160,6 +163,7 @@ TAU=2700 python3 -I md1200-fan/tests/test_md1200_lag_scenarios.py md1200-fan/md1
 TAU=2700 CYC=1 python3 -I md1200-fan/tests/test_md1200_lag_sweep.py md1200-fan/md1200-fan
 fan-watchdog/tests/run-tests.sh                                                        # about 2 minutes
 python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 12 scenarios
+python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)
 ```
 
 ## Tools
