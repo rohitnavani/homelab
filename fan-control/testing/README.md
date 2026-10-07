@@ -83,6 +83,23 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 | `analyze_ryuji_profile.py <profile.csv> <room.csv> [hdd.csv]` | anywhere | per-phase settled values of a `../tools/ryuji-profile.py` run, joined with the room |
 | `tinynas-cage-test.sh <all\|each\|pwm2>` | tinynas | does any motherboard fan header cool the drive cage? A/B/A against BIOS control; more airflow only; needs `modprobe nct6775` |
 
+## Noise (microphone)
+
+| Script | Runs on | What it does |
+|---|---|---|
+| `mic-level-log.py <minutes> <csv> [clip s]` | arsene (root) | sound levels from the internal mic every 10 s at a fixed gain: dB(A), unweighted, octave bands, steady tones. Keeps only the levels and deletes each clip at once; needs alsa-utils and python3-numpy (installed 10-06) |
+| `mic-r720.sh` | mementos (root) | R720 fans at fixed steps at idle (10, 20, 10, 30, 10%), then fan-watchdog takes them back; restore `mic-r720-restore.sh` |
+| `analyze_mic_test.py <levels.csv> <shelf-decay logs> <mic-r720.log>` | anywhere | splits the levels into states from the event logs, drops settling time and stray sounds, compares each step with the baselines on either side (dB(A) and the 1-2 kHz bands) |
+
+The A/B test from 10-06 (17 min; the shelf holds use `shelf-decay.py`; copy the scripts to `/var/tmp` first):
+
+```sh
+ssh arsene 'sudo systemd-run --collect --unit=mic-level python3 /var/tmp/mic-level-log.py 17 /var/tmp/mic-levels.csv'
+ssh mementos 'sudo systemd-run --collect --on-active=70 --unit=mic-shelf30 -p "ExecStopPost=/bin/systemctl start md1200-fan" python3 /var/tmp/shelf-decay.py 30 2.5 mic30 3'
+ssh mementos 'sudo systemd-run --collect --on-active=330 --unit=mic-shelf22 -p "ExecStopPost=/bin/systemctl start md1200-fan" python3 /var/tmp/shelf-decay.py 22 2.5 mic22 3'
+ssh mementos 'sudo systemd-run --collect --on-active=590 --unit=mic-r720 -p ExecStopPost=/var/tmp/mic-r720-restore.sh /bin/sh /var/tmp/mic-r720.sh'
+```
+
 ## Deploying a controller
 
 `deploy-examples/` has the three deploy-and-watch scripts used on 10-06 (md1200-fan v3.1, fan-watchdog v4.2,

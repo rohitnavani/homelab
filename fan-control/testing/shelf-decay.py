@@ -77,9 +77,10 @@ else:
 subprocess.run(['systemctl', 'stop', 'md1200-fan'])
 s = serial.Serial(PORT, 38400, timeout=0.1)
 try:
+    before = temps()   # read first: it takes 7-14 s, and the log time must be the moment of the command
     reply = cmd('_shutup %d' % pct)
     note(f'{label}: sent _shutup {pct} once (echo {"ok" if f"_shutup {pct}" in reply else "MISSING"}); '
-         f'expect about {expected} rpm; watching {minutes:g} min. {temps()}')
+         f'expect about {expected} rpm; watching {minutes:g} min. Before: {before}')
     start, next_temp, off, takeovers, sent_at = time.time(), time.time() + 30, 0, 0, time.time()
     while time.time() - start < minutes * 60:
         r = rpm()

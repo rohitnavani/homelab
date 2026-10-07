@@ -148,6 +148,7 @@ load. A real workload is the best validation for the shelf: the dataPool scrub (
 | Several guessed clock times | confusing log entries | always `date`, log epoch |
 | Another session's VM work during the overnight run | small heat and I/O confound | coordinate; log other activity |
 | ryuji at -80 idled at SIO1 77-78C in a warm room | the first load step tripped guard v1 to Performance | profile across offsets before choosing a quiet offset |
+| shelf-decay logged its start after reading every drive temperature (7-14 s) | event times lagged the fan change by that much | log the moment of the command (fixed) |
 
 ## 8. Plans for the repeat runs
 
@@ -190,15 +191,30 @@ the E5-2650 v3s did (88-91 W measured).
    under the BMC's own CPU thresholds, and rerun the guard's harness (`ryuji-fan-guard/tests`) with the new numbers
    before deploying.
 
-### Noise, with a microphone
-- A fixed mic near the listening spot (the MagicMirror Pi's USB mic needs SSH enabled on the Pi first). Same gain
-  every time; note the AC's state, since its own noise matters.
-- Record 30-60 s per state, twice per state in A/B/A/B order, and compute an A-weighted equivalent level (Leq) plus
-  a few octave bands. The numbers are relative (dB re the same mic), which is what ranking needs. Keep only the
-  levels; delete the audio.
-- Step one box at a time from its quiet state: shelf 15/20/25/30%; R720 10/20/30/40%; ryuji -80 vs -16 vs off;
-  everything else held. Expect about 1 dB to be the smallest real difference; anything inside the repeat spread is
-  noise.
+### Noise, with a microphone (arsene)
+The mic is arsene's (the Latitude 5420) internal mic on its Realtek codec (ALSA card 0, "Internal Mic"), which works
+with the stock driver. `testing/mic-level-log.py` (root) sets a fixed gain (Capture 23 = 0 dB, Internal Mic Boost
+0), records 10 s clips into RAM, keeps only the levels (dB(A), unweighted, octave bands, steady tones), deletes each
+clip at once and restores the mixer on exit. Levels are dBFS for this mic and gain: only differences mean anything.
+
+Checked 2026-10-06 at 23:00 with arsene in the network rack above tinynas, lid closed, across the living room from
+the server rack (`testing/README.md` has the commands):
+- Readings within a steady state agree to 0.15-0.3 dB, and the room sits about 22 dB above the mic's own floor. One
+  clip in 70 caught a passing sound; the analysis drops those.
+- Steps against the baselines on either side: shelf 17 -> 30% +1.6 dB(A) (+2.6 dB in the 1-2 kHz bands), 17 -> 22%
+  about +0.5 to +1.3 dB(A), R720 10 -> 20% +0.8 dB(A), 10 -> 30% +1.6 dB(A) (+2.3 dB at 1-2 kHz).
+- At that spot the server rack is a small part of the sound: by fan laws the shelf at 17% is about a tenth of it and
+  the R720 at 10% about 2%; tinynas and the network gear dominate. The room level also drifted about 1 dB in ten
+  minutes.
+
+For the sweep:
+1. Place arsene 1-1.5 m in front of the server rack, lid open with the screen facing the rack, on something soft
+   (not on another box), on AC power. Rerun the A/B test to confirm the steps are now several dB.
+2. Use short A/B/A cycles (1-2 min per state, each step twice) and judge by the 1-2 kHz bands as well as dB(A): the
+   rack fans show there and the room's low-frequency noise does not. Note the AC's state.
+3. Step one box at a time from its quiet state: shelf 15/20/25/30%; R720 10/20/30/40%; ryuji -80 / -16 /
+   Performance; everything else held.
+4. One short pass at the listening spot translates the ranking into what Rohit actually hears.
 
 ### tinynas, after the cage fan check (about 1 h per mode)
 `testing/tinynas-cage-test.sh <mode>` as a transient unit with its fallback in a script file: `all` (BIOS 10 min,
