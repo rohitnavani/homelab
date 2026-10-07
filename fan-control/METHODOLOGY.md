@@ -1,7 +1,7 @@
 # Fan and thermal testing: methodology
 
 How the 2026-10-05/06 fan work was measured, what went wrong, and how to run it again: with the AC working, on
-ryuji after the E5-2699 v4 upgrade, with a microphone for real noise readings, and on tinynas once its drive cage
+ryuji after the E5-2696 v4 upgrade, with a microphone for real noise readings, and on tinynas once its drive cage
 has a fan. The test tools are in `testing/` (as used on 10-06, see `testing/README.md`) and `tools/`.
 
 The short version: **verify the room first, log everything with epoch timestamps, change one thing at a time,
@@ -165,21 +165,30 @@ Then confirm v3.1 settles around 14-16% on its own, and run a scrub to see its p
    unwind. Expect a few degrees cooler than 10-06 at every step and v4.2 settling a few % lower (10-06: 21%, 25-27%,
    32-35%).
 
-### ryuji with the E5-2699 v4s (about 3 h)
-1. Idle baseline at -80 for 60 min with the guard running.
-2. `tools/ryuji-profile.py e5-2699v4 full` with `lab-inlet-guard.sh` publishing the room: every offset, loudest first
+### ryuji with the E5-2696 v4s (about 3 h)
+The E5-2696 v4 is an OEM version of the E5-2699 v4: 22 cores each, 145 W in most listings (some say 150 W; Intel
+publishes no spec page for it). Full load will put about 55 W more per socket through the CPUs and their VRs than
+the E5-2650 v3s did (88-91 W measured).
+1. Check the swap: `lscpu` shows 2 sockets x 22 cores; all 128 GB present (`free -g`); the BMC lists both CPU
+   temperatures (`sudo ipmitool sdr type Temperature`). Read the BMC's CPU thresholds
+   (`sudo ipmitool sensor | grep -i cpu`) and the package power limits
+   (`cat /sys/class/powercap/intel-rapl:*/constraint_0_power_limit_uw`), read-only.
+2. Idle baseline at -80 for 60 min with the guard running.
+3. `tools/ryuji-profile.py e5-2696v4 full` with `lab-inlet-guard.sh` publishing the room: every offset, loudest first
    (0, -8, -16, -24, -80) x idle 10 min / 4 workers 6 min / full 6 min, then -80 idle; about 2 h plus room waits.
-   It counts physical cores itself, so full load becomes 44 workers.
-3. `testing/analyze_ryuji_profile.py` for the per-phase table, and
-   `tools/ryuji_profile_table.py room.csv ryuji-profile-e5-2699v4.csv --project 145` for the CPU rise per package
-   watt. Compare with the e5-2650v3 CSVs.
-4. Predictions to check: about 0.38-0.46C of CPU rise per package watt at 5,000-6,000 rpm CPU fans, so ~82C at full
-   load in a 27C room (about 77C at 22C) with loud CPU fans; light loads will draw more package power than before.
-5. The guard goes to -16 when a CPU reads 78C or more twice in a row (60 s apart), and from -16 to Performance if it
+   It counts physical cores itself, so full load becomes 44 workers. Its stops (load off at CPU 82C or VR 95C, Full
+   Speed at CPU 86C) stay: if a quiet offset cannot hold full load under 82C, that is the result.
+4. `testing/analyze_ryuji_profile.py` for the per-phase table, and
+   `tools/ryuji_profile_table.py room.csv ryuji-profile-e5-2696v4.csv` for the CPU rise per package watt. Compare
+   with the e5-2650v3 CSVs.
+5. Predictions to check: the 10-06 CPU rise was 0.38C per package watt with the CPU fans near 6,000 rpm (0.46 at
+   4,900 rpm), so about 77-79C at full load in a 22C room (82-84C at 27C) with loud CPU fans; light loads will draw
+   more package power than before.
+6. The guard goes to -16 when a CPU reads 78C or more twice in a row (60 s apart), and from -16 to Performance if it
    still does, then holds Performance for 30 min after the load ends. With the new CPUs a full load will likely do
-   exactly that. Decide between accepting it (Rohit: noise at full load is fine) and raising CPU_UP; read the BMC's
-   own CPU thresholds first (`sudo ipmitool sensor | grep -i cpu`), keep CPU_UP well under them, and rerun the
-   guard's harness (`ryuji-fan-guard/tests`) with the new numbers before deploying.
+   exactly that. Decide between accepting it (Rohit: noise at full load is fine) and raising CPU_UP; keep CPU_UP well
+   under the BMC's own CPU thresholds, and rerun the guard's harness (`ryuji-fan-guard/tests`) with the new numbers
+   before deploying.
 
 ### Noise, with a microphone
 - A fixed mic near the listening spot (the MagicMirror Pi's USB mic needs SSH enabled on the Pi first). Same gain

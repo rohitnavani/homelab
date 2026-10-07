@@ -72,7 +72,7 @@ expect([v for _, v in o] == [-16], f'one step to -16 and stays there, no cycling
 o = run('5 bursty: 2 min of 20 threads every 10 min for 2 h', 180,
         evs=[(m, L(20)) for m in range(30, 150, 10)] + [(m + 2, L(0)) for m in range(30, 150, 10)])
 expect(len(o) <= 2 and all(v != 0 for _, v in o), f'no Performance, at most one round trip ({o})')
-o = run('6 hotter CPUs (E5-2699 v4: +20C at full load) 60 min', 200, evs=[(30, lambda: plant.update(load=20, cpu_extra=20)),
+o = run('6 hotter CPUs (E5-2696 v4: +20C at full load) 60 min', 200, evs=[(30, lambda: plant.update(load=20, cpu_extra=20)),
                                                                         (90, lambda: plant.update(load=0, cpu_extra=0))])
 expect(any(v in (0, 127) for _, v in o), f'Performance/Full when the CPUs run hot ({o})')
 expect(o and o[-1][1] == -80, f'all the way back to -80 afterwards ({o[-1:]})')

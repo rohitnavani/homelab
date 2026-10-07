@@ -90,7 +90,7 @@ python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-f
 
 `METHODOLOGY.md` covers how the 2026-10-05/06 data was gathered, what went wrong (mainly a room that cycled 24-28C
 while the AC struggled) and how to run the tests again: the shelf and mementos with the AC working, ryuji after the
-E5-2699 v4 upgrade, noise with a microphone, and tinynas after its cage fan check. `testing/` has the scripts as they
+E5-2696 v4 upgrade, noise with a microphone, and tinynas after its cage fan check. `testing/` has the scripts as they
 ran (see `testing/README.md`).
 
 ## Results, 2026-10-06 (room 24-28C)

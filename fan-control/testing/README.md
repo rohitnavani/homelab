@@ -22,6 +22,26 @@ repeated. How they fit together, and what to change for the repeat runs, is in `
   ryuji's BMC at 10.0.0.118 with its password in `/root/.bmc-pass` (0600).
 - Plans are lists at the top of each script (`PLANS`, `PLAN`, `PHASES`); edit them for a new run.
 
+## Start the loggers
+
+From a clone of the repo on makoto (in `fan-control/`), with `DATA` set to this run's data folder. labmon needs
+root (ipmitool, smartctl, RAPL) and appends to `/var/tmp/labmon.jsonl`; lab-inlet-guard runs as you because it uses
+your ssh keys. If a unit name is still taken by an old failed run, `systemctl reset-failed <unit>` first.
+
+```sh
+export DATA=~/lab-thermal-$(date +%F)/data; mkdir -p "$DATA"
+for h in mementos ryuji sojiro tinynas; do
+  scp testing/labmon.py $h:/var/tmp/ && ssh $h 'sudo systemd-run --unit=labmon python3 /var/tmp/labmon.py --hours 72'
+done
+sudo install -m 755 testing/labmon.py /var/tmp/ && sudo systemd-run --unit=labmon python3 /var/tmp/labmon.py --hours 72
+scp testing/dimm-log.sh mementos:/var/tmp/ && ssh mementos 'sudo systemd-run --unit=dimm-log bash /var/tmp/dimm-log.sh'
+sudo systemd-run --uid=$USER --unit=lab-inlet-guard -p Restart=on-failure --setenv=DATA=$DATA \
+    --setenv=LIMIT=27 --setenv=HARD=29 $PWD/tools/lab-inlet-guard.sh
+```
+
+Check: `systemctl is-active labmon` and `tail -1 /var/tmp/labmon.jsonl` on each host, `tail -2 $DATA/room.csv`.
+The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_compare.py` expect it in `$DATA`.
+
 ## Logging
 
 | Script | Runs on | What it does |

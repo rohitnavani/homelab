@@ -26,7 +26,7 @@ G = None  # guard in control
 # the CPU fans; 0 gives 4,000-5,000 rpm system fans. SIO Temp 1 follows system-fan airflow within minutes.
 # This sweep maps the in-between offsets (system fans between floor and Performance), loudest first.
 # Plans (pick with the 2nd argument; default "full"). Load = busy threads at 100%; FULL = one per physical core (20 on
-# 2x E5-2650 v3; 44 after the E5-2699 v4 upgrade). Hyperthreads add nothing with matrixprod (measured 10-06).
+# 2x E5-2650 v3; 44 after the E5-2696 v4 upgrade). Hyperthreads add nothing with matrixprod (measured 10-06).
 #   full:     every offset (loudest first) x idle 10 min / 4 threads 6 min / FULL 6 min, then -80 idle bracket.
 #   rest0806: what was left on 10-06 after sweeps 1-2 (offset 0 all loads and -24 idle/4 done earlier).
 # 10-06 history: sweep 1 (07:45) cut at 08:11 by the room rule (27C then); sweep 2 (08:25) light loads only;
