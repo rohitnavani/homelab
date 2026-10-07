@@ -11,13 +11,21 @@ groups:
         annotations:
           summary: "Fan controller {{ $labels.controller }} stopped updating on {{ $labels.instance }}"
           description: "{{ $labels.controller }} has not written its state file for {{ $value | humanizeDuration }}. Its fans may be stuck or back on firmware control (the MD1200 then runs its loud thermal ramp). Check: systemctl status {{ $labels.controller }}."
+      # v2 (2026-10-07 07:2x): only while the host is up, so a box that is off on purpose (ryuji) does not page;
+      # a host that is down is TargetDown's job. Hosts are matched by hostname (node_uname_info), not by address.
       - alert: ThermalMetricsMissing
-        expr: absent(lab_controller_state_age_seconds{controller="fan-watchdog"}) or absent(lab_controller_state_age_seconds{controller="md1200-fan"}) or absent(lab_controller_state_age_seconds{controller="ryuji-fan-guard"})
+        expr: |
+          label_replace((up{job="node"} * on(instance) group_left(nodename) node_uname_info{nodename="mementos"}) == 1
+            unless on(instance) lab_controller_state_age_seconds{controller="md1200-fan"}, "controller", "md1200-fan", "", "")
+          or label_replace((up{job="node"} * on(instance) group_left(nodename) node_uname_info{nodename="mementos"}) == 1
+            unless on(instance) lab_controller_state_age_seconds{controller="fan-watchdog"}, "controller", "fan-watchdog", "", "")
+          or label_replace((up{job="node"} * on(instance) group_left(nodename) node_uname_info{nodename="ryuji"}) == 1
+            unless on(instance) lab_controller_state_age_seconds{controller="ryuji-fan-guard"}, "controller", "ryuji-fan-guard", "", "")
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: "No fan controller metrics for {{ $labels.controller }}"
-          description: "lab-thermal-textfile publishes nothing for {{ $labels.controller }}: the host, node_exporter, lab-thermal-textfile or the controller itself is down."
+          summary: "No fan controller metrics for {{ $labels.controller }} on {{ $labels.nodename }}"
+          description: "{{ $labels.nodename }} is up, but lab-thermal-textfile publishes nothing for {{ $labels.controller }}: lab-thermal-textfile or the controller's state file is missing (controller not running since boot?)."
       - alert: R720FansInIdracAuto
         expr: lab_r720_fan_auto == 1
         for: 15m
