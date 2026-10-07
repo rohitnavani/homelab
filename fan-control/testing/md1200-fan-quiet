@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+# md1200-fan-quiet (2026-10-07): a TEMPORARY quiet mode of md1200-fan v3.1 for a visit (AC maintenance, Rohit:
+# "have the shelf at 10% so it is quiet when the maintenance ppl come in"). Same code and safety as v3.1 with two
+# changes: it starts at 10% instead of resuming from the state file, and it lets the hottest drive run to 50.5C
+# (smoothed) instead of 48.5C before nudging up. URGENT ramps and FLOORS are unchanged. With the room at 26-28C the
+# drives warm toward that target in roughly 30-60 min, after which it holds the lowest speed that keeps them there
+# (1-2% per 10 min); if the room cools it steps back down 1% per 20 min to 10%. Run as a transient unit with
+# md1200-fan stopped and ExecStopPost=/bin/systemctl start md1200-fan, which resumes from this run's last %.
+# md1200-fan: keep the MD1200 shelf quiet via its EMM serial console (_shutup <pct>).
+# Holds the quietest fan % that keeps the hottest shelf drive near a target temperature: it nudges the
+# speed 1% up (at most every 10 min) when the (smoothed) temps are above target, 1% down (at most every
+# 20 min) when they are clearly below it, and leaves it alone in between, so it settles on one steady
+# speed instead of stepping between fixed tiers. Hotter readings react faster, and hard floors cover
+# real emergencies.
+# v3.1 (2026-10-06): v3 nudged every 5 min, but the shelf drives take 30-60 min to settle after a fan
+# change (measured overnight), so v3 kept stepping long after each change and, in a model with the
+# measured lag, cycled between ~18% and ~28% over ~4 h (seen live 07:40-08:50: 25 -> 27 -> 19%).
+# Slower nudges (up 10 min, down 20 min) are steady from a settled start at every lag tested (15-90 min,
+# with and without the room's hourly +-1C cycle); easing down from emergency levels stays at 5 min.
+# The cable must be on the primary EMM (the top one; the bottom one holds the SAS links and is
+# secondary). A command to the secondary only lasts ~15-20s before the primary takes over, often with
+# its ~7,600 rpm thermal ramp, so fan commands are only sent while _who answers "primary and active".
+# The shelf firmware cancels _shutup on its own thermal ramp (and after EMM resets), so the
+# chosen % is re-sent every RESEND seconds, and the actual fan speed is checked against SES:
+# if it drifts from what the % should give, that's logged as a takeover and re-sent at once.
+# Measured 2026-10-05: 10% ~2330, 15% ~2800, 20% ~3290, 25% ~3770, 30% ~4250 rpm.
+import json, re, subprocess, sys, time, serial
+
+PORT, SG = '/dev/ttyUSB0', '/dev/sg39'
+STATE = '/run/md1200-fan.state'
+INTERVAL = 30   # temp check
+RESEND = 2      # seconds between _shutup re-sends (also sent at once on a change or takeover)
+VERIFY = 10     # seconds between SES fan-speed checks
+TICK = 2        # loop period
+ROLE_EVERY = 1800   # re-check the EMM role this often (every 60s while it isn't primary)
+# Targets (smoothed temps). Rohit's choice: hottest drive about 50C at idle. ST8000NM0075 trips at 60C;
+# SES warns at backplane 50C and SIM 65C; the EXP expander temps aren't in SES.
+TARGET = {'drive': 50.5, 'backplane': 46.0, 'SIM': 58.0, 'expander': 86.0}   # quiet mode: drive 50.5 (v3.1: 48.5)
+DOWN_MARGIN = {'drive': 1.5, 'backplane': 2.0, 'SIM': 3.0, 'expander': 3.0}  # come down only when this far below
+URGENT = {'drive': 52, 'backplane': 48, 'SIM': 61, 'expander': 90}           # raw temps: +5% every check
+FLOORS = [('drive', 56, 60), ('drive', 58, 80), ('backplane', 50, 80), ('SIM', 64, 80), ('expander', 95, 80)]
+MIN, NORMAL_MAX, MAX = 10, 45, 80   # normal range tops out at a medium level; only floors/urgent go higher
+NUDGE_UP = 600     # seconds since the last change before a 1-2% step up
+NUDGE_DOWN = 1200  # seconds since the last change before a 1% step down
+EASE = 300         # seconds between 5% steps down from an emergency level
+EMA = 0.3       # smoothing per 30s reading (1C sensor resolution)
+FALLBACK = 30   # if temps can't be read for STALE seconds
+STALE = 60      # a failed read keeps the current speed until reads have failed this long
+RETRY = 5       # seconds before re-reading after a failed read
+PROMPT = re.compile(r'(BlueDress|RedDress)\.[0-9.]+\s*>\s*$')
+
+def log(msg):
+    print(msg, flush=True)
+
+class Console:
+    """One persistent serial session; anything the EMM prints between commands is logged."""
+    def __init__(self):
+        self.s = None
+
+    def _open(self):
+        if self.s is None:
+            self.s = serial.Serial(PORT, 38400, timeout=0.1)
+
+    def reset(self):
+        try:
+            self.s.close()
+        except Exception:
+            pass
+        self.s = None
+
+    def _read_until_prompt(self, secs):
+        out, end = b'', time.time() + secs
+        while time.time() < end:
+            d = self.s.read(4096)
+            if d:
+                out += d
+                if PROMPT.search(out.decode(errors='replace')):
+                    break
+        return out.decode(errors='replace')
+
+    def cmd(self, c, secs=1.0):
+        try:
+            self._open()
+            pending = self.s.read(4096).decode(errors='replace')
+            if re.sub(r'(BlueDress|RedDress)[\w.]*\s*>|\s', '', pending):
+                log('emm said: ' + ' | '.join(l.strip() for l in pending.splitlines() if l.strip())[:300])
+            self.s.write((c + '\r').encode())
+            return self._read_until_prompt(secs)
+        except Exception as ex:
+            log(f'serial error: {ex!r}')
+            self.reset()
+            return ''
+
+def shelf_disks():
+    # dataPool's data vdevs live on the MD1200 shelf; its log SSD (and any cache/special
+    # vdevs) sit in the R720xd, so stop at the first section header (logs, cache, ...)
+    out = subprocess.run(['zpool', 'list', '-vHP', 'dataPool'], capture_output=True, text=True).stdout
+    devs = []
+    for line in out.splitlines()[1:]:
+        if line and not line[0].isspace():
+            break
+        devs += re.findall(r'(/dev/\S+)', line)
+    return sorted({re.sub(r'-part\d+$', '', d) for d in devs})
+
+def drive_temp(dev):
+    out = subprocess.run(['smartctl', '-n', 'standby', '-A', dev], capture_output=True, text=True).stdout
+    m = re.search(r'Current Drive Temperature:\s+(\d+)', out) or re.search(r'^194 .*?(\d+)(?: \(.*\))?$', out, re.M)
+    return int(m.group(1)) if m else None
+
+def read_temps(con):
+    drives = [t for t in map(drive_temp, shelf_disks()) if t]
+    out = con.cmd('_temp_rd', secs=3)
+    bp = [int(x) for x in re.findall(r'BP_\d\[\d\] = (\d+)c', out)]
+    sim = [int(x) for x in re.findall(r'SIM\d\[\d\] = (\d+)c', out)]
+    exp = [int(x) for x in re.findall(r'EXP\d\[\d\] = (\d+)c', out)]
+    if not (drives and bp and sim and exp):
+        return None
+    return {'drive': max(drives), 'backplane': max(bp), 'SIM': max(sim), 'expander': max(exp)}
+
+def fan_rpm():
+    out = subprocess.run(['sg_ses', '-p', '2', SG], capture_output=True, text=True).stdout
+    rpm = [int(x) for x in re.findall(r'Actual speed=(\d+) rpm', out)][-4:]
+    return sum(rpm) / len(rpm) if rpm else None
+
+def expected_rpm(pct):
+    # measured points, linear in between and beyond (about 96 rpm per %)
+    return 2330 + (pct - 10) * 96
+
+def floor_for(temps):
+    f = MIN
+    for k, t, p in FLOORS:
+        if temps[k] >= t:
+            f = max(f, p)
+    return f
+
+def decide(pct, smooth, temps, since):
+    # returns (new %, reason) for one 30s reading; since = seconds since the last change
+    f = floor_for(temps)
+    if pct < f:
+        return f, 'floor'
+    if any(temps[k] >= v for k, v in URGENT.items()):
+        return min(MAX, max(pct + 5, f)), 'urgent'
+    if pct > NORMAL_MAX:
+        if since >= EASE:
+            return max(NORMAL_MAX, f, pct - 5), 'easing'   # leave an emergency level gradually
+        return pct, None
+    over = max(smooth[k] - TARGET[k] for k in TARGET)
+    if over > 0.25 and since >= NUDGE_UP:
+        return min(NORMAL_MAX, pct + (2 if over > 1.5 else 1)), 'warm'
+    if all(smooth[k] < TARGET[k] - DOWN_MARGIN[k] for k in TARGET) and since >= NUDGE_DOWN:
+        return max(MIN, f, pct - 1), 'cool'
+    return pct, None
+
+def start_pct(temps):
+    return MIN   # quiet mode: always start at the floor (10%); decide() and the floors raise it if needed
+    # v3.1: resume from the last state if it is recent, otherwise a rough guess from the hottest drive
+    try:
+        with open(STATE) as f:
+            st = json.load(f)
+        if time.time() - time.mktime(time.strptime(st['time'], '%Y-%m-%d %H:%M:%S')) < 900 and st.get('pct'):
+            return int(st['pct'])
+    except Exception:
+        pass
+    return max(MIN, min(30, 10 + 3 * (temps['drive'] - 45)))
+
+def fmt(temps):
+    return ' '.join(f'{k}={v}' for k, v in temps.items())
+
+def check_role(con, previous):
+    who = con.cmd('_who', secs=3)
+    if re.search(r'I.?m\s+primary\s+and\s+active', who, re.I):
+        role = 'primary'
+    elif re.search(r'I.?m\s+secondary', who, re.I):
+        role = 'secondary'
+    else:
+        role = 'no-answer'
+    if role != previous:
+        if role == 'primary':
+            log('EMM on the cable is primary and active')
+        else:
+            log(f'EMM on the cable is {role}: not sending fan commands (move the cable to the top EMM)')
+    return role
+
+con = Console()
+pct, changed, checked, last_good, last_nudge, smooth = None, 0, 0, time.time(), time.time(), None
+last_verify, last_role, role, drift_since, takeovers, temps = 0, 0, '?', None, 0, None
+last_send, send_now, echo_misses, last_echo_log = 0, True, 0, 0
+log('starting')
+while True:
+    try:
+        now = time.time()
+        if now - last_role >= (ROLE_EVERY if role == 'primary' else 60):
+            role, last_role = check_role(con, role), now
+            send_now = send_now or role == 'primary'
+        if now - checked >= INTERVAL:
+            temps = read_temps(con)
+            checked = time.time()
+            new, why = pct, None
+            if temps is None:
+                checked -= INTERVAL - RETRY          # re-read soon
+                if pct is None or time.time() - last_good >= STALE:
+                    new = FALLBACK                   # brief glitch: keep the current speed
+            else:
+                last_good = time.time()
+                smooth = dict(temps) if smooth is None else {k: smooth[k] + EMA * (temps[k] - smooth[k]) for k in temps}
+                if pct is None:
+                    new, why = start_pct(temps), 'start'
+                else:
+                    new, why = decide(pct, smooth, temps, time.time() - last_nudge)
+            if new != pct:
+                sm = ' '.join(f'{k}={v:.1f}' for k, v in smooth.items()) if smooth else ''
+                log(f'fan {new}% ({why if temps else "temps unreadable"}: {fmt(temps) if temps else ""}; smoothed {sm})')
+                pct, changed, drift_since, send_now = new, time.time(), None, True
+                last_nudge = time.time()     # any change restarts the nudge timers
+        if role == 'primary' and (send_now or time.time() - last_send >= RESEND):
+            reply = con.cmd('_shutup %d' % pct, secs=0.6)
+            last_send, send_now = time.time(), False
+            if not re.search(rf'_shutup {pct}\b', reply):
+                echo_misses += 1
+                if time.time() - last_echo_log >= 60:
+                    log(f'no echo for _shutup {pct} ({echo_misses} so far); reopening the port')
+                    last_echo_log = time.time()
+                con.reset()
+                send_now = True
+        # closed loop: the fans should settle near the expected speed within ~20s of a change
+        if role == 'primary' and time.time() - last_verify >= VERIFY:
+            last_verify = time.time()
+            rpm = fan_rpm()
+            exp = expected_rpm(pct)
+            if rpm is not None and time.time() - changed > 25 and abs(rpm - exp) > max(300, 0.15 * exp):
+                if drift_since is None:
+                    drift_since = time.time()
+                elif time.time() - drift_since >= VERIFY:
+                    takeovers += 1
+                    log(f'takeover: fans at {rpm:.0f} rpm, expected about {exp} for {pct}% (count {takeovers}); re-sending')
+                    send_now, drift_since = True, None
+            else:
+                drift_since = None
+            with open(STATE, 'w') as f:
+                json.dump({'time': time.strftime('%F %T'), 'pct': pct, 'rpm': rpm, 'expected_rpm': exp,
+                           'temps': temps, 'role': role, 'takeovers': takeovers, 'echo_misses': echo_misses}, f)
+    except Exception as ex:
+        log(f'error: {ex!r}')
+        time.sleep(10)
+    time.sleep(TICK)
