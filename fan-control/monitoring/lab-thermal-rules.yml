@@ -42,7 +42,7 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "MD1200 hottest drive {{ $value }}C"
-          description: "md1200-fan targets 48.5C, goes urgent at 52 and floors the fans at 60% from 56; the drives trip at 60C."
+          description: "md1200-fan v3.2 targets 50C, goes urgent at 53 and floors the fans at 60% from 56; the drives trip at 60C."
       - alert: ShelfEmmNotPrimary
         expr: lab_md1200_primary == 0
         for: 10m
