@@ -1,16 +1,19 @@
 # Lab thermal alerts (added 2026-10-07 by the overnight thermal session). Metrics come from lab-thermal-textfile on
 # mementos and ryuji (the fan controllers' own state files). Thresholds are set so they only fire on real trouble:
 # normal hot-room values on 10-06/07 were inlet 26-28C, shelf hottest drive 47-50C, ryuji SIO1 76-78C.
+# v3 (2026-10-07 20:5x): FanControllerStale and R720FansInIdracAuto stay quiet while a fan-control test unit is
+# active on that host (node_exporter's systemd collector; the unit names of fan-control/testing and tools), because
+# tests stop the controllers or force fan modes on purpose. A test unit with another name still alerts.
 groups:
   - name: lab-thermal
     rules:
       - alert: FanControllerStale
-        expr: lab_controller_state_age_seconds > 300
-        for: 5m
+        expr: lab_controller_state_age_seconds > 300 unless on(instance) (node_systemd_unit_state{state="active",name=~"(shelf-exp|shelf-decay|mementos-steps|mementos-fixedfan|mementos-quiet|md1200-fan-quiet|mic-r720|mic-shelf|scrub-quiet|ryuji-profile|ryuji-quiet|ryuji-floor|emm-query|tinynas-cage)[^.]*[.]service"} == 1)
+        for: 10m
         labels: {severity: critical}
         annotations:
           summary: "Fan controller {{ $labels.controller }} stopped updating on {{ $labels.instance }}"
-          description: "{{ $labels.controller }} has not written its state file for {{ $value | humanizeDuration }}. Its fans may be stuck or back on firmware control (the MD1200 then runs its loud thermal ramp). Check: systemctl status {{ $labels.controller }}."
+          description: "{{ $labels.controller }} has not written its state file for {{ $value | humanizeDuration }}. Its fans may be stuck or back on firmware control (the MD1200 then runs its loud thermal ramp). Check: systemctl status {{ $labels.controller }}. (Test units that stop it on purpose suppress this alert.)"
       # v2 (2026-10-07 07:2x): only while the host is up, so a box that is off on purpose (ryuji) does not page;
       # a host that is down is TargetDown's job. Hosts are matched by hostname (node_uname_info), not by address.
       - alert: ThermalMetricsMissing
@@ -27,7 +30,7 @@ groups:
           summary: "No fan controller metrics for {{ $labels.controller }} on {{ $labels.nodename }}"
           description: "{{ $labels.nodename }} is up, but lab-thermal-textfile publishes nothing for {{ $labels.controller }}: lab-thermal-textfile or the controller's state file is missing (controller not running since boot?)."
       - alert: R720FansInIdracAuto
-        expr: lab_r720_fan_auto == 1
+        expr: lab_r720_fan_auto == 1 unless on(instance) (node_systemd_unit_state{state="active",name=~"(shelf-exp|shelf-decay|mementos-steps|mementos-fixedfan|mementos-quiet|md1200-fan-quiet|mic-r720|mic-shelf|scrub-quiet|ryuji-profile|ryuji-quiet|ryuji-floor|emm-query|tinynas-cage)[^.]*[.]service"} == 1)
         for: 15m
         labels: {severity: warning}
         annotations:

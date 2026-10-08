@@ -102,16 +102,19 @@ the textfile directory exports it (`node_ipmi_*`).
 
 | Rule | Fires when | For |
 |---|---|---|
-| FanControllerStale | a controller has not written its state for 300 s | 5 min (critical) |
+| FanControllerStale | a controller has not written its state for 300 s and no fan-control test unit is active on that host | 10 min (critical) |
 | ThermalMetricsMissing | a host is up but its controller's metrics are missing | 15 min |
-| R720FansInIdracAuto | `fan-watchdog` handed the R720xd fans to iDRAC auto | 15 min |
+| R720FansInIdracAuto | `fan-watchdog` handed the R720xd fans to iDRAC auto, and no test unit is active on mementos | 15 min |
 | ShelfDriveHot | hottest MD1200 drive 54C or more (`md1200-fan` targets 48.5C; the drives trip at 60C) | 10 min |
 | ShelfEmmNotPrimary | the serial cable's EMM is not primary (fan commands are held) | 10 min |
 | RyujiSioHot | ryuji SIO Temp 1 82C or more (BMC warns at 80, critical at 85) | 10 min |
 | LabRoomHot | mementos inlet 31C or more (23-25C with the AC working, 26-28C while it was faulty) | 30 min |
 
 A host that is down is left to the stack's own `TargetDown` rule; silence that in Alertmanager when a box is off on
-purpose.
+purpose. Tests stop controllers and force fan modes on purpose, so the two rules above stay quiet while a test unit
+named like the tools in `testing/` and `tools/` is active on that host (`shelf-exp*`, `mementos-steps*`,
+`ryuji-profile*` and so on; the list is in the rules file). They read node_exporter's systemd collector, which these
+hosts' Ubuntu packages enable. A test unit with another name still alerts.
 
 ## Install
 
