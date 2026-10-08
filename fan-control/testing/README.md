@@ -1,4 +1,4 @@
-# Test tools (2026-10-05/06)
+# Test tools (2026-10-05 to 10-08)
 
 The scripts used to measure the rack and validate the fan controllers, kept as they ran so the tests can be
 repeated. How they fit together, and what to change for the repeat runs, is in `../METHODOLOGY.md`.
@@ -79,6 +79,9 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 |---|---|---|
 | `ac-verify.py [HH:MM] [bucket min]` | makoto | is the room really cooling? 10 min means of independent room proxies on four machines plus the rack current |
 | `baseline_compare.py HH:MM-HH:MM ...` | makoto | idle baseline per host for time windows: labmon means, room, PDU amps |
+| `ac-check-prom.py "YYYY-MM-DD HH:MM" [end\|now]` | any host that reaches Prometheus | is the room flat? 10 min means of the room proxies (mementos inlet, tinynas NVMe and SYSTIN, sojiro and makoto board temps) and the rack current, and each proxy's worst 1 h spread |
+| `ac-cycles.py "YYYY-MM-DD HH:MM" [end\|now]` | same | the same proxies at 1 min steps: means and swings per period, and the turning points of the smoothed NVMe and inlet, which time the AC's on/off cycles |
+| `prom-pdu-csv.py "YYYY-MM-DD HH:MM" out.csv` | same | the rack PDU current from Prometheus as the CSV `baseline_compare.py` and `window_compare.py` read |
 
 ## MD1200 shelf
 
@@ -88,13 +91,17 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 | `shelf-decay.py <pct> <min> <label>` | mementos | does one `_shutup` hold without re-sending? Watches SES rpm and re-sends at once on a takeover |
 | `emm-query.py <hold %> <out>` | mementos | read-only EMM diagnostics (`_who`, `_ver`, PSU and fan status) while holding the shelf at a fixed % |
 | `analyze_exp2.py`, `analyze_exp3_lagged.py` | anywhere | per-phase settled values, exponential fits, rise over a lagged room reference |
+| `shelf-exp4.py` | mementos | the steady-room overnight map (2026-10-07/08): fixed shelf % per phase (`PHASES`), no R720 changes and no ipmitool; checks `_who` once and exits unless the cabled EMM is primary and active; writes `/run/md1200-fan.state` every minute so the monitoring and md1200-fan's resume keep working; restore `shelf-exp4-restore.sh`. Ran as 15 and 20%, then (same code, new `PHASES`) 12, 10, 25 and 15% |
+| `analyze_exp4.py <csv> [...]`, `refit_shelf_model.py <csv> [...]` | anywhere | per-phase settled values and fits; the fit of the hottest drive's rise over the room and its time constant against rpm (R20, EXPO, TAU, TEXP) that `../md1200-fan/tests/test_md1200_scenarios.py` uses |
+| `exp4_spans.py <csv>` | anywhere | the phases of a `shelf-exp4.py` run as `--span` arguments for `analyze_mic_phases.py` |
 
 ## mementos (R720xd)
 
 | Script | Runs on | What it does |
 |---|---|---|
-| `mementos-steps.py <plan>` | mementos | load steps under the production fan-watchdog (plans `v4val`, `v41val`, `steps2`, `caps`), room-gated, with CPU/DIMM/exhaust stops; restore `mementos-steps-restore.sh` (kills load, stock RAPL limits) |
-| `mementos-fixedfan.py` | mementos | fixed fan % x fixed load map; stops fan-watchdog while it runs; restore `mementos-fixedfan-restore.sh` |
+| `mementos-steps.py <plan>` | mementos | load steps under the production fan-watchdog (plans `v42val`, `v4val`, `v41val`, `steps2`, `caps`; `caps` is history: Rohit wants no power caps, and the others write only the stock RAPL limits), room-gated, with CPU/DIMM/exhaust stops; restore `mementos-steps-restore.sh` (kills load, stock RAPL limits) |
+| `mementos-fixedfan.py` | mementos | fixed fan % x fixed load map (2026-10-08 plan: all 48, 18, 12 and 6 workers, each at falling fan levels); stops fan-watchdog while it runs; room-gated (26C to start load, off above 27C); restore `mementos-fixedfan-restore.sh` |
+| `mementos-fixedfan-night.py` | mementos | the light half of that map for a night slot: 6 and 12 workers at fixed 10-20%; a CPU at 85C stops the load and only 88C raises the fans, to 24% (the day script goes to 60%) |
 | `analyze_mementos_steps.py`, `analyze_fixedfan.py` | anywhere | per-step settled values, peaks, slopes |
 
 ## ryuji and tinynas
@@ -102,6 +109,7 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 | Script | Runs on | What it does |
 |---|---|---|
 | `analyze_ryuji_profile.py <profile.csv> <room.csv> [hdd.csv]` | anywhere | per-phase settled values of a `../tools/ryuji-profile.py` run, joined with the room |
+| `ryuji-floor.py <label> <plan>` | ryuji | BMC offsets below -80 (down to -127) at idle, 4 threads and full load (plans `floor`, `night`, `day`, `guardval`, `ab`); every fan must stay at 1,000 rpm or more, checked every 5 s for 60 s after each change (a lower reading puts -80 back and skips that offset and lower); BMC event log counted before and after; restore `../tools/ryuji-profile-restore.sh` |
 | `tinynas-cage-test.sh <all\|each\|pwm2>` | tinynas | does any motherboard fan header cool the drive cage? A/B/A against BIOS control; more airflow only; needs `modprobe nct6775` |
 
 ## Noise (microphone)
@@ -121,6 +129,16 @@ ssh mementos 'sudo systemd-run --collect --on-active=70 --unit=mic-shelf30 -p "E
 ssh mementos 'sudo systemd-run --collect --on-active=330 --unit=mic-shelf22 -p "ExecStopPost=/bin/systemctl start md1200-fan" python3 /var/tmp/shelf-decay.py 22 2.5 mic22 3'
 ssh mementos 'sudo systemd-run --collect --on-active=590 --unit=mic-r720 -p ExecStopPost=/var/tmp/mic-r720-restore.sh /bin/sh /var/tmp/mic-r720.sh'
 ```
+
+### Noise sweeps (2026-10-08)
+
+| Script | Runs on | What it does |
+|---|---|---|
+| `noise-sweep.py` | mementos (root) | A/B/A at idle, one box at a time: the shelf at 10-40% against 15% (only the primary EMM, never under 10%), then the R720 at 15-50% against 10%; md1200-fan and fan-watchdog start again whatever happens (restore `noise-sweep-restore.sh`). Run it as unit `mic-shelf-sweep` so the alert rules stay quiet |
+| `r720-notch-sweep.py` | mementos (root) | the R720 only, 36-44% in 1% steps against 10%, 90 s each, to find the edges of the rack's ~700 Hz resonance (2026-10-08: 38-40%, +11.6 dB(A) at 40% against +9.8 at 41%); restore `r720-notch-restore.sh`; unit `mic-r720-notch` |
+
+Analyze either with `analyze_mic_phases.py <mic.csv> <sweep.csv> --skip 30`. The loudest tone of the R720 is its
+fans' blade-pass frequency (5 x rpm / 60): read the `tones` column of the mic log next to the levels.
 
 ## Quiet runs (night, visitors)
 
@@ -149,9 +167,24 @@ ssh mementos 'sudo systemd-run --unit=mementos-quiet -p ExecStopPost=/var/tmp/me
 ssh mementos 'sudo systemctl stop md1200-fan && sudo systemd-run --unit=md1200-fan-quiet -p RuntimeMaxSec=36000 -p "ExecStopPost=/bin/systemctl start md1200-fan" python3 /var/tmp/md1200-fan-quiet'
 ```
 
+## A day of tests without the session (2026-10-08)
+
+The session that ran these tests was suspended for 7 hours one night, so the day's steps ran on their own:
+
+- Each step is a systemd unit whose `ExecStopPost` hands the fans back to the production controller.
+- A chain unit starts the next step only after the previous one has stopped (an unreachable host counts as busy) and
+  not after a set time.
+- `lab-loadoff-mementos.sh` and `lab-loadoff-ryuji.sh`, armed with `systemd-run --on-calendar=...` (ryuji's clock is
+  UTC), stop every test unit, kill stress-ng, pause a scrub and start the controllers at the hard end of the window.
+- `silence.py create|list|expire` manages Alertmanager silences. Since `lab-thermal.yml` v3, test units named like
+  these tools need none; expire a silence only after its alerts have resolved.
+- `dryrun/` runs `noise-sweep.py`, `r720-notch-sweep.py`, `mementos-fixedfan-night.py` and `ryuji-floor.py` on fake
+  clocks with fake hardware: `python3 -I dryrun/dryrun_noise_sweep.py noise-sweep.py`,
+  `PLAN=ab python3 -I dryrun/dryrun_ryuji_floor.py ryuji-floor.py '{"-80": 1000, "-100": 900}'`.
+
 ## Deploying a controller
 
-`deploy-examples/` has the three deploy-and-watch scripts used on 10-06 (md1200-fan v3.1, fan-watchdog v4.2,
-ryuji-fan-guard v2.1). Each backs up the running version, installs the new one, watches it at idle for 10-45 min
+`deploy-examples/` has the deploy-and-watch scripts used on 10-06 (md1200-fan v3.1, fan-watchdog v4.2,
+ryuji-fan-guard v2.1) and 10-07/08 (ryuji-fan-guard v2.2, 20 min; md1200-fan v3.2, 45 min). Each backs up the running version, installs the new one, watches it at idle for 10-45 min
 and rolls back by itself on a crash loop, repeated errors, flapping, shelf takeovers or a switch to iDRAC auto.
 Copy one and change the file names and checks for the next version.

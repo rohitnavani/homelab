@@ -25,10 +25,13 @@ PLANS = {  # label, workers (0 = idle), RAPL PL1 cap per socket in W (None = sto
     'v4val': [('idle', 0, None, 4), ('w12', 12, None, 8), ('w18', 18, None, 8), ('cool1', 0, None, 8),
               ('w48_onset', 48, None, 8), ('cool2', 0, None, 10)],
     'v41val': [('idle', 0, None, 3), ('w18', 18, None, 8), ('w48', 48, None, 7), ('cool', 0, None, 8)],
+    # 2026-10-08, steady room: a light load too, and a 20 min unwind so the last step back to 10% is seen.
+    'v42val': [('idle', 0, None, 4), ('w6', 6, None, 8), ('w12', 12, None, 8), ('w18', 18, None, 8),
+               ('cool1', 0, None, 8), ('w48_onset', 48, None, 8), ('cool2', 0, None, 20)],
 }
 CSV = '/var/tmp/mementos-steps.csv'
 STOP = {'cpu': 89, 'dimm': 75, 'exh': 60}   # 89: just under fan-watchdog v4's iDRAC-auto point (90); iDRAC warns at 94
-ROOM_FILE, ROOM_START, ROOM_STOP, WAIT_MAX = '/run/room-inlet', 29, 29, 25 * 60   # 10-06 08:4x: Rohit allowed up to 29C
+ROOM_FILE, ROOM_START, ROOM_STOP, WAIT_MAX = '/run/room-inlet', 26, 27, 25 * 60   # 2026-10-08: test heat off above 27C (Rohit)
 ZONES = sorted(glob.glob('/sys/class/powercap/intel-rapl:[01]'))
 
 def run(*a):

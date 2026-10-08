@@ -251,6 +251,43 @@ speed about 1C. If one does, a drive-temperature controller with a BIOS hand-bac
 - Noise at the mic spot: mementos 18-24% +0.5 to +1.8 dB(A); ryuji at -16 idle about +1.0; ryuji's CPU fans on 4
   threads at -80 +4.2 dB(A) with a ~700 Hz tone; a scrub inaudible. Include ryuji under light load in the sweep.
 
+### Done 2026-10-07/08: the steady-room repeat (AC repaired, room 22-25C)
+- Room: the AC was repaired the morning of 10-07; at 71F the rack inlet held 23-24C flat for 7 h (tinynas NVMe 30.9C,
+  as on the healthy night of 10-03/04); at 70F it cycles normally (about 34 min on, 31 off, inlet 23-25C). The mic's
+  63 Hz band rises 3-5 dB while the AC runs, which times its cycles (`testing/ac-cycles.py`).
+- Shelf, overnight, 75-120 min per level (`testing/shelf-exp4.py`), hottest drive settled / mic: 10% 50.2C / -69.9
+  dB(A), 12% 48.3 / -69.8, 15% 45.3-46.8 / -69.5, 20% 42.4 / -68.5, 25% 38.6 / -67.1 (room 23.5-24.5C). Fit
+  (`testing/refit_shelf_model.py`): rise over the room 18.1C at 20%, rpm exponent 1.15, time constant 20 min at 20%
+  (exponent 0.67), backplane 4C under the hottest drive. The 10-06 model, fitted in a cycling room, was about 4C too
+  hot and twice too slow: map in a steady room, with phases of at least 75 min.
+- md1200-fan v3.2 (50C target, paced urgent steps, fast easing) went live 10-08 06:59 after its harness and an 81-model
+  sweep; 0 changes in its 45 min watch. Through a full scrub (0 errors, 47:16) it stepped 10 -> 18%, one step per 10
+  min; the hottest drive reached 52C (a scrub adds about 5C there), the backplane 47C; about +0.8 dB(A) at the peak.
+- mementos, fixed fans (`testing/mementos-fixedfan.py`, 22-23C room), peak CPU: all 48 threads 50/40/35% -> 73/74/77C;
+  18 threads 30/25/20% -> 69/75/80C; 12 threads 20/15% -> 77/79C; 6 threads 15/12/10% -> 78/77/84C (a few busy
+  cores make one socket hot). fan-watchdog v4.2 (`mementos-steps.py v42val`): idle 10%, 6/12/18 threads 17/19/25%,
+  all 48 threads 32% at 80C (peak 38%), back to 10% in 20 min. v4.2 stays: 3% less fan would put 12-18 threads
+  near 79C.
+- Noise sweep at idle, empty house (`testing/noise-sweep.py`, A/B/A): shelf vs 15%: 10% -0.5, 20% +0.7, 25% +2.1,
+  30% +3.7, 40% +8.1 dB(A); R720 vs 10%: 15% +0.8, 20% +1.6, 25% +3.0, 30% +4.3, 35% +6.4, 40% +12.0, 45% +9.7, 50%
+  +13.5. Something in the rack or the room rings near 700 Hz: the R720's blade-pass tone (5 x rpm / 60) is 690-700 Hz
+  at 40%, and the 1% sweep (`testing/r720-notch-sweep.py`) puts the band at 38-40% (40% +11.6, 41% +9.8). ryuji's CPU
+  fans ring it too, at about 3,600 rpm (4 threads at -80) and about 2,600 rpm (the minutes after a load).
+- ryuji (`testing/ryuji-floor.py`, plan `day`): 4 threads at -80/-100/-127/-80 -> CPU fans 3,600/3,400/2,950/3,900 rpm,
+  CPUs up to 62/66/70/67C, no fan under 1,000 rpm, no BMC event; against the -80 brackets -100 was about 0.3 dB(A)
+  quieter and -127 no quieter, though both remove the ~700 Hz tone. Full load (20 cores) +3.7 (-127) / +4.2 (-80) dB.
+  Idle at -16 +0.7, at 0 +1.2 dB. Guard in control (`guardval`): it stayed at -80 through 4 threads and full load
+  (CPUs up to 71C, SIO1 up to 77C); the BMC's own curve carries full load.
+- ryuji, alternating (`ab`: -80 / -100 / -80 / -100 under 4 threads, each followed by 4 min idle at the same offset):
+  -100 came out 0.8 dB(A) quieter at 4 threads counting one -80 run whose 1 kHz band jumped 4.7 dB, 0.4 dB louder
+  without it; idle after the load was within 0.3 dB; the ~700 Hz tone was 2-3 dB weaker at -100 but present at both
+  (fans >= 1,000 rpm, CPUs <= 65C, no BMC events). Not reliably 0.5 dB(A) quieter, so the guard's quiet level stays
+  at -80 (v2.2). ryuji's light-load whine needs quieter CPU fans or coolers, not a lower offset.
+- Lessons: a cycling room ruins equilibrium fits; noise is not monotonic in fan speed (check the tones against the
+  700 Hz resonance); a test that stops a controller must run under a unit name the alert rules know, or under a
+  silence that is expired only after its alerts resolve; and a session can be suspended for hours (23:48-06:39 on
+  10-07/08), so long sequences run as chained units with time gates and a load-off timer (testing/README.md).
+
 ## 9. Checklists
 
 **Before:** room flat for 2-3 h (ac-verify); loggers writing; stop rules in the scripts; fallbacks tested; idle

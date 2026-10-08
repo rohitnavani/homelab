@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# mementos-fixedfan-night (2026-10-07 21:10): the light half of the map for the early morning of 10-08, after Rohit
+# allowed slightly louder night tests ("you can go a little bit louder than now"; ceiling about -67 dB(A) at the
+# mic). Differences from the day script: PLAN is 6 and 12 workers at fixed 10-20% only; a CPU at 85C stops the load
+# with no fan boost, and only a CPU at 88C raises the fans, to NIGHT_MAX (24%, the night cap) instead of 60%; a failed
+# sensor read is retried once before going to iDRAC auto; CSV /var/tmp/mementos-fixedfan-night.csv.
 # mementos-fixedfan (2026-10-06): hold the R720 fans at a fixed % while running a fixed CPU load, to see which fan
 # level each load needs (Rohit: "could it handle full load at 50% fans? if so, then high load ought to be fine at 30%").
 # Owns the fans while it runs: stops fan-watchdog first (whose exit puts the iDRAC in auto for a moment), then sets
@@ -10,14 +15,12 @@
 # Run: systemd-run --unit=mementos-fixedfan -p ExecStopPost=/var/tmp/mementos-fixedfan-restore.sh python3 /var/tmp/mementos-fixedfan.py
 import glob, re, subprocess, sys, time
 
-PLAN = [  # label, fan %, stress-ng matrixprod workers (48 = every thread, 24 = every core), minutes
-    # 2026-10-08 (steady 23-24C room): each load at falling fan levels to find its floor; 10-06 had 50/40% full,
-    # 30% x18, 20% x12. Load stops at CPU 88C (fans 60%) and the room gate is 26C start / 27C stop (Rohit 10-07).
-    ('full_50', 50, 48, 8), ('full_40', 40, 48, 8), ('full_35', 35, 48, 8), ('cool_30a', 30, 0, 3),
-    ('w18_30', 30, 18, 8), ('w18_25', 25, 18, 8), ('w18_20', 20, 18, 8),
-    ('w12_20', 20, 12, 7), ('w12_15', 15, 12, 7),
-    ('w6_15', 15, 6, 7), ('w6_12', 12, 6, 7), ('w6_10', 10, 6, 7), ('cool_20', 20, 0, 3)]
-CSV = '/var/tmp/mementos-fixedfan.csv'
+PLAN = [  # label, fan %, stress-ng matrixprod workers (of 48 threads), minutes
+    ('w6_15', 15, 6, 7), ('w6_12', 12, 6, 7), ('w6_10', 10, 6, 7), ('cool_15', 15, 0, 3),
+    ('w12_20', 20, 12, 7), ('w12_15', 15, 12, 7), ('cool_15b', 15, 0, 3)]
+NIGHT_MAX = 24
+assert all(10 <= p[1] <= 20 for p in PLAN) and all(p[2] <= 12 for p in PLAN), 'night caps'
+CSV = '/var/tmp/mementos-fixedfan-night.csv'
 ZONES = sorted(glob.glob('/sys/class/powercap/intel-rapl:[01]'))
 
 def run(*a):
@@ -69,7 +72,7 @@ def dimm():
 def energy():
     return sum(int(open(f'{z}/energy_uj').read()) for z in ZONES)
 
-def sample():
+def sample(retry=True):
     t = run('ipmitool', 'sdr', 'type', 'Temperature').stdout
     cpus = [int(x) for x in re.findall(r'^Temp\s+\|[^|]+\|[^|]+\|[^|]+\|\s*(\d+) degrees', t, re.M)]
     inl = re.search(r'Inlet Temp\s+\|[^|]+\|[^|]+\|[^|]+\|\s*(\d+)', t)
@@ -77,6 +80,9 @@ def sample():
     f = [int(x) for x in re.findall(r'(\d+) RPM', run('ipmitool', 'sdr', 'type', 'Fan').stdout)]
     w = re.search(r'Instantaneous power reading:\s+(\d+)', run('ipmitool', 'dcmi', 'power', 'reading').stdout)
     if len(cpus) < 2 or not inl or not exh:
+        if retry:
+            time.sleep(3)
+            return sample(False)
         auto_and_exit('sensor read failed')
     return {'cpu0': cpus[0], 'cpu1': cpus[1], 'cpu': max(cpus), 'inlet': int(inl.group(1)), 'exh': int(exh.group(1)),
             'rpm': round(sum(f) / len(f)) if f else '', 'w': int(w.group(1)) if w else ''}
@@ -110,8 +116,10 @@ try:
                 f.write(','.join('' if row.get(c) is None else str(row.get(c)) for c in cols) + '\n')
             if v['cpu'] >= 92:
                 auto_and_exit(f'CPU {v["cpu"]}C')
-            if v['cpu'] >= 88 and fan < 60:
-                fan = 60; set_fans(fan); load(0); note(f'{label}: CPU {v["cpu"]}C -> fans 60%, load off')
+            if v['cpu'] >= 85 and cur:
+                load(0); note(f'{label}: CPU {v["cpu"]}C -> load off (night: no fan boost)')
+            if v['cpu'] >= 88 and fan < NIGHT_MAX:
+                fan = NIGHT_MAX; set_fans(fan); load(0); note(f'{label}: CPU {v["cpu"]}C -> fans {NIGHT_MAX}%, load off')
             reasons = [x for x, bad in (('exhaust', v['exh'] >= 60), ('dimm', d is not None and d >= 75),
                                         ('room', r is None or r > 27)) if bad]
             if cur and reasons:
