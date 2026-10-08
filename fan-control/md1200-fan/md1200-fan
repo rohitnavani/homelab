@@ -10,6 +10,14 @@
 # measured lag, cycled between ~18% and ~28% over ~4 h (seen live 07:40-08:50: 25 -> 27 -> 19%).
 # Slower nudges (up 10 min, down 20 min) are steady from a settled start at every lag tested (15-90 min,
 # with and without the room's hourly +-1C cycle); easing down from emergency levels stays at 5 min.
+# v3.2 (2026-10-08): the hottest-drive target moves from 48.5C to 50C (Rohit: about 50C at idle is fine), and the
+# urgent level with it, from 52C to 53C (the same 3C above target). Urgent steps are paced: +5% at once, then at
+# most one more +5% every 5 min while a reading stays at its urgent level. v3.1 added 5% on every 30 s check, and
+# because the drives lag the fans by 30-60 min it ran a quiet-mode copy from 12% to 37% in 2.5 min on 10-07 08:03
+# with the drives still settling; the floors below still act at once for real emergencies. Coming down, the 1% steps
+# come every 5 min instead of 20 while the hottest drive is at least 5C under target (and everything else is clearly
+# cool): after that 37% event, v3.1's 20 min steps took 9 h to get back to 10%. The shelf's SES device is
+# looked up at start (scsi_generic type 13, DELL MD1200) instead of assuming /dev/sg39.
 # The cable must be on the primary EMM (the top one; the bottom one holds the SAS links and is
 # secondary). A command to the secondary only lasts ~15-20s before the primary takes over, often with
 # its ~7,600 rpm thermal ramp, so fan commands are only sent while _who answers "primary and active".
@@ -28,13 +36,17 @@ TICK = 2        # loop period
 ROLE_EVERY = 1800   # re-check the EMM role this often (every 60s while it isn't primary)
 # Targets (smoothed temps). Rohit's choice: hottest drive about 50C at idle. ST8000NM0075 trips at 60C;
 # SES warns at backplane 50C and SIM 65C; the EXP expander temps aren't in SES.
-TARGET = {'drive': 48.5, 'backplane': 46.0, 'SIM': 58.0, 'expander': 86.0}
+TARGET = {'drive': 50.0, 'backplane': 46.0, 'SIM': 58.0, 'expander': 86.0}
 DOWN_MARGIN = {'drive': 1.5, 'backplane': 2.0, 'SIM': 3.0, 'expander': 3.0}  # come down only when this far below
-URGENT = {'drive': 52, 'backplane': 48, 'SIM': 61, 'expander': 90}           # raw temps: +5% every check
+URGENT = {'drive': 53, 'backplane': 48, 'SIM': 61, 'expander': 90}           # raw temps: +5%, then +5% per URGENT_EVERY
 FLOORS = [('drive', 56, 60), ('drive', 58, 80), ('backplane', 50, 80), ('SIM', 64, 80), ('expander', 95, 80)]
 MIN, NORMAL_MAX, MAX = 10, 45, 80   # normal range tops out at a medium level; only floors/urgent go higher
 NUDGE_UP = 600     # seconds since the last change before a 1-2% step up
 NUDGE_DOWN = 1200  # seconds since the last change before a 1% step down
+NUDGE_DOWN_FAST = 300   # ... while the hottest drive is at least FAST_BELOW under target
+FAST_BELOW = 5.0
+URGENT_EVERY = 300      # seconds between urgent steps (the first one is at once)
+URGENT_STEP = 5
 EASE = 300         # seconds between 5% steps down from an emergency level
 EMA = 0.3       # smoothing per 30s reading (1C sensor resolution)
 FALLBACK = 30   # if temps can't be read for STALE seconds
@@ -110,6 +122,22 @@ def read_temps(con):
         return None
     return {'drive': max(drives), 'backplane': max(bp), 'SIM': max(sim), 'expander': max(exp)}
 
+def find_ses():
+    # the shelf's SES device: the scsi_generic entry of type 13 (enclosure) that is a DELL MD1200
+    import os
+    base = '/sys/class/scsi_generic'
+    try:
+        for n in sorted(os.listdir(base), key=lambda x: int(re.sub(r'\D', '', x) or 0)):
+            d = f'{base}/{n}/device'
+            try:
+                if open(f'{d}/type').read().strip() == '13' and 'MD1200' in open(f'{d}/model').read():
+                    return '/dev/' + n
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return SG
+
 def fan_rpm():
     out = subprocess.run(['sg_ses', '-p', '2', SG], capture_output=True, text=True).stdout
     rpm = [int(x) for x in re.findall(r'Actual speed=(\d+) rpm', out)][-4:]
@@ -126,13 +154,16 @@ def floor_for(temps):
             f = max(f, p)
     return f
 
-def decide(pct, smooth, temps, since):
-    # returns (new %, reason) for one 30s reading; since = seconds since the last change
+def decide(pct, smooth, temps, since, since_urgent=1e9):
+    # returns (new %, reason) for one 30s reading; since = seconds since the last change,
+    # since_urgent = seconds since the last urgent step
     f = floor_for(temps)
     if pct < f:
         return f, 'floor'
     if any(temps[k] >= v for k, v in URGENT.items()):
-        return min(MAX, max(pct + 5, f)), 'urgent'
+        if since_urgent >= URGENT_EVERY:
+            return min(MAX, max(pct + URGENT_STEP, f)), 'urgent'
+        return pct, None
     if pct > NORMAL_MAX:
         if since >= EASE:
             return max(NORMAL_MAX, f, pct - 5), 'easing'   # leave an emergency level gradually
@@ -140,8 +171,10 @@ def decide(pct, smooth, temps, since):
     over = max(smooth[k] - TARGET[k] for k in TARGET)
     if over > 0.25 and since >= NUDGE_UP:
         return min(NORMAL_MAX, pct + (2 if over > 1.5 else 1)), 'warm'
-    if all(smooth[k] < TARGET[k] - DOWN_MARGIN[k] for k in TARGET) and since >= NUDGE_DOWN:
-        return max(MIN, f, pct - 1), 'cool'
+    if all(smooth[k] < TARGET[k] - DOWN_MARGIN[k] for k in TARGET):
+        fast = smooth['drive'] <= TARGET['drive'] - FAST_BELOW
+        if since >= (NUDGE_DOWN_FAST if fast else NUDGE_DOWN):
+            return max(MIN, f, pct - 1), 'cool'
     return pct, None
 
 def start_pct(temps):
@@ -173,11 +206,13 @@ def check_role(con, previous):
             log(f'EMM on the cable is {role}: not sending fan commands (move the cable to the top EMM)')
     return role
 
+SG = find_ses()
 con = Console()
 pct, changed, checked, last_good, last_nudge, smooth = None, 0, 0, time.time(), time.time(), None
+last_urgent = 0
 last_verify, last_role, role, drift_since, takeovers, temps = 0, 0, '?', None, 0, None
 last_send, send_now, echo_misses, last_echo_log = 0, True, 0, 0
-log('starting')
+log(f'starting (v3.2, SES {SG})')
 while True:
     try:
         now = time.time()
@@ -198,7 +233,9 @@ while True:
                 if pct is None:
                     new, why = start_pct(temps), 'start'
                 else:
-                    new, why = decide(pct, smooth, temps, time.time() - last_nudge)
+                    new, why = decide(pct, smooth, temps, time.time() - last_nudge, time.time() - last_urgent)
+                    if why == 'urgent':
+                        last_urgent = time.time()
             if new != pct:
                 sm = ' '.join(f'{k}={v:.1f}' for k, v in smooth.items()) if smooth else ''
                 log(f'fan {new}% ({why if temps else "temps unreadable"}: {fmt(temps) if temps else ""}; smoothed {sm})')

@@ -95,16 +95,25 @@ thresholds from the hardware above. What carries over and what to change:
 
 ## md1200-fan (MD1200 shelf)
 
-- Holds the hottest shelf drive near 48.5C, with backplane 46C, SIM 58C and expander 86C as guards. Steps 1-2% up at
-  most every 10 min and 1% down at most every 20 min, because the drives take 30-60 min to settle after a change.
-- Urgent: +5% every 30 s at drive 52, backplane 48, SIM 61 or expander 90C. Floors of 60-80% near the hard limits.
+- Holds the hottest shelf drive near 50C (v3.2; v3.1 held 48.5C), with backplane 46C, SIM 58C and expander 86C as
+  guards. Steps 1-2% up at most every 10 min and 1% down at most every 20 min, because the drives take 20-35 min to
+  settle after a change. While the hottest drive is 5C or more under target it eases down every 5 min instead (v3.2),
+  so after a spike the shelf is back near its idle level in about 2 h instead of 8-9 h.
+- Urgent: +5% at once at drive 53, backplane 48, SIM 61 or expander 90C, then +5% at most every 5 min while it lasts
+  (v3.2). v3.1 stepped every 30 s from drive 52: on 2026-10-07 one 52C reading in a 27C room took the shelf from 12%
+  to 37% in 2.5 min, and it took 9 h to ease back. Floors of 60-80% near the hard limits.
 - Only commands the primary EMM (checks `_who`). The cable must be on the TOP EMM: the bottom one is secondary, and
   a command sent to it only lasts about 15 s before the primary takes over.
 - Re-sends every 2 s as insurance against the shelf firmware's own thermal ramp (a single command to the primary
   held for 45 min in testing), checks the echo, and compares the SES fan speed (`sg_ses -p 2`) with the expected one.
+- Finds the shelf's SES device at start by type and model (`/sys/class/scsi_generic`, type 13, model MD1200), so a
+  renumbered `/dev/sgN` after a reboot or an HBA change does not break the fan-speed check (v3.2).
 - Never send `_shutup` below 10. Never hot-insert or remove EMMs or PSUs (the shelf loops resets until power-cycled).
-- Measured at a ~26C room: 15% puts the hottest drive at ~51-52C, 20% at ~48.5C, 25% at ~44C. It settles around
-  17-22% at 26-27C and lower when the room is cooler. Stop it and the shelf goes back to its own ~5,000 rpm default.
+- Measured in a steady 23.5-24.5C room (2026-10-07/08, 75-120 min per level, settled values): 10% (2,340 rpm) puts
+  the hottest drive at 50C, 12% at 48C, 15% at 45-47C, 20% at 42C, 25% (3,760 rpm) at 39C; the backplane runs 3-5C
+  below it. At 24C v3.2 settles around 10-12%, and each 1C more room costs about 1%. At a mic 1.5 ft in front of the
+  rack, 10 -> 15% adds 0.4 dB(A), 15 -> 20% 1.0 dB and 20 -> 25% 1.4 dB: below 15% the shelf is lost in the rest of
+  the rack. Stop it and the shelf goes back to its own ~5,000 rpm default.
 - Needs python3-serial, sg3-utils, smartmontools.
 - Hardware: Dell MD1200 (EMM firmware 1.06), FTDI FT232R serial adapter on the top EMM, SES via a Dell H810
   (IT mode); see "Hardware".
@@ -161,6 +170,8 @@ next to it so a rollback is one `cp` and a restart.
 python3 -I md1200-fan/tests/test_md1200_v3.py md1200-fan/md1200-fan                   # closed loop, 5 scenarios
 TAU=2700 python3 -I md1200-fan/tests/test_md1200_lag_scenarios.py md1200-fan/md1200-fan # with the measured 45 min lag
 TAU=2700 CYC=1 python3 -I md1200-fan/tests/test_md1200_lag_sweep.py md1200-fan/md1200-fan
+python3 -I md1200-fan/tests/test_md1200_scenarios.py md1200-fan/md1200-fan             # 9 scenarios, 10-08 shelf model
+python3 -I md1200-fan/tests/sweep_md1200_scenarios.py <older md1200-fan> md1200-fan/md1200-fan  # 81 models, ~12 min
 fan-watchdog/tests/run-tests.sh                                                        # about 2 minutes
 python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 12 scenarios
 python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)

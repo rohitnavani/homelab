@@ -105,7 +105,7 @@ the textfile directory exports it (`node_ipmi_*`).
 | FanControllerStale | a controller has not written its state for 300 s and no fan-control test unit is active on that host | 10 min (critical) |
 | ThermalMetricsMissing | a host is up but its controller's metrics are missing | 15 min |
 | R720FansInIdracAuto | `fan-watchdog` handed the R720xd fans to iDRAC auto, and no test unit is active on mementos | 15 min |
-| ShelfDriveHot | hottest MD1200 drive 54C or more (`md1200-fan` targets 48.5C; the drives trip at 60C) | 10 min |
+| ShelfDriveHot | hottest MD1200 drive 54C or more (`md1200-fan` v3.2 targets 50C and goes urgent at 53C; the drives trip at 60C) | 10 min |
 | ShelfEmmNotPrimary | the serial cable's EMM is not primary (fan commands are held) | 10 min |
 | RyujiSioHot | ryuji SIO Temp 1 82C or more (BMC warns at 80, critical at 85) | 10 min |
 | LabRoomHot | mementos inlet 31C or more (23-25C with the AC working, 26-28C while it was faulty) | 30 min |
