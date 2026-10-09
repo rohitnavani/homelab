@@ -60,6 +60,13 @@ PLANS = {
     'ab': [('a1_4t', -80, 4, 5), ('a1_idle', -80, 0, 4), ('b1_4t', -100, 4, 5), ('b1_idle', -100, 0, 4),
            ('a2_4t', -80, 4, 5), ('a2_idle', -80, 0, 4), ('b2_4t', -100, 4, 5), ('b2_idle', -100, 0, 4),
            ('R80_idle', -80, 0, 6)],
+    # 2026-10-08 18:1x (Rohit away until ~20:30): map ryuji's CPU-fan rpm against the ~700 Hz ringing. Idle: every
+    # offset from -127 up to 0 and back down (2 min each); then 4 threads from -127 to 0 and back (2.5 min each).
+    'follow': ([(f'i{o}_up', o, 0, 2) for o in (-127, -110, -100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0)]
+               + [(f'i{o}_dn', o, 0, 2) for o in (-10, -20, -30, -40, -50, -60, -70, -80, -90, -100, -110, -127)]
+               + [(f't{o}_up', o, 4, 2.5) for o in (-127, -100, -80, -60, -40, -20, 0)]
+               + [(f't{o}_dn', o, 4, 2.5) for o in (-20, -40, -60, -80, -100, -127)]
+               + [('R80_idle', -80, 0, 4)]),
     # guard in control (offset None): its live validation under light and full load, and the unwind afterwards
     'guardval': [('g_idle', None, 0, 5), ('g_4t', None, 4, 10), ('g_full', None, FULL, 10), ('g_unwind', None, 0, 20)],
     'full': [(f'o{o}_{w}t', o, w, m) for o in (0, -8, -16, -24, -80) for w, m in STEPS] + [('R80_idle', -80, 0, 8)],

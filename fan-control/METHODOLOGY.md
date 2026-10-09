@@ -249,7 +249,7 @@ speed about 1C. If one does, a drive-temperature controller with a BIOS hand-bac
 - md1200-fan v3.1 through a dataPool scrub: 18 -> 21%, one step per 10 min, hottest drive 50C (0 errors, 45:22).
 - ryuji-fan-guard v2.1: -80 -> -16 -> -80 in 12.5 min after 2 min of 4-thread load (the heat soak took SIO1 to 79C).
 - Noise at the mic spot: mementos 18-24% +0.5 to +1.8 dB(A); ryuji at -16 idle about +1.0; ryuji's CPU fans on 4
-  threads at -80 +4.2 dB(A) with a ~700 Hz tone; a scrub inaudible. Include ryuji under light load in the sweep.
+  threads at -80 +4.2 dB(A) with a ~700 Hz tone (10-08: the PSU fan's, not the CPU fans'); a scrub inaudible. Include ryuji under light load in the sweep.
 
 ### Done 2026-10-07/08: the steady-room repeat (AC repaired, room 22-25C)
 - Room: the AC was repaired the morning of 10-07; at 71F the rack inlet held 23-24C flat for 7 h (tinynas NVMe 30.9C,
@@ -271,18 +271,27 @@ speed about 1C. If one does, a drive-temperature controller with a BIOS hand-bac
 - Noise sweep at idle, empty house (`testing/noise-sweep.py`, A/B/A): shelf vs 15%: 10% -0.5, 20% +0.7, 25% +2.1,
   30% +3.7, 40% +8.1 dB(A); R720 vs 10%: 15% +0.8, 20% +1.6, 25% +3.0, 30% +4.3, 35% +6.4, 40% +12.0, 45% +9.7, 50%
   +13.5. Something in the rack or the room rings near 700 Hz: the R720's blade-pass tone (5 x rpm / 60) is 690-700 Hz
-  at 40%, and the 1% sweep (`testing/r720-notch-sweep.py`) puts the band at 38-40% (40% +11.6, 41% +9.8). ryuji's CPU
-  fans ring it too, at about 3,600 rpm (4 threads at -80) and about 2,600 rpm (the minutes after a load).
+  at 40%, and the 1% sweep (`testing/r720-notch-sweep.py`) puts the band at 38-40% (40% +11.6, 41% +9.8). ryuji's
+  power-supply fan rings it too under light load (follow-up below).
 - ryuji (`testing/ryuji-floor.py`, plan `day`): 4 threads at -80/-100/-127/-80 -> CPU fans 3,600/3,400/2,950/3,900 rpm,
   CPUs up to 62/66/70/67C, no fan under 1,000 rpm, no BMC event; against the -80 brackets -100 was about 0.3 dB(A)
-  quieter and -127 no quieter, though both remove the ~700 Hz tone. Full load (20 cores) +3.7 (-127) / +4.2 (-80) dB.
+  quieter and -127 no quieter; the ~700 Hz tone came and went with the PSU's temperature (follow-up below). Full load (20 cores) +3.7 (-127) / +4.2 (-80) dB.
   Idle at -16 +0.7, at 0 +1.2 dB. Guard in control (`guardval`): it stayed at -80 through 4 threads and full load
   (CPUs up to 71C, SIO1 up to 77C); the BMC's own curve carries full load.
 - ryuji, alternating (`ab`: -80 / -100 / -80 / -100 under 4 threads, each followed by 4 min idle at the same offset):
   -100 came out 0.8 dB(A) quieter at 4 threads counting one -80 run whose 1 kHz band jumped 4.7 dB, 0.4 dB louder
   without it; idle after the load was within 0.3 dB; the ~700 Hz tone was 2-3 dB weaker at -100 but present at both
   (fans >= 1,000 rpm, CPUs <= 65C, no BMC events). Not reliably 0.5 dB(A) quieter, so the guard's quiet level stays
-  at -80 (v2.2). ryuji's light-load whine needs quieter CPU fans or coolers, not a lower offset.
+  at -80 (v2.2).
+- Follow-up (`ryuji-floor.py` plan `follow`, 10-08 18:10-20:05): at idle the CPU fans never ring, anywhere from
+  1,900 to 4,500 rpm, and cost only 0.3 dB(A) up to 3,600 rpm (above -20 the system fans add up to +1.3 dB at 0).
+  The ringing tone belongs to a fan that follows a component's temperature, most likely ryuji's power-supply fan
+  (the BMC does not report it): under a steady 4-thread load (~240 W) it climbed from 622 to 817 Hz in 25 min,
+  loudest crossing ~700 and ~785 Hz; after the load it glided back down for about 5 min; at full load it reached
+  946 Hz and fell to 832 Hz once the system fans sped up; at idle it sits near 460 Hz. In the 4-thread sweep it fell
+  to 601-618 Hz while the system fans ran 1,800-3,900 rpm and climbed back to 715-747 Hz at their 1,050 rpm floor.
+  No offset avoids it reliably; a quieter PSU, or damping whatever rings near 700-790 Hz, is the fix
+  (`testing/ryuji-rpm-tone.py`, `testing/tone_timeline.py`).
 - Lessons: a cycling room ruins equilibrium fits; noise is not monotonic in fan speed (check the tones against the
   700 Hz resonance); a test that stops a controller must run under a unit name the alert rules know, or under a
   silence that is expired only after its alerts resolve; and a session can be suspended for hours (23:48-06:39 on

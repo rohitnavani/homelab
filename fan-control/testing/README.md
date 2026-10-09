@@ -109,7 +109,9 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 | Script | Runs on | What it does |
 |---|---|---|
 | `analyze_ryuji_profile.py <profile.csv> <room.csv> [hdd.csv]` | anywhere | per-phase settled values of a `../tools/ryuji-profile.py` run, joined with the room |
-| `ryuji-floor.py <label> <plan>` | ryuji | BMC offsets below -80 (down to -127) at idle, 4 threads and full load (plans `floor`, `night`, `day`, `guardval`, `ab`); every fan must stay at 1,000 rpm or more, checked every 5 s for 60 s after each change (a lower reading puts -80 back and skips that offset and lower); BMC event log counted before and after; restore `../tools/ryuji-profile-restore.sh` |
+| `ryuji-rpm-tone.py <profile.csv> <mic.csv> [skip s]` | anywhere | per phase of a `ryuji-floor.py` run: CPU-fan rpm against dB(A), octave bands and the strongest 600-760 Hz tone |
+| `tone_timeline.py <profile.csv> <mic.csv> [lo hi]` | anywhere | minute by minute, the strongest tone between lo and hi Hz (default 400-1000) next to DCMI watts and fan speeds; a tone that follows temperature rather than load points to a fan like ryuji's PSU fan |
+| `ryuji-floor.py <label> <plan>` | ryuji | BMC offsets below -80 (down to -127) at idle, 4 threads and full load (plans `floor`, `night`, `day`, `guardval`, `ab`, `follow`); every fan must stay at 1,000 rpm or more, checked every 5 s for 60 s after each change (a lower reading puts -80 back and skips that offset and lower); BMC event log counted before and after; restore `../tools/ryuji-profile-restore.sh` |
 | `tinynas-cage-test.sh <all\|each\|pwm2>` | tinynas | does any motherboard fan header cool the drive cage? A/B/A against BIOS control; more airflow only; needs `modprobe nct6775` |
 
 ## Noise (microphone)
