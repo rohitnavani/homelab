@@ -5,6 +5,8 @@
 #   - separate parsing/alerting for ATA, SCSI/SAS and NVMe
 #   - day-over-day persistence via explicit MARK lines keyed by serial
 #   - writes a daily log, an optional node_exporter textfile metric, and emails on alert
+# 2026-10-10: reads NVMe self-test results too (drive-selftest now starts NVMe tests); NVMe drives with no test
+#   logged yet print "No self-test logged yet" like the others.
 #
 # Env overrides:
 #   DRIVECHECK_LOG_DIR       (default /var/log/drive_logs)
@@ -98,7 +100,7 @@ for d in "${DEVS[@]}"; do
     [ -n "$poh" ]  && echo "Power_On_Hours: ${poh}"
     emit_common "$d" "$cls" "${model:-?}" "$serial" "$hok" "$temp" "$poh"
 
-    # self-test (ATA and SAS share the "# 1 ..." line; NVMe usually none)
+    # self-test (ATA and SAS share the "# 1 ..." line; NVMe has its own log format, below)
     stline=$(awk '/^# *1 /{print; exit}' <<<"$out")
     if [ -n "$stline" ]; then
         if grep -qi "fail" <<<"$stline"; then st=0; echo -e "${R}Last self-test FAILED: $stline${N}"; alert+="DRIVE $serial ($d on $HOST): last self-test FAILED\n"
@@ -106,7 +108,16 @@ for d in "${DEVS[@]}"; do
         elif grep -qi "Completed" <<<"$stline"; then st=1; echo -e "${G}Last self-test passed${N}"
         else st=1; echo -e "${Y}Last self-test: $stline${N}"; fi
         p "drivecheck_selftest_passed{host=\"$HOST\",device=\"$d\",serial=\"$serial\"} $st"
-    elif [ "$cls" != nvme ]; then
+    elif [ "$cls" = nvme ] && nvline=$(awk '/^Num +Test_Description/{h=1;next} h&&/^ *0 /{print; exit}' <<<"$out") && [ -n "$nvline" ]; then
+        # NVMe self-test log (smartctl 7.3+, "Self-test Log (NVMe Log 0x06)"): the newest entry is "Num 0", e.g.
+        # " 0   Short   Completed without error   3590 ...". Failures read "Completed: failed segments" or "Fatal or
+        # unknown error"; "Aborted: ..." (a reset or power loss mid-test) is treated like an interrupted ATA test.
+        if grep -qi "without error" <<<"$nvline"; then st=1; echo -e "${G}Last self-test passed${N}"
+        elif grep -qiE "fail|fatal" <<<"$nvline"; then st=0; echo -e "${R}Last self-test FAILED: $nvline${N}"; alert+="DRIVE $serial ($d on $HOST): last self-test FAILED\n"
+        elif grep -qi "abort" <<<"$nvline"; then st=0; echo -e "${R}Last self-test aborted: $nvline${N}"; alert+="DRIVE $serial ($d on $HOST): last self-test aborted\n"
+        else st=1; echo -e "${Y}Last self-test: $nvline${N}"; fi
+        p "drivecheck_selftest_passed{host=\"$HOST\",device=\"$d\",serial=\"$serial\"} $st"
+    else
         echo -e "${Y}No self-test logged yet${N}"
     fi
 

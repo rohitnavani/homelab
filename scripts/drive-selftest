@@ -1,8 +1,39 @@
 #!/bin/bash
-# Kick off SMART self-tests on all non-NVMe drives (SATA + SAS), robust enumeration.
-# Usage: drive-selftest short|long
+# drive-selftest - start SMART self-tests on every physical drive smartctl finds: SATA, SAS and NVMe.
+# Usage: drive-selftest short|long [--dry-run]
+# Cron (/etc/cron.d/drivecheck): short every Saturday 22:00, long on the 1st of the month at 12:00.
+# The drive runs the test in the background; drivecheck reads the result from its self-test log the next day.
+#   2026-10-06: first version, SATA and SAS only.
+#   2026-10-10: NVMe drives too (every NVMe in the lab lists Self_Test under smartctl -c "Optional Admin Commands";
+#               smartctl 7.3+ starts and logs NVMe device self-tests); network LUNs (iSCSI targets such as a zvol
+#               exported from the NAS) are skipped; a drive already running a test is left alone; every start or
+#               skip goes to syslog (journalctl -t drive-selftest).
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin   # smartctl lives in /usr/sbin; root crontabs may not have it
 mode="${1:-short}"
-case "$mode" in short|long) ;; *) echo "usage: $0 short|long" >&2; exit 2;; esac
-for dev in $(smartctl --scan 2>/dev/null | awk '{print $1}' | grep -v nvme | sort -u); do
-    smartctl -t "$mode" "$dev" >/dev/null 2>&1
+case "$mode" in short|long) ;; *) echo "usage: $0 short|long [--dry-run]" >&2; exit 2;; esac
+dry=0; [ "${2:-}" = "--dry-run" ] && dry=1
+say(){ if [ $dry = 1 ]; then echo "$*"; else logger -t drive-selftest "$*"; fi; }
+
+for dev in $(smartctl --scan 2>/dev/null | awk '{print $1}' | sort -u); do
+    info=$(smartctl -i "$dev" 2>/dev/null)
+    if grep -qiE '^Transport protocol: *iSCSI|^Vendor: *LIO-ORG' <<<"$info"; then
+        say "$dev: network LUN, skipped"; continue
+    fi
+    caps=$(smartctl -c "$dev" 2>/dev/null)
+    if [[ "$dev" == /dev/nvme* ]] && ! grep -q 'Self_Test' <<<"$caps"; then
+        say "$dev: NVMe without self-test support, skipped"; continue
+    fi
+    # a test already running: ATA "Self-test routine in progress... 90% of test remaining", SAS "# 1 ... Self test in
+    # progress", NVMe "Self-test status: Extended self-test in progress (12% completed)" (idle NVMe says "No self-test")
+    stlog=$(smartctl -l selftest "$dev" 2>/dev/null)
+    if grep -qiE 'Self.test routine in progress|% of test remaining' <<<"$caps" \
+       || grep -qiE '^# *1 .*in progress' <<<"$stlog" || grep -qiE 'Self-test status: (Short|Extended|Vendor)' <<<"$stlog"; then
+        say "$dev: a self-test is already running, left alone"; continue
+    fi
+    if [ $dry = 1 ]; then say "$dev: would start a $mode self-test"; continue; fi
+    if out=$(smartctl -t "$mode" "$dev" 2>&1); then
+        say "$dev: $mode self-test started"
+    else
+        say "$dev: $mode self-test not started: $(grep -m1 -iE 'fail|error|not |abort|can.t' <<<"$out")"
+    fi
 done

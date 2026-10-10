@@ -69,7 +69,7 @@ tinynas and mementos snapshot their datasets hourly and prune them daily on a gr
 │                               #   (see fan-control/README.md for the exact hardware)
 └── scripts/                    # Installed to /usr/local/bin and run from root's cron
     ├── autorar                 # Compresses finished downloads (tinynas)
-    ├── drive-selftest          # Starts SMART self-tests on every SATA and SAS drive (weekly short, monthly long)
+    ├── drive-selftest          # Starts SMART self-tests on every SATA, SAS and NVMe drive (weekly short, monthly long)
     ├── drivecheck              # Daily SMART check of SATA, SAS and NVMe drives, Prometheus textfile output (all hosts)
     ├── drivecheck.cron         # /etc/cron.d/drivecheck: check 00:00, short self-tests Sat 22:00, long the 1st 12:00
     │                           #   (tinynas runs the same jobs from root's crontab)
