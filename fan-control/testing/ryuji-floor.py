@@ -69,6 +69,13 @@ PLANS = {
                + [('R80_idle', -80, 0, 4)]),
     # guard in control (offset None): its live validation under light and full load, and the unwind afterwards
     'guardval': [('g_idle', None, 0, 5), ('g_4t', None, 4, 10), ('g_full', None, FULL, 10), ('g_unwind', None, 0, 20)],
+    # 2026-10-10 (Rohit home, medium noise allowed 12:00-22:00): does more chassis airflow keep ryuji's PSU fan out of
+    # the ~670-790 Hz ringing band under a steady light load? 10-08's 2.5 min holds could not say (the PSU's tone
+    # climbs for ~25 min at a constant load). 30 min holds at 4 threads with the system fans at their floor (-80) or
+    # lifted (-40: ~1,800-2,200 rpm under load on 10-08), A/B/B/A, each followed by 15 min idle at -80.
+    'psu': [('i80_ref', -80, 0, 10), ('a1_4t', -80, 4, 30), ('a1_cool', -80, 0, 15), ('b1_4t', -40, 4, 30),
+            ('b1_cool', -80, 0, 15), ('b2_4t', -40, 4, 30), ('b2_cool', -80, 0, 15), ('a2_4t', -80, 4, 30),
+            ('R80_idle', -80, 0, 15)],
     'full': [(f'o{o}_{w}t', o, w, m) for o in (0, -8, -16, -24, -80) for w, m in STEPS] + [('R80_idle', -80, 0, 8)],
     'rest0806': ([(f'o{o}_{w}t', o, w, m) for o in (-16, -8) for w, m in STEPS]
                  + [(f'o-24_{FULL}t', -24, FULL, 6)]

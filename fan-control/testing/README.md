@@ -109,9 +109,11 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 | Script | Runs on | What it does |
 |---|---|---|
 | `analyze_ryuji_profile.py <profile.csv> <room.csv> [hdd.csv]` | anywhere | per-phase settled values of a `../tools/ryuji-profile.py` run, joined with the room |
+| `phase-mic.py <run.csv> <mic.csv> [last min] [clean dBFS]` | anywhere | per phase of a `ryuji-floor.py` run, over its last minutes: sensor medians, dB(A) (all clips and clips without household sounds in the 4 kHz octave), the strongest 400-1000 Hz tone and the share of clips with a tone in the 680-830 Hz ringing band |
+| `psu-tone.py <mic.csv> <HH:MM>-<HH:MM>[@date] [min per row]` | anywhere | ryuji's power-supply fan tone minute by minute: strongest 400-1000 Hz tone outside the room's fixed ~791 Hz tone, with dB(A) and the 500 Hz / 1 kHz octaves |
 | `ryuji-rpm-tone.py <profile.csv> <mic.csv> [skip s]` | anywhere | per phase of a `ryuji-floor.py` run: CPU-fan rpm against dB(A), octave bands and the strongest 600-760 Hz tone |
 | `tone_timeline.py <profile.csv> <mic.csv> [lo hi]` | anywhere | minute by minute, the strongest tone between lo and hi Hz (default 400-1000) next to DCMI watts and fan speeds; a tone that follows temperature rather than load points to a fan like ryuji's PSU fan |
-| `ryuji-floor.py <label> <plan>` | ryuji | BMC offsets below -80 (down to -127) at idle, 4 threads and full load (plans `floor`, `night`, `day`, `guardval`, `ab`, `follow`); every fan must stay at 1,000 rpm or more, checked every 5 s for 60 s after each change (a lower reading puts -80 back and skips that offset and lower); BMC event log counted before and after; restore `../tools/ryuji-profile-restore.sh` |
+| `ryuji-floor.py <label> <plan>` | ryuji | BMC offsets below -80 (down to -127) at idle, 4 threads and full load (plans `floor`, `night`, `day`, `guardval`, `ab`, `follow`, `psu`: 30 min holds at 4 threads, -80/-40/-40/-80, 2026-10-10); every fan must stay at 1,000 rpm or more, checked every 5 s for 60 s after each change (a lower reading puts -80 back and skips that offset and lower); BMC event log counted before and after; restore `../tools/ryuji-profile-restore.sh` |
 | `tinynas-cage-test.sh <all\|each\|pwm2>` | tinynas | does any motherboard fan header cool the drive cage? A/B/A against BIOS control; more airflow only; needs `modprobe nct6775` |
 
 ## Noise (microphone)

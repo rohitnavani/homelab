@@ -203,6 +203,10 @@ the E5-2650 v3s did (88-91 W measured).
    exactly that. Decide between accepting it (Rohit: noise at full load is fine) and raising CPU_UP; keep CPU_UP well
    under the BMC's own CPU thresholds, and rerun the guard's harness (`ryuji-fan-guard/tests`) with the new numbers
    before deploying.
+7. Recheck v2.3's -40 step (SIO1 at 74C or more and climbing while the hottest CPU is at 52C or more): rerun
+   `testing/ryuji-floor.py <label> psu` (30 min holds at 4 threads, -80/-40/-40/-80) with `tools/room-feed.sh` and
+   the mic, then `testing/phase-mic.py`. If 4 threads no longer take a CPU past 52C at -80, the step will not fire:
+   lower LOAD_UP or trigger on busy threads (the guard already reads them for its idle test).
 
 ### Noise, with a microphone (morgana)
 The mic is the internal mic of morgana (formerly arsene; the Latitude 5420 at 10.0.0.7) on its Realtek codec (ALSA
@@ -296,6 +300,18 @@ speed about 1C. If one does, a drive-temperature controller with a BIOS hand-bac
   700 Hz resonance); a test that stops a controller must run under a unit name the alert rules know, or under a
   silence that is expired only after its alerts resolve; and a session can be suspended for hours (23:48-06:39 on
   10-07/08), so long sequences run as chained units with time gates and a load-off timer (testing/README.md).
+
+### Done 2026-10-10: a 24 h monitoring run and ryuji's sustained light load (room 23-25C)
+- Idle all night: mementos 10%, the shelf 10-11% (hottest drive 48-51C), ryuji -80 (SIO1 70-72C). With ryuji off
+  (04:15-12:00) the mic read 0.15 dB(A) less and the ~450 Hz tone (its PSU fan at idle) went away; the idle spectrum
+  is set by fixed tones (240 Hz mains, ~792 Hz, 117 Hz) that no controlled fan moves.
+- ryuji, `ryuji-floor.py` plan `psu` (30 min holds at 4 threads, -80/-40/-40/-80, then `testing/phase-mic.py`): at -80
+  SIO1 climbs 71 -> 74 (5 min) -> 77 (13-18 min) -> 78C and the PSU-fan tone climbs into the ringing band within 5-8
+  min (768-782 Hz at the end, 86-93% of clips); at -40 SIO1 holds 59-61C and the tone stays at 586-636 Hz (0-1%);
+  -40 is 0.7 dB(A) quieter. The 10-08 sweep held each offset 2.5 min, too short for the PSU to settle.
+- ryuji-fan-guard v2.3 adds that -40 step (SIO1 >= 74 and climbing while busy) and reads idle from `/proc/stat`
+  (at -40 a light load in a cool room can keep the CPUs under the old 50C idle rule). Live check: load at 16:45, -80 -> -40 at 16:49:28 (SIO1 75C), held
+-40 through 40 min of 4 threads (SIO1 58C, tone 601-636 Hz), back to -80 11 min after the load; no BMC event.
 
 ## 9. Checklists
 

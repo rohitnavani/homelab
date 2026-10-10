@@ -258,7 +258,7 @@
     },
     "overrides": []
    },
-   "description": "ryuji-fan-guard: -80 quiet, -16 warm, 0 Performance, 127 Full."
+   "description": "ryuji-fan-guard: -80 quiet, -40 busy (sustained light load, v2.3), -16 warm, 0 Performance, 127 Full."
   },
   {
    "id": 6,

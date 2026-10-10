@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# ryuji-fan-guard v2: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle, step to a moderate -16 under load
-# or when the board runs hot, and use Performance / Full only if -16 is not enough. The BMC's own curves keep
-# running underneath (the offset shifts both the CPU and the system fan curves).
+# ryuji-fan-guard v2.3: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle, step to -40 under a sustained light
+# load, to a moderate -16 when the board runs hot (or -40 is not enough), and use Performance / Full only if -16 is not
+# enough. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
 # Measured 2026-10-06 (room ~27C; ryuji-profile sweeps, STATUS-LOG.md):
 #   offset  idle CPU/sys fans   SIO Temp 1 idle   4 busy threads: CPU/sys fans, SIO1  full load: CPU/sys fans, SIO1
 #   -80     ~2,300 / 1,050       77-78C            3,770 / 1,050, climbs past 79       4,890 / 3,175, 55C (CPU 70C)
@@ -23,21 +23,42 @@
 #   WARM -> Performance: SIO1 >= SIO_UP for 6 readings at WARM, or CPU >= CPU_UP / VR >= VR_UP / DIMM >= DIMM_UP for 2.
 #   Performance -> WARM after 30 min with SIO1 <= 73 and CPU/VR/DIMM below their UP limits minus a margin.
 #   Full at SIO1 >= 83 or CPU >= 86; back to Performance after 5 min below.
+#   (v2.3 adds BUSY between QUIET and WARM for the 'load' case; see the v2.3 note below.)
 # Runs as root on ryuji; the BMC password is in PWFILE (0600). Stop the service to set the offset by hand.
 # v2.2 (2026-10-08): at boot the guard starts right after network-online.target, but ryuji's address is not usable yet
 # (seen at both boots on 10-06 and 10-07: "Network is unreachable"), so the first BMC read is retried every 10 s for
 # up to 2 min before assuming QUIET. The unit also gets Wants=network-online.target.
+# v2.3 (2026-10-10): a BUSY level (-40) for a sustained light load. Measured 10-10 (room 24C, ryuji-floor.py plan psu:
+# 30 min holds at 4 busy threads, -80/-40/-40/-80): at -80 SIO1 climbs 71 -> 74 (5 min) -> 77 (13-18 min) -> 78 and the
+# power-supply fan's tone climbs into the 680-830 Hz band the rack rings at (768-782 Hz in 86-93% of the clips); v2.2
+# then stepped to WARM (-16: CPU ~4,900 / system ~3,300 rpm under that load). At -40 (CPU 4,300 / system 1,900 rpm)
+# SIO1 holds 59-61C, the tone stays at 586-636 Hz (0-1% of the clips in the band) and the mic reads 0.7 dB(A) less
+# than at -80. So:
+#   QUIET -> BUSY:  SIO1 >= SIO_BUSY (74) and climbing (>= 1C over 5 min) while the CPUs are busy, 2 readings: about
+#                   5-6 min into a light load, before the PSU tone reaches the ringing band. Full load still stays at
+#                   -80 (SIO1 falls there: the BMC raises the system fans itself). Idle never triggers it.
+#   BUSY -> WARM:   SIO1 still climbing past SIO_CLIMB (77) under load, SIO1 >= SIO_UP, or CPU/VR/DIMM limits.
+#   QUIET -> WARM:  unchanged for a hot board at idle (-40 does not lift the system fans at idle; -16 does) and for the
+#                   CPU/VR/DIMM limits.
+#   BUSY -> QUIET:  idle for 10 min with SIO1 <= SIO_BACK_BUSY (77; QUIET idles ~1C above BUSY, so it stays under
+#                   SIO_UP). At idle -40 costs ~0.2 dB(A) over -80 (10-08 sweep), so a long hold there is harmless.
+#   Idle now means fewer than IDLE_THREADS logical CPUs busy (/proc/stat) instead of the hottest CPU <= LOAD_DOWN: at
+#   -40 the CPU fans cool the CPUs under a light load (57C at room 24C, ~3C less per 3C cooler room), so the temperature
+#   rule could read a light load in a cool room as idle and step down mid-job. VR/DIMM must still be cool. If
+#   /proc/stat cannot be read, the v2.2 temperature rule is used.
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
 STATE = '/run/ryuji-fan-guard.state'
-QUIET, WARM, PERF, FULL = -80, -16, 0, 127
-LEVELS = (QUIET, WARM, PERF, FULL)
+QUIET, BUSY, WARM, PERF, FULL = -80, -40, -16, 0, 127
+LEVELS = (QUIET, BUSY, WARM, PERF, FULL)
 SIO_UP = 79                      # SIO Temp 1: BMC warns at 80, critical at 85
 SIO_BACK_LOAD, SIO_BACK_HOT = 72, 71   # v2.1: 71 (was 68): -80 idles ~6C above -16, so 71 at -16 = ~77 at -80, under SIO_UP
 SIO_PERF_DOWN = 73
 LOAD_UP, LOAD_DOWN = 52, 50      # hottest CPU: idle at -80 is 41-50C, 4 busy threads 54-61C
 SIO_CLIMB = 77                   # SIO1 at or above this and climbing under load -> WARM before it reaches SIO_UP
+SIO_BUSY, SIO_BACK_BUSY = 74, 77  # v2.3: climbing under load from 74 -> BUSY; BUSY -> QUIET at idle with SIO1 <= 77
+IDLE_THREADS = 1.0               # v2.3: idle = less than one logical CPU's worth busy (ryuji idles at ~0.1 of 40)
 CPU_UP, VR_UP, DIMM_UP = 78, 90, 75
 VR_COOL, DIMM_COOL = 80, 65
 SIO_EMERG, CPU_EMERG = 83, 86
@@ -106,6 +127,21 @@ def temps():
             'vr': max([v for k, v in t.items() if k.startswith('VR_')] or [0]),
             'dimm': max([v for k, v in t.items() if k.startswith('DIMM')] or [0])}
 
+_stat = None
+def busy_threads():
+    """logical CPUs busy since the last call (non-idle share of /proc/stat jiffies x CPU count); None on the first call"""
+    global _stat
+    with open('/proc/stat') as f:
+        lines = f.read().splitlines()
+    v = [int(x) for x in lines[0].split()[1:9]]     # user nice system idle iowait irq softirq steal
+    n = sum(1 for line in lines if re.match(r'cpu\d', line))
+    prev, _stat = _stat, v
+    if prev is None:
+        return None
+    d = [a - b for a, b in zip(v, prev)]
+    total = sum(d)
+    return round((total - d[3] - d[4]) / total * n, 2) if total > 0 else None
+
 def wanted(level, t, hot, cool, now, why):
     """the level the current readings ask for; stepping down only after the HOLD time of cool readings.
     why = what put us at WARM ('load' or 'hot')."""
@@ -116,7 +152,15 @@ def wanted(level, t, hot, cool, now, why):
     if level >= WARM and (hot.get('perf_sio', 0) >= 6 or hot.get('perf_other', 0) >= 2):
         return max(level, PERF)     # SIO1 gets 6 min at WARM first: it settles with tau ~3.5 min
     if level == QUIET:
-        return WARM if (hot.get('load', 0) >= 2 or hot.get('sio', 0) >= 2 or hot.get('perf_other', 0) >= 2) else QUIET
+        if hot.get('perf_other', 0) >= 2:
+            return WARM
+        if hot.get('busy', 0) >= 2 or hot.get('load', 0) >= 2:
+            return BUSY     # the CPUs are busy and SIO1 climbs: -40 lifts the system fans under load (even at SIO1 79)
+        return WARM if hot.get('sio', 0) >= 2 else QUIET
+    if level == BUSY:
+        if hot.get('load', 0) >= 2 or hot.get('sio', 0) >= 2 or hot.get('perf_other', 0) >= 2:
+            return WARM
+        return QUIET if now - cool.get('busy', now) >= HOLD['load'] else BUSY
     if level == PERF:
         return WARM if now - cool.get('perf', now) >= HOLD[PERF] else PERF
     # WARM: back to QUIET only when idle and SIO1 is low enough that QUIET will not climb straight back
@@ -158,15 +202,23 @@ def main():
             time.sleep(INTERVAL)
             continue
         fails = 0
+        try:
+            threads = busy_threads()
+        except (OSError, ValueError, IndexError):
+            threads = None
         sio_hist.append(t['sio']); del sio_hist[:-6]          # last 6 readings (5 min)
         climbing = t['sio'] >= SIO_CLIMB and len(sio_hist) == 6 and t['sio'] - sio_hist[0] >= 1 and t['cpu'] >= LOAD_UP
         hot['load'] = hot.get('load', 0) + 1 if climbing else 0
+        busy = t['sio'] >= SIO_BUSY and len(sio_hist) == 6 and t['sio'] - sio_hist[0] >= 1 and t['cpu'] >= LOAD_UP
+        hot['busy'] = hot.get('busy', 0) + 1 if busy else 0
         hot['sio'] = hot.get('sio', 0) + 1 if t['sio'] >= SIO_UP else 0
         hot['perf_sio'] = hot.get('perf_sio', 0) + 1 if t['sio'] >= SIO_UP else 0
         hot['perf_other'] = hot.get('perf_other', 0) + 1 if (t['cpu'] >= CPU_UP or t['vr'] >= VR_UP
                                                            or t['dimm'] >= DIMM_UP) else 0
-        idle = t['cpu'] <= LOAD_DOWN and t['vr'] <= VR_COOL and t['dimm'] <= DIMM_COOL
+        idle = ((threads < IDLE_THREADS) if threads is not None else (t['cpu'] <= LOAD_DOWN)) \
+            and t['vr'] <= VR_COOL and t['dimm'] <= DIMM_COOL
         for key, ok in (('load', idle and t['sio'] <= SIO_BACK_LOAD),
+                        ('busy', idle and t['sio'] <= SIO_BACK_BUSY),
                         ('hot', idle and t['sio'] <= SIO_BACK_HOT),
                         ('perf', t['sio'] <= SIO_PERF_DOWN and t['cpu'] <= CPU_UP - 8 and t['vr'] <= VR_UP - 10
                          and t['dimm'] <= DIMM_UP - 10),
@@ -178,11 +230,11 @@ def main():
         want = wanted(level, t, hot, cool, now, why)
         if want != level:
             try:
-                if level == QUIET and want == WARM:
+                if level in (QUIET, BUSY) and want == WARM:
                     why = 'hot' if hot.get('sio', 0) >= 2 and hot.get('load', 0) < 2 else 'load'
                 got = bmc('set', want)
                 log(f'offset {level} -> {got} (sio={t["sio"]} cpu={t["cpu"]} vr={t["vr"]} dimm={t["dimm"]}'
-                    f'{"; " + why if want == WARM and level == QUIET else ""})')
+                    f'{"; " + why if want == WARM and level in (QUIET, BUSY) else ""})')
                 level, last_verify = got, now
                 cool.clear(); hot.clear()   # every level starts its own counts
             except Exception as ex:
@@ -197,7 +249,7 @@ def main():
             except Exception as ex:
                 log(f'BMC check failed: {ex!r}')
         with open(STATE, 'w') as f:
-            json.dump({'time': time.strftime('%F %T'), 'offset': level, **t}, f)
+            json.dump({'time': time.strftime('%F %T'), 'offset': level, **t, 'threads': threads}, f)
         time.sleep(INTERVAL)
 
 if __name__ == '__main__':

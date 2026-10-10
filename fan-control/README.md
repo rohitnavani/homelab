@@ -140,10 +140,20 @@ thresholds from the hardware above. What carries over and what to change:
 - ryuji's limiting sensor is SIO Temp 1 (the BMC warns at 80C). It follows the system fans, which stay at their
   ~1,050 rpm floor at offset -80 until the CPUs pass 65-70C. Full load is fine at -80 (the BMC raises the system
   fans itself); light-to-moderate load in a warm room is what pushes SIO1 up.
-- Levels: -80 (quiet, normal), -16 (system fans follow load), 0 (Performance), 127 (Full Speed).
-- -80 to -16 when SIO1 reaches 79C for 2 min, or is at 77C or more and has risen 1C over 5 min while the CPUs are
-  busy, or a CPU reaches 78C, a VR 90C or a DIMM 75C. -16 to Performance if that is not enough. Full at SIO1 83C or
-  CPU 86C. Back to -80 after 10 idle minutes once SIO1 is 72C or lower (30 min at 71C or lower after a hot room).
+- Levels: -80 (quiet, normal), -40 (busy: a sustained light load, v2.3), -16 (system fans follow load),
+  0 (Performance), 127 (Full Speed).
+- -80 to -40 (v2.3) when SIO1 is at 74C or more and has risen 1C over 5 min while the CPUs are busy (hottest CPU
+  52C or more): about 5-6 min into a light load. Measured 2026-10-10 (room 24C, 4 busy threads, 30 min holds): at
+  -80 SIO1 climbs to 78C and ryuji's power-supply fan tone climbs into the 680-830 Hz band the rack rings at; at
+  -40 (CPU 4,300 / system 1,900 rpm) SIO1 holds 59-61C, the tone stays at 586-636 Hz and the mic reads 0.7 dB(A)
+  less. v2.2 went to -16 there after 15-20 min. Full load stays at -80 (SIO1 falls; the BMC raises the system
+  fans itself). Back to -80 after 10 idle minutes once SIO1 is 77C or lower.
+- -40 to -16 if SIO1 still climbs past 77C or reaches 79C, or a CPU reaches 78C, a VR 90C or a DIMM 75C. -80 to
+  -16 directly when SIO1 reaches 79C for 2 min with the CPUs idle (a hot room: -40 does not lift the system fans
+  at idle) or at those CPU/VR/DIMM limits. -16 to Performance if that is not enough. Full at SIO1 83C or CPU 86C.
+  Back to -80 from -16 after 10 idle minutes once SIO1 is 72C or lower (30 min at 71C or lower after a hot room).
+- Idle means less than one logical CPU busy (`/proc/stat`) with VR and DIMMs cool (v2.3; before, the hottest CPU at
+  50C or lower, which a light load at -40 in a cool room can undercut). The state file shows it as `threads`.
 - Re-checks the BMC offset every 30 min and puts its level back; temps unreadable for 5 min means Performance.
 - At start it reads the BMC offset, retrying every 10 s for up to 2 min (v2.2): at boot ryuji's address is not
   usable yet when network-online.target is reached, which made that first read fail on 10-06 and 10-07. The unit
@@ -173,7 +183,7 @@ TAU=2700 CYC=1 python3 -I md1200-fan/tests/test_md1200_lag_sweep.py md1200-fan/m
 python3 -I md1200-fan/tests/test_md1200_scenarios.py md1200-fan/md1200-fan             # 9 scenarios, 10-08 shelf model
 python3 -I md1200-fan/tests/sweep_md1200_scenarios.py <older md1200-fan> md1200-fan/md1200-fan  # 81 models, ~12 min
 fan-watchdog/tests/run-tests.sh                                                        # about 2 minutes
-python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 12 scenarios
+python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 15 scenarios (v2.3)
 python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)
 ```
 
@@ -189,6 +199,10 @@ python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-g
   per package watt and a projection for other CPUs.
 - `tools/lab-inlet-guard.sh`: reads the mementos inlet every minute, logs it, publishes it to ryuji and mementos as
   `/run/room-inlet`, and switches test load off if the room passes a limit.
+- `tools/room-feed.sh` (2026-10-10): the same room reading for ryuji-only tests without a second in-band IPMI
+  reader on mementos (that can make fan-watchdog's own read fail): it takes the R720 inlet that fan-watchdog already
+  reads from Prometheus (only while fan-watchdog's state is fresh), writes `/run/room-inlet` on ryuji and kills
+  ryuji's stress-ng above LIMIT twice in a row.
 
 ## Testing on the hardware
 
@@ -214,3 +228,23 @@ Measured while the room cycled; to be repeated with the AC working (see `METHODO
 | mementos | 6 and 12 busy cores, 12 from idle (stopped at 24%) | 18-24%, CPUs up to 78C; back to exactly 10% in 10.5-11 min |
 | MD1200 shelf | full dataPool scrub | 18 -> 21%, hottest drive 50C, 0 errors |
 | ryuji | 4 busy threads (stopped by the noise guard after 2 min) | guard -80 -> -16 -> -80; CPU fans 3,700 rpm at -80, +4.2 dB(A) |
+
+## Results, 2026-10-10 (room 23-25C, AC working)
+
+ryuji under a sustained light load (`testing/ryuji-floor.py psu1010 psu`: 4 busy threads, 30 min per offset,
+A/B/B/A, each followed by 15 min idle at -80; medians over each load's last 15 min, mic 1.5 ft in front of the rack):
+
+| Offset | CPU / system fans | SIO1 | Hottest CPU | dB(A) | ryuji's PSU-fan tone | Clips with a tone at 680-830 Hz |
+|---|---|---|---|---|---|---|
+| -80 (A1) | 3,900 / 1,050 rpm | 78C | 64C | -67.48 | 782 Hz | 86% |
+| -40 (B1) | 4,300 / 1,875 rpm | 61C | 57C | -68.16 | 636 Hz | 0% |
+| -40 (B2) | 4,300 / 1,900 rpm | 59C | 57C | -68.32 | 586 Hz | 1% |
+| -80 (A2) | 3,900 / 1,062 rpm | 78C | 64C | -67.67 | 768 Hz | 93% |
+
+-40 is 0.7 dB(A) quieter than -80 there and keeps the power-supply fan out of the band the rack rings at, with the
+board 17-19C cooler; v2.2 would have gone to -16 (CPU ~4,900 / system ~3,300 rpm) about 15-20 min into such a load.
+Hence ryuji-fan-guard v2.3 (-40 step). Live check with the guard in control: the guard went -80 -> -40 at 16:49:28, 4.5 min into 4
+busy threads (SIO1 75C, before the PSU tone reached the band), held -40 to the end of the 40 min load (SIO1 58C,
+hottest CPU 56C, CPU 4,400 / system 2,100-2,200 rpm, the PSU tone at 601-636 Hz in every clip) and went back to
+-80 at 17:36:22, 11 min after the load ended. No BMC event. (Evening household sounds made that hour's dB(A)
+unusable for comparing with the afternoon.)
