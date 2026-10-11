@@ -203,6 +203,9 @@ python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-g
   reader on mementos (that can make fan-watchdog's own read fail): it takes the R720 inlet that fan-watchdog already
   reads from Prometheus (only while fan-watchdog's state is fresh), writes `/run/room-inlet` on ryuji and kills
   ryuji's stress-ng above LIMIT twice in a row.
+- `tools/gbt-power.py` (2026-10-10): calls of ryuji's BMC web UI with one login (the password from
+  `~/.config/lab/bmc-pass`, 0600, or `BMC_PWFILE`): `pages`, `dump <page>`, `get <path>`.
+  `gbt-power.py 10.0.0.118 get 'gbtdata?set=PowerOn'` powers ryuji on.
 
 ## Testing on the hardware
 
@@ -248,3 +251,16 @@ busy threads (SIO1 75C, before the PSU tone reached the band), held -40 to the e
 hottest CPU 56C, CPU 4,400 / system 2,100-2,200 rpm, the PSU tone at 601-636 Hz in every clip) and went back to
 -80 at 17:36:22, 11 min after the load ended. No BMC event. (Evening household sounds made that hour's dB(A)
 unusable for comparing with the afternoon.)
+
+The whole monitoring run, 10-10 00:31 to 10-11 08:00 (1,890 min, `testing/lab-watch.py`):
+
+| Box | Fans | Temperatures |
+|---|---|---|
+| Room | - | rack inlet 23-25C (24C 71% of the time) |
+| MD1200 shelf | 10-11% for 85% of the run; 16% at most (the monthly scrub of all six pools, 0 errors) | hottest drive median 49C, 52C at most |
+| mementos | 10% for 99%; 12-15% for 2-6 min at a time in the scrub | CPUs median 51C, 71C at most |
+| ryuji | -80, except 47 min at -40 (the live check) | SIO1 70-72C at idle, 75C at most |
+
+After a warm spell the shelf can hold 1-2% high for hours, because v3.2 eases only once every reading is well under
+target (10-11: 12% from 05:29 to the end after 26 min at 25C, hottest drive 48-50C, backplane 44-46C). That costs
+about 0.15 dB(A), so the band stays as it is.

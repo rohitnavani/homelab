@@ -1,4 +1,4 @@
-# Test tools (2026-10-05 to 10-08)
+# Test tools (2026-10-05 to 10-11)
 
 The scripts used to measure the rack and validate the fan controllers, kept as they ran so the tests can be
 repeated. How they fit together, and what to change for the repeat runs, is in `../METHODOLOGY.md`.
@@ -72,6 +72,7 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 | `hdd-temp-log.sh` | any | each rotating drive's temperature every 60 s (`smartctl -n standby`, never wakes a drive) |
 | `scrub-log.sh` | mementos | during a dataPool scrub: progress, md1200-fan state, fan-watchdog state, every shelf drive |
 | `ac-watch.sh` | makoto | every 5 min (timer): mementos inlet, tinynas NVMe, ryuji SIO1; flags when the AC looks back |
+| `lab-watch.py <data dir> <stop "YYYY-MM-DD HH:MM">` | makoto (unit `lab-watch`) | the 2026-10-10/11 monitoring run's watcher, read-only: every minute one row of `watch.csv` from Prometheus and Alertmanager (room proxies, every box's temps and fans, controller levels, rack current, CPU busy, pool read and write rates) and lines in `watch-events.log`: INFO for controller level changes and pool activity, WARN (edge-triggered) for limits, hosts down and firing alerts. The queries, limits and noise windows are at the top |
 
 ## Room and baselines
 
@@ -82,6 +83,9 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 | `ac-check-prom.py "YYYY-MM-DD HH:MM" [end\|now]` | any host that reaches Prometheus | is the room flat? 10 min means of the room proxies (mementos inlet, tinynas NVMe and SYSTIN, sojiro and makoto board temps) and the rack current, and each proxy's worst 1 h spread |
 | `ac-cycles.py "YYYY-MM-DD HH:MM" [end\|now]` | same | the same proxies at 1 min steps: means and swings per period, and the turning points of the smoothed NVMe and inlet, which time the AC's on/off cycles |
 | `prom-pdu-csv.py "YYYY-MM-DD HH:MM" out.csv` | same | the rack PDU current from Prometheus as the CSV `baseline_compare.py` and `window_compare.py` read |
+| `prom-range-csv.py "YYYY-MM-DD HH:MM" "YYYY-MM-DD HH:MM"\|now <step s> <out.csv>` | same | `lab-watch.py`'s columns from Prometheus over any window (it reads `lab-watch.py`'s query table), for history before a watch started or to re-sample one |
+| `day-summary.py <csv> ["YYYY-MM-DD HH:MM" [end]]` | anywhere | a `watch.csv` (or `prom-range-csv.py` output) summed up: p1 / p50 / p99 / max per column, minutes at each fan level, hourly medians, the busiest disk periods |
+| `lab-status.py [minutes] [data dir]` | makoto | a check-in: min / median / max of the key `watch.csv` columns over the last N minutes (default 60) and the events logged in that time |
 
 ## MD1200 shelf
 
@@ -121,6 +125,7 @@ The PDU poller (not in the repo) writes `pdu.csv`; `ac-verify.py` and `baseline_
 | Script | Runs on | What it does |
 |---|---|---|
 | `mic-level-log.py <minutes> <csv> [clip s]` | morgana, formerly arsene (root) | sound levels from the internal mic every 10 s at a fixed gain: dB(A), unweighted, octave bands, steady tones. Keeps only the levels and deletes each clip at once; needs alsa-utils and python3-numpy (installed 10-06). Since 10-07 a `systemctl stop` (SIGTERM) also runs its cleanup; before that the last clip stayed in /dev/shm and the mixer at the test gain |
+| `mic-compare.py <mic.csv> <label>=<HH:MM>-<HH:MM>[@YYYY-MM-DD] ...` | anywhere | compares `mic-level-log.py` windows: dB(A), unweighted and octave bands, each window split by the AC's state (read from the 63 Hz octave, which the AC's hum lifts 3-5 dB), and how often each tone shows up, so a source that stops (a fan) shows as a tone that disappears |
 | `mic-r720.sh` | mementos (root) | R720 fans at fixed steps at idle (10, 20, 10, 30, 10%), then fan-watchdog takes them back; restore `mic-r720-restore.sh` |
 | `analyze_mic_test.py <levels.csv> <shelf-decay logs> <mic-r720.log>` | anywhere | splits the levels into states from the event logs, drops settling time and stray sounds, compares each step with the baselines on either side (dB(A) and the 1-2 kHz bands) |
 

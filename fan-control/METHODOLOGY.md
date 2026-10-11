@@ -310,8 +310,15 @@ speed about 1C. If one does, a drive-temperature controller with a BIOS hand-bac
   min (768-782 Hz at the end, 86-93% of clips); at -40 SIO1 holds 59-61C and the tone stays at 586-636 Hz (0-1%);
   -40 is 0.7 dB(A) quieter. The 10-08 sweep held each offset 2.5 min, too short for the PSU to settle.
 - ryuji-fan-guard v2.3 adds that -40 step (SIO1 >= 74 and climbing while busy) and reads idle from `/proc/stat`
-  (at -40 a light load in a cool room can keep the CPUs under the old 50C idle rule). Live check: load at 16:45, -80 -> -40 at 16:49:28 (SIO1 75C), held
--40 through 40 min of 4 threads (SIO1 58C, tone 601-636 Hz), back to -80 11 min after the load; no BMC event.
+  (at -40 a light load in a cool room can keep the CPUs under the old 50C idle rule). Live check: load at 16:45,
+  -80 -> -40 at 16:49:28 (SIO1 75C), held -40 through 40 min of 4 threads (SIO1 58C, tone 601-636 Hz), back to -80
+  11 min after the load; no BMC event.
+- Second night (10-11): the monthly scrub of all six pools (00:24-01:51, 0 errors) took the shelf 10 -> 16%
+  (hottest drive 52C, +1.35 dB(A) at the loudest), back to 10% by 02:59 at one step per 20 min; mementos stepped to
+  12-15% for 2-6 min at a time. After an AC spell at 25C (05:10-05:35) the shelf went 10 -> 12% and held there to
+  the end (hottest drive 48-50C, backplane 44-46C, inside v3.2's easing band), +0.15 dB(A): not worth narrowing
+  the band. Whole run (1,890 min): shelf 10-11% for 85%, mementos 10% for 99%. Watched with `testing/lab-watch.py`;
+  summaries with `lab-status.py`, `day-summary.py` and `mic-compare.py`.
 
 ## 9. Checklists
 
