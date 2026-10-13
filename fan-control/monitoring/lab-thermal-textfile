@@ -26,7 +26,7 @@ def metrics():
         'lab_md1200_temp_celsius': 'MD1200 shelf temperatures (hottest drive, backplane, SIM, expander)',
         'lab_md1200_primary': '1 when md1200-fan sees its EMM as primary and active',
         'lab_md1200_takeovers': 'shelf firmware takeovers seen by md1200-fan since it started',
-        'lab_ryuji_fan_offset': 'ryuji BMC fan offset set by ryuji-fan-guard (-80 quiet, -40 busy, -16 warm, 0 performance, 127 full)',
+        'lab_ryuji_fan_offset': 'ryuji BMC fan offset set by ryuji-fan-guard (-80 quiet, -60 busy, -16 warm, 0 performance, 127 full)',
         'lab_ryuji_temp_celsius': 'ryuji temperatures read by ryuji-fan-guard (SIO Temp 1, hottest CPU, VR, DIMM)',
     }
     seen = set()

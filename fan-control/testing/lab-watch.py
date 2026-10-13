@@ -85,8 +85,8 @@ RULES = {
     'shelf fans >= 22%': ge('shelf_pct', 22), 'shelf drive >= 53C': ge('shelf_drive', 53),
     'shelf backplane >= 48C': ge('shelf_bp', 48), 'shelf SIM >= 58C': ge('shelf_sim', 58),
     'shelf expander >= 88C': ge('shelf_exp', 88), 'shelf EMM not primary': le('shelf_primary', 0),
-    # ryuji-fan-guard v2.3 (10-10 16:18): -40 (BUSY) is its normal level under a sustained light load
-    'ryuji guard above -40': lambda r, w: v(r, 'ryuji_off') is not None and v(r, 'ryuji_off') not in (-80, -40),
+    # ryuji-fan-guard v2.4 (10-13): -60 (BUSY) is its normal level under a sustained load (v2.3: -40)
+    'ryuji guard above -60': lambda r, w: v(r, 'ryuji_off') is not None and v(r, 'ryuji_off') not in (-80, -60),
     'ryuji SIO1 >= 78C': ge('ryuji_sio1', 78), 'ryuji CPU >= 75C': ge('ryuji_cpu', 75),
     'ryuji VR >= 85C': ge('ryuji_vr', 85), 'ryuji DIMM >= 70C': ge('ryuji_dimm', 70),
     'ryuji fan < 600 rpm': le('ryuji_minfan', 599),

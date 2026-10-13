@@ -94,7 +94,7 @@ the textfile directory exports it (`node_ipmi_*`).
 | `lab_r720_fan_percent`, `lab_r720_fan_auto` | | same (`fan_percent` is absent while in iDRAC auto) |
 | `lab_md1200_temp_celsius` | `sensor` = drive (hottest), backplane, sim, expander | `/run/md1200-fan.state` |
 | `lab_md1200_fan_percent`, `_fan_rpm`, `_fan_expected_rpm`, `_primary`, `_takeovers` | | same |
-| `lab_ryuji_fan_offset` | | `/run/ryuji-fan-guard.state` (-80 quiet, -40 busy, -16 warm, 0 Performance, 127 Full) |
+| `lab_ryuji_fan_offset` | | `/run/ryuji-fan-guard.state` (-80 quiet, -60 busy, -16 warm, 0 Performance, 127 Full) |
 | `lab_ryuji_temp_celsius` | `sensor` = sio1, cpu, vr, dimm | same |
 | `lab_controller_state_age_seconds` | `controller` | seconds since each controller last wrote its state (normal: under ~60 s) |
 

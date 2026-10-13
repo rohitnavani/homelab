@@ -207,6 +207,11 @@ the E5-2650 v3s did (88-91 W measured).
    `testing/ryuji-floor.py <label> psu` (30 min holds at 4 threads, -80/-40/-40/-80) with `tools/room-feed.sh` and
    the mic, then `testing/phase-mic.py`. If 4 threads no longer take a CPU past 52C at -80, the step will not fire:
    lower LOAD_UP or trigger on busy threads (the guard already reads them for its idle test).
+   **Done 2026-10-12:** the step did not fire (30 min at 4 threads under the guard, -80 throughout): the CPUs passed
+   52C, but the BMC now lifts the system fans under that load and SIO1 fell (72 -> 64C) instead of climbing, while
+   the PSU tone still reached 782 Hz. Holds at 4 threads (A/B/A/C, 20-30 min, room 24-25C, last 10 min): -80
+   -67.05 / -40 -65.91 / -80 -66.88 / -60 -67.06 dB(A); tone 782 / 601 / 782 / 665 Hz. So ryuji-fan-guard v2.4: BUSY
+   is -60, entered on 2 or more busy threads (`/proc/stat`), and Full Speed comes at CPU 83C (was 86C).
 
 ### Noise, with a microphone (morgana)
 The mic is the internal mic of morgana (formerly arsene; the Latitude 5420 at 10.0.0.7) on its Realtek codec (ALSA

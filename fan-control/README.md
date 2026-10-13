@@ -56,9 +56,9 @@ sg3-utils 1.46, python3-serial 3.5.
 |---|---|
 | Server | Gigabyte MD70-HB0 board in a 2U 12-bay chassis, BIOS R09 |
 | BMC | Avocent MergePoint, firmware 8.44 (IPMI and web UI; its clock runs on UTC) |
-| CPUs | 2x Intel Xeon E5-2650 v3 (Haswell-EP, 10 cores, 105 W each). **Being replaced by 2x E5-2696 v4** (an OEM E5-2699 v4, 22 cores, 145-150 W): the guard's thresholds are tuned for the E5-2650 v3 and need rechecking (`METHODOLOGY.md` section 8) |
+| CPUs | 2x Intel Xeon E5-2696 v4 since 2026-10-12 (Broadwell-EP, an OEM E5-2699 v4: 22 cores / 44 threads each, 2.2 GHz base, up to 3.7 GHz on a few cores; the BIOS sets 150 W PL1 / 180 W PL2 per package; microcode 0xb000040). The BMC warns at 82C and is critical at 85C for these CPUs. Before: 2x E5-2650 v3 (Haswell-EP, 10 cores, 105 W), which ryuji-fan-guard v2.3 and earlier were tuned for |
 | Memory | 8x 16 GB DDR4-2133 (Kingston 9965640-001), 128 GB |
-| Drives | 6x Toshiba MG04ACA400N (4 TB 7.2K SATA, no pool, idle), 1x HGST HTS721010A9 (1 TB), 1x Kingston SUV400S (120 GB SSD) |
+| Drives | 6x Toshiba MG04ACA400N (4 TB 7.2K SATA) as three ZFS mirrors (`computePool`, since 2026-10-12), 1x HGST HTS721010A9 (1 TB), 1x Kingston SUV400S (120 GB SSD) |
 | Storage controller | Broadcom/LSI SAS3008 |
 | Fans | `CPU0_FAN`, `CPU1_FAN`, `SYS_FAN1`-`SYS_FAN4` (`SYS_FAN5` not connected). The BMC runs its own curve; the only setting it exposes is a PWM offset (-127 to 127) added to that curve |
 | Limiting sensor | `SIO Temp 1` (BMC warns at 80C, critical 85C), which follows system-fan airflow more than CPU load |
@@ -137,31 +137,36 @@ thresholds from the hardware above. What carries over and what to change:
 
 ## ryuji-fan-guard (ryuji)
 
-- ryuji's limiting sensor is SIO Temp 1 (the BMC warns at 80C). It follows the system fans, which stay at their
-  ~1,050 rpm floor at offset -80 until the CPUs pass 65-70C. Full load is fine at -80 (the BMC raises the system
-  fans itself); light-to-moderate load in a warm room is what pushes SIO1 up.
-- Levels: -80 (quiet, normal), -40 (busy: a sustained light load, v2.3), -16 (system fans follow load),
+- ryuji's limiting sensor at idle is SIO Temp 1 (the BMC warns at 80C). It follows the system fans, which stay at
+  their ~1,050 rpm floor at offset -80 while the CPUs are idle. Under load the BMC raises the system fans itself
+  (on the E5-2696 v4s already at 4 busy threads), so SIO1 falls; with 150 W CPUs the CPUs are what to watch there.
+- Levels: -80 (quiet, normal), -60 (busy: a sustained load, v2.4; -40 in v2.3), -16 (system fans follow load),
   0 (Performance), 127 (Full Speed).
-- -80 to -40 (v2.3) when SIO1 is at 74C or more and has risen 1C over 5 min while the CPUs are busy (hottest CPU
-  52C or more): about 5-6 min into a light load. Measured 2026-10-10 (room 24C, 4 busy threads, 30 min holds): at
-  -80 SIO1 climbs to 78C and ryuji's power-supply fan tone climbs into the 680-830 Hz band the rack rings at; at
-  -40 (CPU 4,300 / system 1,900 rpm) SIO1 holds 59-61C, the tone stays at 586-636 Hz and the mic reads 0.7 dB(A)
-  less. v2.2 went to -16 there after 15-20 min. Full load stays at -80 (SIO1 falls; the BMC raises the system
-  fans itself). Back to -80 after 10 idle minutes once SIO1 is 77C or lower.
-- -40 to -16 if SIO1 still climbs past 77C or reaches 79C, or a CPU reaches 78C, a VR 90C or a DIMM 75C. -80 to
-  -16 directly when SIO1 reaches 79C for 2 min with the CPUs idle (a hot room: -40 does not lift the system fans
-  at idle) or at those CPU/VR/DIMM limits. -16 to Performance if that is not enough. Full at SIO1 83C or CPU 86C.
-  Back to -80 from -16 after 10 idle minutes once SIO1 is 72C or lower (30 min at 71C or lower after a hot room).
+- -80 to -60 (v2.4) when at least 2 logical CPUs are busy (`/proc/stat`) for 2 readings: about 1-3 min into a job.
+  Measured 2026-10-12 on the E5-2696 v4s (ryuji out of the rack, room 24-25C, 4 busy threads, 20-30 min holds,
+  A/B/A/C): at -80 the BMC lifts the system fans to 1,300-1,600 rpm and SIO1 falls to 64-68C, but ryuji's
+  power-supply fan tone sits at 782 Hz, in the 680-830 Hz band the rack and room ring at (-67.0 dB(A)); -60
+  (system fans 2,100-2,600 rpm, SIO1 54C) reads the same -67.0 dB(A) with the tone at 665 Hz, under the band; -40
+  (system fans ~2,900 rpm) keeps the tone at ~610 Hz but reads 1 dB(A) more. v2.3 used -40, entered when SIO1
+  climbed past 74C under load (right for the E5-2650 v3s, where -40 was 0.7 dB(A) quieter than -80 on 2026-10-10);
+  on the new CPUs SIO1 no longer climbs, so it never fired. That rule remains only as the fallback when
+  `/proc/stat` cannot be read. Back to -80 after 10 idle minutes once SIO1 is 77C or lower.
+- -60 to -16 if SIO1 still climbs past 77C or reaches 79C, or a CPU reaches 78C, a VR 90C or a DIMM 75C. -80 to
+  -16 directly when SIO1 reaches 79C for 2 min with the CPUs idle (a hot room: -60 does not lift the system fans
+  at idle) or at those CPU/VR/DIMM limits. -16 to Performance if that is not enough. Full at SIO1 83C or CPU 83C
+  (v2.4; 86C before, above the E5-2696 v4's 85C critical). Back to -80 from -16 after 10 idle minutes once SIO1 is
+  72C or lower (30 min at 71C or lower after a hot room).
 - Idle means less than one logical CPU busy (`/proc/stat`) with VR and DIMMs cool (v2.3; before, the hottest CPU at
-  50C or lower, which a light load at -40 in a cool room can undercut). The state file shows it as `threads`.
+  50C or lower, which a light load at -40 in a cool room can undercut). The state file shows it as `threads`, and
+  every level change logs it (v2.4).
 - Re-checks the BMC offset every 30 min and puts its level back; temps unreadable for 5 min means Performance.
 - At start it reads the BMC offset, retrying every 10 s for up to 2 min (v2.2): at boot ryuji's address is not
   usable yet when network-online.target is reached, which made that first read fail on 10-06 and 10-07. The unit
   wants network-online.target.
 - Needs the BMC password in `/root/.bmc-pass` (0600, root only); the BMC web API needs legacy TLS.
   `gbt-fan-offset.py <bmc ip> get|set N` reads or sets the offset by hand (stop the guard first).
-- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2650 v3 (E5-2696 v4 upgrade pending);
-  see "Hardware".
+- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 since 2026-10-12 (v2.4 is the
+  first version tuned for them); see "Hardware".
 
 ## Install or update
 
@@ -183,7 +188,7 @@ TAU=2700 CYC=1 python3 -I md1200-fan/tests/test_md1200_lag_sweep.py md1200-fan/m
 python3 -I md1200-fan/tests/test_md1200_scenarios.py md1200-fan/md1200-fan             # 9 scenarios, 10-08 shelf model
 python3 -I md1200-fan/tests/sweep_md1200_scenarios.py <older md1200-fan> md1200-fan/md1200-fan  # 81 models, ~12 min
 fan-watchdog/tests/run-tests.sh                                                        # about 2 minutes
-python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 15 scenarios (v2.3)
+python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 21 scenarios (v2.4)
 python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)
 ```
 
