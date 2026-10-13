@@ -52,7 +52,8 @@ fake_sub = types.SimpleNamespace(run=fake_run, Popen=FakePopen, DEVNULL=None, Ti
 def sleep(s):
     clock[0] += s
     if clock[0] - 1_800_000_000 > 6 * 3600: raise SystemExit('dry run too long')
-ft = types.SimpleNamespace(time=lambda: clock[0], sleep=sleep, strftime=lambda f, *a: _t.strftime(f, _t.gmtime(clock[0])))
+ft = types.SimpleNamespace(time=lambda: clock[0], sleep=sleep, strftime=lambda f, *a: _t.strftime(f, a[0] if a else _t.gmtime(clock[0])),
+                           gmtime=lambda s=None: _t.gmtime(clock[0] if s is None else s))   # 2026-10-13: the UTC time column
 g = {'__name__': '__main__', 'subprocess': fake_sub, 'time': ft, 'sys': sys, 'os': os, 're': re,
      'glob': types.SimpleNamespace(glob=lambda p: []), 'print': lambda *a, **k: notes.append(' '.join(map(str, a)))}
 src = src.replace('import glob, os, re, subprocess, sys, time\n', '')

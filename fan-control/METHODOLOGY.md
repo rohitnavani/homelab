@@ -162,6 +162,11 @@ load. A real workload is the best validation for the shelf: the dataPool scrub (
 | The mic sat on the network shelf next to tinynas with its lid closed | the rack was a tenth of what it heard and every step looked half its size | measure about 1 m in front of the server rack, lid open (steps 2-2.5x larger, spread 0.05 dB) |
 | 10-07: the mic logger stopped with `systemctl stop` | SIGTERM skipped its cleanup: the last clip stayed in /dev/shm, the mixer at the test gain | it handles SIGTERM now; check morgana's /dev/shm after a run |
 | 10-07: a 24% fan cap on the quiet night | mementos's 12-core step never settled | map with fixed fans in the daytime; use caps only for quiet runs |
+| 10-12: the machine running the test session (and the room feed) was rebooted mid-test | the room reading went stale, the test dropped its load (safe) and the phase was lost | keep every loop a test depends on on the tested host (`tools/room-feed-local.sh`) |
+| 10-12/13: 8 min holds read ryuji's PSU-fan tone before the PSU had warmed | -60 looked whine-free at 22 workers (442 Hz) but sat at 729 Hz after 20 min | 20 min holds, A/B/A with the load held through, for anything that depends on the PSU tone |
+| 10-13: 2-thread holds depended on where the scheduler put the threads | two -80 holds 2 dB apart (one package at 60C lifted the BMC's fans, split threads did not) | A/B/A, and read both packages' temperatures |
+| 10-13: a long-running event watch (ssh + tail) silently missed lines | a guard change was not seen live | poll the run CSVs and the guard log on a schedule; alarm on load stops and aborts by grep |
+| 10-13: a guessed clock time in a log heading | corrected the same minute | `date` before every heading (as before) |
 
 ## 8. Plans for the repeat runs
 
@@ -212,6 +217,16 @@ the E5-2650 v3s did (88-91 W measured).
    the PSU tone still reached 782 Hz. Holds at 4 threads (A/B/A/C, 20-30 min, room 24-25C, last 10 min): -80
    -67.05 / -40 -65.91 / -80 -66.88 / -60 -67.06 dB(A); tone 782 / 601 / 782 / 665 Hz. So ryuji-fan-guard v2.4: BUSY
    is -60, entered on 2 or more busy threads (`/proc/stat`), and Full Speed comes at CPU 83C (was 86C).
+
+**Done 2026-10-12/13 (steps 1-6), ryuji out of the rack, room 23-25C:** the swap checked out (88 threads, 128 GB,
+microcode 0xb000040, RAPL 150 W PL1 / 180 W PL2, BMC CPU thresholds 82 / 85C, new CMOS cell 3.19 V). Idle baseline
+overnight under the guard: CPUs 37 / 43C, SIO1 72C, 161 W. The profile was run with `testing/ryuji-floor.py` plan
+`v4prof` (offsets 0, -16, -60, -80 and Full x idle / 22 / 44 workers, 8 min each; 88 workers add nothing because 44
+already hold both CPUs at their 150 W limit). Prediction (step 5) against measurement: 77-79C at full load in a 22C
+room with loud fans predicted; 69C measured at Performance in a 24C room (0.30C per package watt, not 0.38), 74C at
+-80. No thermal throttling and no BMC event anywhere. Step 6: CPU_UP stays 78 (a full load at -80 reaches it only in a
+room of ~28C), Full Speed at 83C. The noise data then gave v2.5: -60 only under 215 W of package power, back to -80
+from 235 W (full load is 2.7 dB(A) quieter at -80 than at -60). The 20 min holds at 22 workers then showed -60 no better there (-64.00 against -64.44 dB(A) for -80, the tone in the band at both once the power supply had warmed), so v2.6 moved the line to 160 / 180 W: -60 only for a light load.
 
 ### Noise, with a microphone (morgana)
 The mic is the internal mic of morgana (formerly arsene; the Latitude 5420 at 10.0.0.7) on its Realtek codec (ALSA
@@ -324,6 +339,22 @@ speed about 1C. If one does, a drive-temperature controller with a BIOS hand-bac
   the end (hottest drive 48-50C, backplane 44-46C, inside v3.2's easing band), +0.15 dB(A): not worth narrowing
   the band. Whole run (1,890 min): shelf 10-11% for 85%, mementos 10% for 99%. Watched with `testing/lab-watch.py`;
   summaries with `lab-status.py`, `day-summary.py` and `mic-compare.py`.
+
+### Done 2026-10-12/13: ryuji on the E5-2696 v4s (ryuji out of the rack, room 23-25C)
+- Light load (10-12 evening and 10-13 morning, 20-30 min holds, A/B/A): v2.3's -40 step never fired on the new CPUs
+  (the BMC lifts the system fans itself under load, so SIO1 falls); at 4 threads -60 matched -80's dB(A) with ~2 dB less
+  of the PSU whine, -40 cost 1 dB more. At 2 threads nothing kept the PSU tone out of the band; -60 was ~0.75 dB quieter.
+  Guard v2.4 (-60 on busy threads) live check: -60 1.9 min into 4 threads, back to -80 12 min after.
+- Full load (`v4prof`, `v4heavy`): hottest CPU 74C at -80 up to 65C at Full Speed; -80 is the quietest at 33 workers
+  and up (~1 dB at 33, 2.7 dB at 44 against -60), because the PSU tone is then at or past the band's top at any offset.
+  Guard v2.5 (package-power trigger) live check (`v25val`): a 30 min full load stayed at -80 at 74C; half load went to
+  -60; a job growing to full went back to -80 5 min later; full-load bursts changed nothing.
+- Half load with 20 min holds (`v4half`, 22 workers, -80 / -60 / -80): -64.47 / -64.00 / -64.41 dB(A), the PSU tone in
+  the band at both offsets once the supply had warmed (the 8 min profile hold at -60 had shown it at 442 Hz). Guard
+  v2.6 moves v2.5's line from 215 / 235 W to 160 / 180 W: -60 only for a light load.
+- 7-Zip 23.01 benchmark (`testing/bench-7zip.sh`): 5,021 MIPS on one thread, 113,495 on 44, 179,809 on all 88; the
+  Ryzen 5 9600X in tinynas: 7,644 and 70,305.
+- Recheck once ryuji is back in the rack: the PSU tone and the noise numbers depend on where it sits.
 
 ## 9. Checklists
 

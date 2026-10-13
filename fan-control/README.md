@@ -224,6 +224,8 @@ python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-g
 - `tools/gbt-power.py` (2026-10-10): calls of ryuji's BMC web UI with one login (the password from
   `~/.config/lab/bmc-pass`, 0600, or `BMC_PWFILE`): `pages`, `dump <page>`, `get <path>`.
   `gbt-power.py 10.0.0.118 get 'gbtdata?set=PowerOn'` powers ryuji on.
+- `tools/room-feed-local.sh` (2026-10-13): `room-feed.sh` run on ryuji itself (it reads Prometheus on futaba
+  directly), so a reboot of the machine that runs the test session cannot stop the room reading a test depends on.
 
 ## Testing on the hardware
 
@@ -282,3 +284,55 @@ The whole monitoring run, 10-10 00:31 to 10-11 08:00 (1,890 min, `testing/lab-wa
 After a warm spell the shelf can hold 1-2% high for hours, because v3.2 eases only once every reading is well under
 target (10-11: 12% from 05:29 to the end after 26 min at 25C, hottest drive 48-50C, backplane 44-46C). That costs
 about 0.15 dB(A), so the band stays as it is.
+
+## Results, 2026-10-12/13: ryuji on the E5-2696 v4s (room 23-25C, ryuji out of the rack)
+
+2x Xeon E5-2696 v4 fitted 2026-10-12 (and the paste redone). All with `testing/ryuji-floor.py` (plans `v4light`,
+`v4b`, `v4a2`, `v4c`, `v4idle`, `v24light`, `v4prof`, `v4heavy`, `v25val`, `v4half`, `v4bench`), `testing/phase-table.py`
+(medians over each phase's last minutes, joined with turbostat and the mic), the mic 1.5 ft in front of the rack.
+No thermal throttling (kernel counters) and no BMC event in any test.
+
+Idle (guard -80, overnight 10-12/13): CPUs 37 / 43C (the E5-2650 v3s: 41-50C), SIO1 72C, CPU / system fans 2,000 /
+1,050 rpm, 161 W at the wall; -70.0 dB(A) at the mic, the quietest night measured.
+
+Light load (20-30 min holds, A/B/A): on these CPUs the BMC's own curve already lifts the system fans at 4 busy threads,
+so SIO1 falls under load and v2.3's -40 step never fired, while the power-supply fan's tone still climbed into the
+band the rack and room ring at.
+
+| Load | -80 | -60 | -40 |
+|---|---|---|---|
+| 2 threads (~236 W) | -67.91 / -65.72 dB(A), 738-771 Hz (in the band) | -67.56, 738 Hz (in the band) | |
+| 4 threads (~268 W) | -67.05 / -66.88, 782 Hz (in the band) | -67.06, 665 Hz (under it) | -65.91, 601-615 Hz |
+
+Full-load profile (fixed offsets, 8 min holds, last 4 min; 44 workers = one per core puts both CPUs at their 150 W
+limit; 88 workers add nothing):
+
+| Workers (package W) | Offset | Hottest CPU | VR | CPU / system fans | Wall W | All-core MHz | dB(A) | PSU tone |
+|---|---|---|---|---|---|---|---|---|
+| 22 (188) | -80 | 66C | 68C | 4,600 / 2,525 | 368 | 2,795 | -65.09 | 729 Hz, in the band |
+| 22 (190) | -60 | 64C | 69C | 4,800 / 2,975 | 370 | 2,795 | -65.47 | 442 Hz (the PSU not yet warm) |
+| 22 (186) | -16 | 59C | 61C | 5,500 / 4,550 | 374 | 2,794 | -58.72 | 721 Hz |
+| 22 (184) | Performance | 59C | 60C | 6,000 / 5,350 | 379 | 2,792 | -55.98 | |
+| 33 (246) | -80 | 70C | 74C | 5,700 / 4,750 | 457 | 2,797 | -58.21 | 820 Hz |
+| 33 (245) | -60 | 68-69C | 71-73C | 5,700-5,900 / 4,925-5,125 | 457 | 2,797 | -57.27 (A/B/A mean) | 817-820 Hz |
+| 44 (296) | -80 | 74C | 80C | 6,300 / 5,900 | 534 | 2,761 | -53.01 | 899 Hz |
+| 44 (296) | -60 | 72C | 78C | 6,500 / 6,225 | 538 | 2,771 | -50.30 | 920 Hz |
+| 44 (293) | -16 | 69C | 74C | 6,900 / 7,225 | 554 | 2,771 | -48.30 | 949 Hz |
+| 44 (293) | Performance | 69C | 73C | 7,300 / 7,900 | 565 | 2,774 | -45.97 | |
+| 44 (293) | Full Speed | 65C | 67C | 8,400 / 9,800 | 617 | 2,795 | -41.27 | |
+
+With 20 min holds at 22 workers (A/B/A, load held through, last 10 min) the power supply warms and its tone sits in
+the band at both offsets: -80 -64.47, -60 -64.00, -80 -64.41 dB(A) (735-768 Hz). So -60 pays only for a light load
+(2-4 busy threads), which is where ryuji-fan-guard v2.6 draws the line (160 W of package power).
+
+The hottest CPU is always CPU1, ~10C above CPU0 at the same power (worth checking its heatsink and paste). The rack
+PDU read 9.8-10.1 A with ryuji at full load (6.2-6.5 A at idle).
+
+7-Zip 23.01 benchmark (`testing/bench-7zip.sh`, `7z b`, total rating in MIPS): ryuji 5,021 on one thread, 113,495 on
+44, 179,809 on all 88; tinynas's Ryzen 5 9600X, same version: 7,644 on one thread, 70,305 on all 12. ryuji is about
+two thirds of the 9600X per thread and does about 2.6 times its work in total.
+
+Guard v2.5 live (`v25val`): from idle, a 30 min full load stayed at -80 the whole time (hottest CPU flat at 74C, VR
+80C, 538 W, -53.00 dB(A)); 22 workers took it to -60 1.6 min in; growing to 44 workers took it back to -80 5 min
+later; four 3 min full-load bursts 4 min apart changed nothing; back to -80 10 idle min after each load. v2.6 keeps
+that logic with the line moved to 160 / 180 W.

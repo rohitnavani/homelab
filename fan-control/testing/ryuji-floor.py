@@ -76,6 +76,55 @@ PLANS = {
     'psu': [('i80_ref', -80, 0, 10), ('a1_4t', -80, 4, 30), ('a1_cool', -80, 0, 15), ('b1_4t', -40, 4, 30),
             ('b1_cool', -80, 0, 15), ('b2_4t', -40, 4, 30), ('b2_cool', -80, 0, 15), ('a2_4t', -80, 4, 30),
             ('R80_idle', -80, 0, 15)],
+    # 2026-10-12 evening, first run on the E5-2696 v4s (Rohit home, light testing allowed): guard in control. Does
+    # v2.3's -40 step still fire on the new CPUs (METHODOLOGY step 7: it needs the hottest CPU >= 52C), and what do
+    # 4 and 8 busy threads cost? Then a long idle tail under the guard = the new idle baseline (step 2).
+    'v4light': [('g_warm', None, 0, 45), ('g_ref', None, 0, 10), ('g_4t', None, 4, 30), ('g_unwind4', None, 0, 20),
+                ('g_8t', None, 8, 20), ('g_unwind8', None, 0, 25)],
+    # 20:0x: at 4 threads the BMC lifts the system fans itself (1,050 -> 1,625 rpm at -80), SIO1 falls, so v2.3's -40
+    # step never fires, yet the PSU tone climbed into the ringing band (715 Hz in 5 min). Does -40 still keep it out?
+    # B after the guard's -80 g_4t (A), then the guard's unwind from -40, 8 threads under the guard, unwind.
+    'v4b': [('b_4t', -40, 4, 30), ('g_cool', None, 0, 15), ('g_8t', None, 8, 20), ('g_unwind8', None, 0, 25)],
+    # 21:08: at 4 threads -40 kept the PSU tone out of the band but was ~1 dB(A) LOUDER than the guard's -80 (system fans
+    # 2,900 vs 1,600 rpm). Return to -80 (A/B/A) before deciding; forced -80, since the guard would hold -40 after b_4t.
+    'v4a2': [('a2_4t', -80, 4, 20), ('g_unwind', None, 0, 15)],
+    # 21:29: A2 confirms (-80 -66.9 / -67.0 dB(A) with the 782 Hz whine, -40 -66.0 without it). Is there an offset in
+    # between that keeps the PSU tone under the band without the -40 fan cost? -60, 25 min (load off by 21:56).
+    'v4c': [('c_4t', -60, 4, 25), ('g_unwind', None, 0, 15)],
+    'v4idle': [('g_idle', None, 0, 600)],
+    # 2026-10-13 afternoon: the guard (v2.4) in control through what ryuji will really see. A 30 min full load (does
+    # it hold -60 without throttling, and how does it start from -80?), its unwind, bursts (3 min on / 4 min off:
+    # no flip-flop wanted), half load, then the benchmark window (bench-1013.sh adds 7-Zip's load alongside).
+    'v24val': [('g_idle', None, 0, 10), ('g_full', None, 44, 30), ('g_unwind', None, 0, 20),
+               ('g_b1', None, 44, 3), ('g_b1o', None, 0, 4), ('g_b2', None, 44, 3), ('g_b2o', None, 0, 4),
+               ('g_b3', None, 44, 3), ('g_b3o', None, 0, 4), ('g_b4', None, 44, 3), ('g_bunwind', None, 0, 20),
+               ('g_half', None, 22, 15), ('g_hunwind', None, 0, 15)],
+    # v2.5 validation (guard in control): full load from idle (expect no change from -80), half load (expect -60 within
+    # ~3 min), the half load growing to full (expect -80 again ~5 min later), bursts of full load (expect no change).
+    'v25val': [('g_idle', None, 0, 10), ('g_full', None, 44, 30), ('g_unwind', None, 0, 15),
+               ('g_half', None, 22, 20), ('g_grow', None, 44, 15), ('g_unwind2', None, 0, 15),
+               ('g_b1', None, 44, 3), ('g_b1o', None, 0, 4), ('g_b2', None, 44, 3), ('g_b2o', None, 0, 4),
+               ('g_b3', None, 44, 3), ('g_b3o', None, 0, 4), ('g_b4', None, 44, 3), ('g_bunwind', None, 0, 10)],
+    'v4bench': [('g_bench', None, 0, 16), ('g_bcool', None, 0, 15)],
+    # 13:35: under the guard, 20 min of 22 workers at -60 ended with the PSU tone at 729 Hz (in the band), -64.01 dB(A);
+    # the 8 min profile hold at -60 had shown 442 Hz, likely before the PSU had warmed. Settle half load with 20 min holds:
+    # A/B/A -80 / -60 / -80, load held through, then a guard cool-down. Sets v2.5's BUSY_PKG_MAX (22 workers = 188 W).
+    'v4half': [('k80_22t_a', -80, 22, 20), ('k60_22t', -60, 22, 20), ('k80_22t_b', -80, 22, 20), ('k_cool', None, 0, 10)],
+    # 11:00: at full load -80 was 2.7 dB(A) quieter than -60 (CPU 74 vs 72C), at 22 workers -60 was better (no whine).
+    # Where is the crossover? 33 workers (three quarters), A/B/A with the load held through, then a guard cool-down.
+    'v4heavy': [('h60_33t', -60, 33, 8), ('h80_33t', -80, 33, 8), ('h60_33t_b', -60, 33, 8), ('h_cool', None, 0, 10)],
+    # 2026-10-13 (Rohit out, testing until 16:30; guard v2.4 deployed 04:41: BUSY -60 on >= 2 busy threads).
+    # Morning: does 2 threads already need -60 (BUSY_THREADS 2 or 3)? A/B/A at 2 threads, then v2.4's live check at 4.
+    'v24light': [('g_ref', None, 0, 10), ('t2_a1', -80, 2, 20), ('t2_b', -60, 2, 20), ('t2_a2', -80, 2, 20),
+                 ('g_cool', None, 0, 15), ('g_4t', None, 4, 25), ('g_unwind', None, 0, 15)],
+    # Full-load profile on the E5-2696 v4s (METHODOLOGY step 3, shortened): the guard's levels, loudest first, each
+    # idle / half (22 workers) / full (44 = one per core); 88 workers (every thread) at 0 for the most heat; 11 workers
+    # at -60 (the guard's level for a medium job); Full Speed (127) at full load; -80 idle bracket.
+    'v4prof': [('p0_idle', 0, 0, 8), ('p0_22t', 0, 22, 8), ('p0_44t', 0, 44, 8), ('p0_88t', 0, 88, 6),
+               ('p16_idle', -16, 0, 8), ('p16_22t', -16, 22, 8), ('p16_44t', -16, 44, 8),
+               ('p60_idle', -60, 0, 8), ('p60_11t', -60, 11, 8), ('p60_22t', -60, 22, 8), ('p60_44t', -60, 44, 8),
+               ('p80_idle', -80, 0, 8), ('p80_22t', -80, 22, 8), ('p80_44t', -80, 44, 8),
+               ('p127_idle', 127, 0, 4), ('p127_44t', 127, 44, 8), ('R80_idle', -80, 0, 10)],
     'full': [(f'o{o}_{w}t', o, w, m) for o in (0, -8, -16, -24, -80) for w, m in STEPS] + [('R80_idle', -80, 0, 8)],
     'rest0806': ([(f'o{o}_{w}t', o, w, m) for o in (-16, -8) for w, m in STEPS]
                  + [(f'o-24_{FULL}t', -24, FULL, 6)]
@@ -87,10 +136,15 @@ PLAN = PLANS[sys.argv[2] if len(sys.argv) > 2 else 'floor']
 # starts only at <= ROOM_START (waits up to WAIT_MAX, else it is skipped) and its load is dropped above ROOM_STOP or
 # if the reading is more than 3 min old. 10-06: Rohit's 27C rule until 08:4x, then up to 29C allowed.
 ROOM_FILE, ROOM_START, ROOM_STOP, WAIT_MAX = '/run/room-inlet', 26, 27, 25 * 60
+# 2026-10-12: LOAD_UNTIL (epoch, env) = no load step starts after it; the phase runs idle instead (a quiet night).
+LOAD_UNTIL = float(os.environ.get('LOAD_UNTIL', 'inf'))
 FAN_FLOOR = 1000
 floor_hit = set()   # offsets that took a fan under FAN_FLOOR
+# E5-2696 v4 (2026-10-12): BMC CPU thresholds 82 upper non-critical / 85 critical, coretemp high 83 / crit 85, so the
+# CPU limits sit under them (were 82 / 86 on the E5-2650 v3s). 10-13 full-load profile: load off at the BMC's own
+# warning (82; the evening's light tests used 80), Full Speed and exit at 84.
 LOAD_STOP = {'sio1': 80, 'cpu': 82, 'vr': 95, 'dimm': 80}
-ABORT = {'sio1': 83, 'cpu': 86}
+ABORT = {'sio1': 83, 'cpu': 84}
 
 def sh(*a, **k):
     return subprocess.run(a, capture_output=True, text=True, timeout=60, **k)
@@ -178,7 +232,22 @@ def room():
         return None
 
 cols = ['epoch', 'time_utc', 'phase', 'phase_min', 'offset', 'load', 'cpu0', 'cpu1', 'sio1', 'sio2', 'pch', 'vr', 'dimm',
-        'hdd', 'cpu_fan0', 'cpu_fan1', 'sys_fan', 'fan_min', 'dcmi_w', 'pkg0_w', 'pkg1_w', 'room']
+        'hdd', 'cpu_fan0', 'cpu_fan1', 'sys_fan', 'fan_min', 'dcmi_w', 'pkg0_w', 'pkg1_w', 'room', 'thr_core', 'thr_pkg']
+
+def throttles():
+    """2026-10-13: cumulative thermal-throttle events (kernel thermal_throttle counters): all cores, and each package once"""
+    core = pkg = 0
+    seen = set()
+    for d in glob.glob('/sys/devices/system/cpu/cpu[0-9]*'):
+        try:
+            core += int(open(f'{d}/thermal_throttle/core_throttle_count').read())
+            p = open(f'{d}/topology/physical_package_id').read().strip()
+            if p not in seen:
+                seen.add(p)
+                pkg += int(open(f'{d}/thermal_throttle/package_throttle_count').read())
+        except (OSError, ValueError):
+            pass
+    return core, pkg
 
 def fan_min_now():
     vals = []
@@ -217,7 +286,9 @@ def log_row(label, off, t0, st, workers):
     pw = [f'{(b - a) / 1e6 / (tn - st["tp"]):.1f}' if b >= a else '' for a, b in zip(st['e0'], e1)]
     st['e0'], st['tp'] = e1, tn
     cur = workers if stress and stress.poll() is None else 0
-    row = dict(s, epoch=int(tn), time_utc=time.strftime('%T'), phase=label, phase_min=f'{(tn - t0) / 60:.1f}',
+    tc, tp = throttles()
+    row = dict(s, epoch=int(tn), time_utc=time.strftime('%T', time.gmtime(tn)), phase=label, phase_min=f'{(tn - t0) / 60:.1f}',
+               thr_core=tc, thr_pkg=tp,
                offset=f'g{guard_offset()}' if off is None else off, load=cur,
                pkg0_w=pw[0] if pw else '', pkg1_w=pw[1] if len(pw) > 1 else '', room=room())
     with open(CSV, 'a') as f:
@@ -283,6 +354,8 @@ try:
                 if not ok:
                     continue
         st = {'e0': energy(), 'tp': time.time()}
+        if pct and time.time() > LOAD_UNTIL:
+            note(f'{label}: past LOAD_UNTIL, running it idle'); pct = 0
         if pct:
             r = room()
             if r is None or r > ROOM_START:
@@ -300,7 +373,7 @@ try:
         t0 = time.time()
         fm_samples = []
         while time.time() - t0 < mins * 60:
-            time.sleep(30)
+            time.sleep(15 if pct else 30)   # 2026-10-13: faster under load (150 W CPUs heat ~5C per 30 s)
             log_row(label, off, t0, st, pct)
             if not floor_check(off, label):
                 break
