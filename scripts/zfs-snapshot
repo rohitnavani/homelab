@@ -1,0 +1,11 @@
+#!/bin/bash
+# Hourly @<epoch> snapshots on mementos (same naming as tinynas's snapshot script, so syncoid pulls ride them).
+# Each root in /etc/zfs-snapshot-targets is snapshotted recursively in one atomic operation.
+set -uo pipefail
+TARGETS=/etc/zfs-snapshot-targets
+t=$(date +%s); rc=0
+while read -r root; do
+  [[ -z $root || $root == \#* ]] && continue
+  zfs snapshot -r "$root@$t" || { echo "$(date '+%F %T') - snapshot failed: $root" >&2; rc=1; }
+done < "$TARGETS"
+exit $rc

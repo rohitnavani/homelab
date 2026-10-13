@@ -1,0 +1,35 @@
+#!/bin/bash
+# GFS prune for the tinynas replica, independent of tinynas's own retention on purpose:
+# if tinynas ever destroys its snapshots, the history here survives.
+# Keeps per dataset: newest HOURLY snapshots, plus the newest snapshot of each of the last DAILY days,
+# WEEKLY ISO weeks and MONTHLY months that have snapshots. Periods are counted from snapshots that exist,
+# not calendar windows, so a stalled replication never ages everything out.
+set -uo pipefail
+ROOT="${1:-backupPool/tinynas}"
+HOURLY="${HOURLY:-72}" DAILY="${DAILY:-14}" WEEKLY="${WEEKLY:-8}" MONTHLY="${MONTHLY:-6}"
+DRY_RUN="${DRY_RUN:-0}"
+total=0
+while read -r ds; do
+  mapfile -t snaps < <(zfs list -H -t snapshot -o name -S creation -d 1 "$ds" | grep -E '@[0-9]+$')   # newest first
+  (( ${#snaps[@]} == 0 )) && continue
+  declare -A keep=() seen_d=() seen_w=() seen_m=()
+  nd=0 nw=0 nm=0
+  for i in "${!snaps[@]}"; do
+    s=${snaps[$i]}; e=${s##*@}
+    (( i < HOURLY )) && keep[$s]=1
+    read -r d w m < <(date -d "@$e" '+%F %G-W%V %Y-%m')
+    if [[ -z ${seen_d[$d]+x} ]]; then seen_d[$d]=1; (( nd++ < DAILY )) && keep[$s]=1; fi
+    if [[ -z ${seen_w[$w]+x} ]]; then seen_w[$w]=1; (( nw++ < WEEKLY )) && keep[$s]=1; fi
+    if [[ -z ${seen_m[$m]+x} ]]; then seen_m[$m]=1; (( nm++ < MONTHLY )) && keep[$s]=1; fi
+  done
+  del=0
+  for s in "${snaps[@]}"; do
+    [[ -n ${keep[$s]+x} ]] && continue
+    if [[ $DRY_RUN == 1 ]]; then :; else zfs destroy "$s" || echo "FAILED destroy $s"; fi
+    del=$(( del + 1 ))
+  done
+  total=$(( total + del ))
+  (( del > 0 )) && echo "$(date '+%F %T') - pruned $del of ${#snaps[@]} on $ds (kept ${#keep[@]})"
+  unset keep seen_d seen_w seen_m
+done < <(zfs list -H -o name -t filesystem,volume -r "$ROOT")
+echo "$(date '+%F %T') - prune done ($total snapshots, dry run=$DRY_RUN)"

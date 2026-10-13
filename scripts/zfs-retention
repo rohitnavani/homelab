@@ -1,0 +1,35 @@
+#!/bin/bash
+# GFS retention for mementos's hourly @<epoch> snapshots - the same policy as tinynas's retention script:
+# per dataset keep the newest HOURLY snapshots, plus the newest snapshot of each of the last WEEKLY ISO weeks,
+# MONTHLY months and YEARLY years that have snapshots. Only @<digits> names are touched (@cutover etc. stay).
+# Datasets: everything under the roots in /etc/zfs-snapshot-targets. Usage: DRY_RUN=1 zfs-retention
+set -uo pipefail
+TARGETS=/etc/zfs-snapshot-targets
+HOURLY="${HOURLY:-168}" WEEKLY="${WEEKLY:-4}" MONTHLY="${MONTHLY:-6}" YEARLY="${YEARLY:-2}"
+DRY_RUN="${DRY_RUN:-0}"
+total=0
+echo "--- $(date '+%F %T') - retention start (hourly=$HOURLY weekly=$WEEKLY monthly=$MONTHLY yearly=$YEARLY dry_run=$DRY_RUN) ---"
+while read -r ds; do
+  mapfile -t snaps < <(zfs list -H -t snapshot -o name -S creation -d 1 "$ds" | grep -E '@[0-9]+$')   # newest first
+  (( ${#snaps[@]} == 0 )) && continue
+  declare -A keep=() seen_w=() seen_m=() seen_y=()
+  nw=0 nm=0 ny=0
+  for i in "${!snaps[@]}"; do
+    s=${snaps[$i]}; e=${s##*@}
+    (( i < HOURLY )) && keep[$s]=1
+    read -r w m y < <(date -d "@$e" '+%G-W%V %Y-%m %Y')
+    if [[ -z ${seen_w[$w]+x} ]]; then seen_w[$w]=1; (( nw++ < WEEKLY )) && keep[$s]=1; fi
+    if [[ -z ${seen_m[$m]+x} ]]; then seen_m[$m]=1; (( nm++ < MONTHLY )) && keep[$s]=1; fi
+    if [[ -z ${seen_y[$y]+x} ]]; then seen_y[$y]=1; (( ny++ < YEARLY )) && keep[$s]=1; fi
+  done
+  del=0
+  for s in "${snaps[@]}"; do
+    [[ -n ${keep[$s]+x} ]] && continue
+    if [[ $DRY_RUN == 1 ]]; then :; else zfs destroy "$s" || echo "FAILED destroy $s"; fi
+    del=$(( del + 1 ))
+  done
+  total=$(( total + del ))
+  echo "$(date '+%F %T') - $ds: ${#snaps[@]} snapshots, keep ${#keep[@]}, prune $del"
+  unset keep seen_w seen_m seen_y
+done < <(while read -r root; do [[ -z $root || $root == \#* ]] && continue; zfs list -H -o name -t filesystem,volume -r "$root"; done < "$TARGETS")
+echo "--- $(date '+%F %T') - retention done ($total snapshots pruned, dry run=$DRY_RUN) ---"

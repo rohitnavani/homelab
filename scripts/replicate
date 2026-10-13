@@ -1,0 +1,50 @@
+#!/bin/bash
+# Offsite backup: pull ZFS datasets into backupPool (pull, never push).
+# Each entry is "<user@host> <dataset>"; the copy lands at backupPool/<dataset>, keeping the source pool name
+# (homePool/nvmePool = tinynas, dataPool/vmPool = mementos), so pool names must stay unique across machines.
+# tinynas accepts this box's root key (from="10.0.0.8", root). mementos accepts the same key only for the
+# unprivileged backuppull user, which may only `zfs send`/`hold` its datasets (hence --no-privilege-elevation).
+set -uo pipefail
+DEST="backupPool"
+LOGDIR="/var/log/replication"
+SOURCES=(
+  # tinynas (homePool/docker and homePool/kvm dropped 2026-10-05: rebuildable / VMs not backed up; old copies stay in backupPool/homePool)
+  "root@10.0.0.5 homePool/docker-compose"
+  "root@10.0.0.5 homePool/etcBackup"
+  "root@10.0.0.5 homePool/logBackup"
+  "root@10.0.0.5 homePool/scripts"
+  "root@10.0.0.5 homePool/game-servers"
+  "root@10.0.0.5 nvmePool/mcserver"
+  "root@10.0.0.5 nvmePool/mcserver2"
+  "root@10.0.0.5 nvmePool/mcserver3"
+  "root@10.0.0.5 nvmePool/mcserver4"
+  # mementos (Nextcloud since 2026-10-05: files, Docker data-root with AIO's database, AIO compose dir; its logs)
+  "backuppull@10.0.0.10 dataPool/nextcloud"
+  "backuppull@10.0.0.10 dataPool/docker"
+  "backuppull@10.0.0.10 dataPool/docker-compose/nextcloud-aio"
+  "backuppull@10.0.0.10 vmPool/logs"
+)
+
+mkdir -p "$LOGDIR"
+LOG="$LOGDIR/replication-$(date +%Y%m%d).log"
+exec 9>/var/lock/replicate.lock
+flock -n 9 || { echo "$(date '+%F %T') - already running, skipping" >> "$LOG"; exit 0; }
+
+fail=0
+echo "--- $(date '+%F %T') - start ---" >> "$LOG"
+for entry in "${SOURCES[@]}"; do
+  read -r src ds <<< "$entry"
+  extra=()
+  [[ $src == root@* ]] || extra=(--no-privilege-elevation)
+  if syncoid --no-sync-snap --recursive --quiet "${extra[@]}" \
+       "$src:$ds" "$DEST/$ds" >> "$LOG" 2>&1; then
+    echo "$(date '+%F %T') - OK $src:$ds" >> "$LOG"
+  else
+    echo "$(date '+%F %T') - FAILED $src:$ds" >> "$LOG"
+    fail=1
+  fi
+done
+zfs inherit -r mountpoint "$DEST" >> "$LOG" 2>&1
+/usr/local/bin/prune-replica "$DEST" >> "$LOG" 2>&1 || fail=1
+echo "--- $(date '+%F %T') - done (fail=$fail) ---" >> "$LOG"
+exit $fail
