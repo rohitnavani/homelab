@@ -258,7 +258,7 @@
     },
     "overrides": []
    },
-   "description": "ryuji-fan-guard: -80 quiet (idle, and heavy loads from v2.5), -60 busy (a sustained lighter load), -16 warm, 0 Performance, 127 Full."
+   "description": "ryuji-fan-guard: -80 quiet (idle, and medium to heavy loads since v2.5), -60 (a sustained light load under 160 W), -16 warm, 0 Performance, 127 Full."
   },
   {
    "id": 6,

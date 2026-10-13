@@ -1,4 +1,4 @@
-# Closed-loop harness for ryuji-fan-guard (v2, 2026-10-06; v2.3 2026-10-10; v2.4/v2.5 2026-10-13): fake clock + a ryuji
+# Closed-loop harness for ryuji-fan-guard (v2, 2026-10-06; v2.3 2026-10-10; v2.4-v2.6 2026-10-13): fake clock + a ryuji
 # model. SIO Temp 1 and the hottest CPU settle (tau 3.5 min / 1 min) toward values that depend on the guard level, the
 # load (busy threads) and the room. usage: python3 tests/test_ryuji_fan_guard.py ryuji-fan-guard
 # v2.4: the model is for the 2x Xeon E5-2696 v4 fitted 2026-10-12 (44 cores / 88 threads, 150 W PL1 each). Idle and 4
@@ -140,24 +140,26 @@ expect(o == [] and any('assuming -80' in m for _, m in logs) and any('BMC check 
        f'assumes -80, retries the check until the BMC answers, no change ({o})')
 # v2.5 (2026-10-13 afternoon)
 o = run('22 half load (22 workers, 188 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(22)), (90, L(0))])
-expect(vals(o) == [-60, -80] and o[0][0] <= 33 and o[1][0] >= 100, f'-60 under a half load (the PSU tone sits in the band at -80), back ({o})')
-o = run('23 a job that grows: 22 workers for 20 min, then 44 for 30 min, 24C room', 160, room=24,
-        evs=[(30, L(22)), (50, L(44)), (80, L(0))])
+expect(o == [], f'v2.6: stays at -80 (20 min holds: -60 is 0.4 dB louder there, tone in the band at both) ({o})')
+o = run('22b 11 workers (148 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(11)), (90, L(0))])
+expect(vals(o) == [-60, -80] and o[0][0] <= 33 and o[1][0] >= 100, f'-60 under a light-to-medium load, back ({o})')
+o = run('23 a job that grows: 11 workers for 20 min, then 44 for 30 min, 24C room', 160, room=24,
+        evs=[(30, L(11)), (50, L(44)), (80, L(0))])
 expect(vals(o) == [-60, -80] and 50 <= o[1][0] <= 57, f'-60, then back to -80 within ~6 min of the full load, and stays ({o})')
-o = run('24 package power in the dead band (225 W, ~28 workers) for 60 min from idle, 24C room', 140, room=24,
-        evs=[(30, lambda: (plant.update(load=28), plant.update(pkg_force=225))), (90, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
+o = run('24 package power in the dead band (170 W, ~16 workers) for 60 min from idle, 24C room', 140, room=24,
+        evs=[(30, lambda: (plant.update(load=16), plant.update(pkg_force=170))), (90, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
 expect(o == [], f'from -80: stays at -80 (not under BUSY_PKG_MAX) ({o})')
 o = run('25 the same dead-band load starting at -60 (guard restarted in it), 24C room', 100, room=24, start=-60,
-        evs=[(0, lambda: (plant.update(load=28), plant.update(pkg_force=225))), (60, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
+        evs=[(0, lambda: (plant.update(load=16), plant.update(pkg_force=170))), (60, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
 expect(vals(o) == [-80] and o[0][0] >= 70, f'stays at -60 through it (not at HEAVY_PKG), back after 10 idle min ({o})')
-o = run('26 power swinging 200 / 250 W every 3 min (a job across the line), 24C room', 150, room=24,
-        evs=[(m, (lambda w: lambda: (plant.update(load=30), plant.update(pkg_force=w)))(200 if (m // 3) % 2 == 0 else 250)) for m in range(30, 120, 3)]
+o = run('26 power swinging 140 / 200 W every 3 min (a job across the line), 24C room', 150, room=24,
+        evs=[(m, (lambda w: lambda: (plant.update(load=12), plant.update(pkg_force=w)))(140 if (m // 3) % 2 == 0 else 200)) for m in range(30, 120, 3)]
             + [(120, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
 expect(len(o) <= 4, f'no flip-flop: at most a couple of changes ({o})')
 o = run('27 RAPL unreadable (pkg None) under a full load, 24C room', 120, room=24,
         evs=[(30, lambda: (plant.update(load=44), plant.update(pkg_force=-1))), (80, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
 expect(o[:1] and o[0][1] == -60, f'falls back to v2.4: -60 under any sustained load ({o})')
-o = run('28 a lighter 44-thread job (200 W, e.g. a compile), 24C room', 120, room=24,
-        evs=[(30, lambda: (plant.update(load=44), plant.update(pkg_force=200))), (80, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
+o = run('28 a light 44-thread job (120 W, e.g. mostly waiting on I/O), 24C room', 120, room=24,
+        evs=[(30, lambda: (plant.update(load=44), plant.update(pkg_force=120))), (80, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
 expect(vals(o) == [-60, -80], f'-60: it is the power, not the thread count, that decides ({o})')
 print('ALL PASS' if ok else 'SOME FAILED')

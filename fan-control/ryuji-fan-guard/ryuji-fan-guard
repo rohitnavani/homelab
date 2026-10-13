@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# ryuji-fan-guard v2.5: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under a heavy load (v2.5), step to
-# -60 under a sustained lighter load (v2.4; v2.3: -40), to a moderate -16 when the board or the CPUs run hot (or -60 is not enough), and use Performance / Full
+# ryuji-fan-guard v2.6: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under a medium or heavy load (v2.5,
+# v2.6), step to -60 under a sustained light load (v2.4; v2.3: -40), to a moderate -16 when the board or the CPUs run hot (or -60 is not enough), and use Performance / Full
 # only if -16 is not enough. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
 # Measured 2026-10-06 (room ~27C; ryuji-profile sweeps, STATUS-LOG.md):
 #   offset  idle CPU/sys fans   SIO Temp 1 idle   4 busy threads: CPU/sys fans, SIO1  full load: CPU/sys fans, SIO1
@@ -86,6 +86,12 @@
 #                   instead of stepping with it (the harness's case 26 stepped every 3 min with 2 readings).
 #   A full load from idle stays at -80 (the package power passes BUSY_PKG_MAX within a reading); CPU_UP (78) still takes
 #   it to -16 in a warm room. Without the RAPL counters v2.4's rule applies.
+# v2.6 (2026-10-13 16:10): the same logic, thresholds 215 / 235 W -> 160 / 180 W. The v2.5 numbers came from an 8 min hold
+# at 22 workers that caught the PSU before it had warmed (-60: tone 442 Hz). 20 min holds, A/B/A, load held through
+# (ryuji-floor.py plan v4half, last 10 min): -80 -64.47 / -60 -64.00 / -80 -64.41 dB(A), the tone at 735-768 Hz in the band
+# at both, 500 Hz octave 1.5 dB higher at -60. So -60 helps only for a light load (2-4 threads, 90-110 W: same dB(A) or
+# 0.75 dB less, ~2 dB less whine at 4 threads); from 22 workers (188 W) up, -80 is as quiet or quieter. 11 workers
+# (148 W) measured only at -60 (tone 665 Hz after 8 min), so it stays on the -60 side of the line.
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
@@ -100,7 +106,7 @@ SIO_CLIMB = 77                   # SIO1 at or above this and climbing under load
 SIO_BUSY, SIO_BACK_BUSY = 74, 77  # v2.3: climbing under load from 74 -> BUSY; BUSY -> QUIET at idle with SIO1 <= 77
 IDLE_THREADS = 1.0               # v2.3: idle = less than one logical CPU's worth busy (ryuji idles at ~0.05 of 88)
 BUSY_THREADS = 2.0               # v2.4: QUIET -> BUSY at this many busy logical CPUs (2 readings)
-BUSY_PKG_MAX, HEAVY_PKG = 215, 235   # v2.5: package W (both CPUs): BUSY only under 215 W; back to QUIET at 235 W+
+BUSY_PKG_MAX, HEAVY_PKG = 160, 180   # v2.6 (v2.5: 215, 235): package W (both CPUs): BUSY only under 160 W; QUIET at 180 W+
 HEAVY_READINGS = 5                   # v2.5: ... for this many readings in a row (~5 min)
 RAPL = ('/sys/class/powercap/intel-rapl:0', '/sys/class/powercap/intel-rapl:1')
 CPU_UP, VR_UP, DIMM_UP = 78, 90, 75

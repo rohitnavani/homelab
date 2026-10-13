@@ -140,7 +140,7 @@ thresholds from the hardware above. What carries over and what to change:
 - ryuji's limiting sensor at idle is SIO Temp 1 (the BMC warns at 80C). It follows the system fans, which stay at
   their ~1,050 rpm floor at offset -80 while the CPUs are idle. Under load the BMC raises the system fans itself
   (on the E5-2696 v4s already at 4 busy threads), so SIO1 falls; with 150 W CPUs the CPUs are what to watch there.
-- Levels: -80 (quiet: idle, and heavy loads since v2.5), -60 (busy: a sustained lighter load, v2.4; -40 in v2.3),
+- Levels: -80 (quiet: idle, and medium to heavy loads since v2.5), -60 (busy: a sustained light load, v2.4; -40 in v2.3),
   -16 (system fans follow load), 0 (Performance), 127 (Full Speed).
 - -80 to -60 (v2.4) when at least 2 logical CPUs are busy (`/proc/stat`) for 2 readings: about 1-3 min into a job.
   Measured 2026-10-12 on the E5-2696 v4s (ryuji out of the rack, room 24-25C, 4 busy threads, 20-30 min holds,
@@ -151,15 +151,16 @@ thresholds from the hardware above. What carries over and what to change:
   climbed past 74C under load (right for the E5-2650 v3s, where -40 was 0.7 dB(A) quieter than -80 on 2026-10-10);
   on the new CPUs SIO1 no longer climbs, so it never fired. That rule remains only as the fallback when
   `/proc/stat` cannot be read. Back to -80 after 10 idle minutes once SIO1 is 77C or lower.
-- -60 only while both CPUs together draw under 215 W (RAPL package power), and back to -80 once they draw 235 W or more
-  for 5 readings in a row (v2.5). Measured 2026-10-13 (room 24C, 8 min holds at fixed offsets): 22 workers (188 W)
-  -60 -65.47 / -80 -65.09 dB(A) with the power-supply tone at 442 Hz / 729 Hz (in the band); 33 workers (245 W) -60
-  -57.27 / -80 -58.21 (tone at the band's top, 817-820 Hz, at both); 44 workers (296 W, both CPUs at their 150 W
-  limit) -60 -50.30 / -80 -53.01 dB(A) for a hottest CPU of 72 / 74C. Past ~400 W at the wall the tone sits at or
-  above the band whatever the offset, the BMC's own curve already drives the fans hard, and -60 only adds fan noise.
-  The trigger is power, not busy threads or temperatures: it follows the power supply's load whatever the room or
-  the job (a lighter 44-thread job that draws 200 W gets -60). Between 215 and 235 W nothing changes, and the 5
-  readings keep a job whose power swings across the line every few minutes at -60. Without RAPL, v2.4's rule applies.
+- -60 only while both CPUs together draw under 160 W (RAPL package power), and back to -80 once they draw 180 W or more
+  for 5 readings in a row (v2.6; v2.5 used 215 / 235 W). Measured 2026-10-13 (room 24C, A/B/A, last 10 min of 20 min
+  holds unless noted): 22 workers (188 W) -80 -64.47 / -60 -64.00 / -80 -64.41 dB(A) with the power-supply tone in the
+  band at both (735-768 Hz; an 8 min -60 hold had shown 442 Hz before the supply warmed); 33 workers (245 W, 8 min)
+  -60 -57.27 / -80 -58.21 (tone at the band's top, 817-820 Hz, at both); 44 workers (296 W, both CPUs at their 150 W
+  limit, 8 min) -60 -50.30 / -80 -53.01 dB(A) for a hottest CPU of 72 / 74C. So -60 pays only for a light load (2-4
+  busy threads, 90-110 W); above it the BMC's own curve already drives the fans and -60 only adds fan noise. The
+  trigger is power, not busy threads or temperatures: it follows the power supply's load whatever the room or the job
+  (44 threads that mostly wait and draw 120 W get -60). Between 160 and 180 W nothing changes, and the 5 readings keep
+  a job whose power swings across the line every few minutes at -60. Without RAPL, v2.4's rule applies.
 - Full load (44 workers, room 24C, no thermal throttling at any offset): hottest CPU 74C at -80, 72C at -60, 69C at
   -16 and at Performance, 65C at Full Speed; 534-617 W at the wall; 2,761-2,797 MHz on every core. So v2.5 holds a
   full load at -80, 8C under the BMC's warning, and goes to -16 only in a warm room (CPU 78C).
@@ -177,7 +178,7 @@ thresholds from the hardware above. What carries over and what to change:
   wants network-online.target.
 - Needs the BMC password in `/root/.bmc-pass` (0600, root only); the BMC web API needs legacy TLS.
   `gbt-fan-offset.py <bmc ip> get|set N` reads or sets the offset by hand (stop the guard first).
-- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 since 2026-10-12 (v2.4 and v2.5
+- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 since 2026-10-12 (v2.4 to v2.6
   are tuned for them); see "Hardware". The package-power thresholds depend on this CPU pair and this power supply.
 
 ## Install or update
@@ -200,7 +201,7 @@ TAU=2700 CYC=1 python3 -I md1200-fan/tests/test_md1200_lag_sweep.py md1200-fan/m
 python3 -I md1200-fan/tests/test_md1200_scenarios.py md1200-fan/md1200-fan             # 9 scenarios, 10-08 shelf model
 python3 -I md1200-fan/tests/sweep_md1200_scenarios.py <older md1200-fan> md1200-fan/md1200-fan  # 81 models, ~12 min
 fan-watchdog/tests/run-tests.sh                                                        # about 2 minutes
-python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 28 scenarios (v2.5)
+python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 29 scenarios (v2.6)
 python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)
 ```
 
