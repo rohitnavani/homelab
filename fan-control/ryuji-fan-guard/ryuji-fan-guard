@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# ryuji-fan-guard v2.4: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle, step to -60 under a sustained load
-# (v2.3: -40), to a moderate -16 when the board or the CPUs run hot (or -60 is not enough), and use Performance / Full
+# ryuji-fan-guard v2.5: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under a heavy load (v2.5), step to
+# -60 under a sustained lighter load (v2.4; v2.3: -40), to a moderate -16 when the board or the CPUs run hot (or -60 is not enough), and use Performance / Full
 # only if -16 is not enough. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
 # Measured 2026-10-06 (room ~27C; ryuji-profile sweeps, STATUS-LOG.md):
 #   offset  idle CPU/sys fans   SIO Temp 1 idle   4 busy threads: CPU/sys fans, SIO1  full load: CPU/sys fans, SIO1
@@ -64,6 +64,28 @@
 #   CPU_EMERG 86 -> 83 (Full Speed): the new CPUs' limits are lower (BMC: 82 upper non-critical, 85 critical; coretemp
 #                  high 83, crit 85).
 #   Everything else as in v2.3 (BUSY -> QUIET after 10 idle min with SIO1 <= 77; BUSY -> WARM on SIO1 or CPU/VR/DIMM).
+# v2.5 (2026-10-13): full-load profile (fixed offsets, 8 min phases, room 24C, ryuji out of the rack; package W = both
+# CPUs' RAPL counters, wall W = the BMC's DCMI reading):
+#   workers  package W  wall W  offset  hottest CPU  CPU / system fans   dB(A)    PSU tone
+#   22       188        368-370 -60     64           4,800 / 2,975       -65.47   442 Hz
+#   22       188        368-370 -80     66           4,600 / 2,525       -65.09   729 Hz, in the band
+#   33       245        457     -60     68-69        5,700-5,900 / 4,925-5,125  -57.27  817-820 Hz (A/B/A mean)
+#   33       246        457     -80     70           5,700 / 4,750       -58.21   820 Hz
+#   44       296        534-538 -60     72           6,500 / 6,225       -50.30   920 Hz
+#   44       296        534-538 -80     74           6,300 / 5,900       -53.01   899 Hz
+#   (44 at -16: 69C, -48.30; at Performance: 69C, -45.97; no thermal throttling at any offset.)
+# What decides it is the power supply: its fan's tone rises with its load and crosses the ringing band between ~370 and
+# ~530 W at the wall (at the band's top edge at 457 W). Below ~400 W, -60 keeps the tone down (v2.4); above it the tone
+# is at or past the band's top at any offset, the
+# BMC's own curve already drives the fans hard, and -60 only adds fan noise (2.7 dB(A) at full load for 2C). The CPU
+# package power (RAPL) tracks the PSU load whatever the room or the job, so it is the trigger, not threads or temps.
+#   QUIET -> BUSY:  busy threads as in v2.4, and package power under BUSY_PKG_MAX (215 W; 22 workers draw 188 W).
+#   The crossover sits between 188 W (-60 better: 0.4 dB(A) and no whine) and 245 W (-80 better by ~1 dB(A)).
+#   BUSY -> QUIET:  also at HEAVY_PKG or more for HEAVY_READINGS readings in a row (~5 min). Between the two nothing
+#                   changes, and the 5 min keep a job whose power swings across the line every few minutes at -60
+#                   instead of stepping with it (the harness's case 26 stepped every 3 min with 2 readings).
+#   A full load from idle stays at -80 (the package power passes BUSY_PKG_MAX within a reading); CPU_UP (78) still takes
+#   it to -16 in a warm room. Without the RAPL counters v2.4's rule applies.
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
@@ -78,6 +100,9 @@ SIO_CLIMB = 77                   # SIO1 at or above this and climbing under load
 SIO_BUSY, SIO_BACK_BUSY = 74, 77  # v2.3: climbing under load from 74 -> BUSY; BUSY -> QUIET at idle with SIO1 <= 77
 IDLE_THREADS = 1.0               # v2.3: idle = less than one logical CPU's worth busy (ryuji idles at ~0.05 of 88)
 BUSY_THREADS = 2.0               # v2.4: QUIET -> BUSY at this many busy logical CPUs (2 readings)
+BUSY_PKG_MAX, HEAVY_PKG = 215, 235   # v2.5: package W (both CPUs): BUSY only under 215 W; back to QUIET at 235 W+
+HEAVY_READINGS = 5                   # v2.5: ... for this many readings in a row (~5 min)
+RAPL = ('/sys/class/powercap/intel-rapl:0', '/sys/class/powercap/intel-rapl:1')
 CPU_UP, VR_UP, DIMM_UP = 78, 90, 75
 VR_COOL, DIMM_COOL = 80, 65
 SIO_EMERG, CPU_EMERG = 83, 83   # v2.4: CPU 86 -> 83 (E5-2696 v4: BMC critical 85)
@@ -161,6 +186,23 @@ def busy_threads():
     total = sum(d)
     return round((total - d[3] - d[4]) / total * n, 2) if total > 0 else None
 
+_rapl = None
+def pkg_watts():
+    """v2.5: both CPU packages' power since the last call (RAPL energy counters, wrap-safe); None on the first call"""
+    global _rapl
+    now = time.monotonic()
+    e = [int(open(f'{z}/energy_uj').read()) for z in RAPL]
+    prev, _rapl = _rapl, (now, e)
+    if prev is None or now - prev[0] <= 0:
+        return None
+    total = 0
+    for z, a, b in zip(RAPL, prev[1], e):
+        d = b - a
+        if d < 0:
+            d += int(open(f'{z}/max_energy_range_uj').read())
+        total += d
+    return round(total / 1e6 / (now - prev[0]), 1)
+
 def wanted(level, t, hot, cool, now, why):
     """the level the current readings ask for; stepping down only after the HOLD time of cool readings.
     why = what put us at WARM ('load' or 'hot')."""
@@ -179,6 +221,8 @@ def wanted(level, t, hot, cool, now, why):
     if level == BUSY:
         if hot.get('load', 0) >= 2 or hot.get('sio', 0) >= 2 or hot.get('perf_other', 0) >= 2:
             return WARM
+        if hot.get('heavy', 0) >= HEAVY_READINGS:
+            return QUIET    # v2.5: past the PSU's band and the BMC already drives the fans hard; -60 only adds noise
         return QUIET if now - cool.get('busy', now) >= HOLD['load'] else BUSY
     if level == PERF:
         return WARM if now - cool.get('perf', now) >= HOLD[PERF] else PERF
@@ -225,11 +269,16 @@ def main():
             threads = busy_threads()
         except (OSError, ValueError, IndexError):
             threads = None
+        try:
+            pkg = pkg_watts()
+        except (OSError, ValueError):
+            pkg = None
         sio_hist.append(t['sio']); del sio_hist[:-6]          # last 6 readings (5 min)
         climbing = t['sio'] >= SIO_CLIMB and len(sio_hist) == 6 and t['sio'] - sio_hist[0] >= 1 and t['cpu'] >= LOAD_UP
         hot['load'] = hot.get('load', 0) + 1 if climbing else 0
         if threads is not None:      # v2.4: a sustained load by busy threads (SIO1 no longer climbs under load)
-            busy = threads >= BUSY_THREADS
+            busy = threads >= BUSY_THREADS and (pkg is None or pkg < BUSY_PKG_MAX)     # v2.5: not a heavy load
+            hot['heavy'] = hot.get('heavy', 0) + 1 if threads >= BUSY_THREADS and pkg is not None and pkg >= HEAVY_PKG else 0
         else:                        # v2.3 rule as the fallback when /proc/stat cannot be read
             busy = t['sio'] >= SIO_BUSY and len(sio_hist) == 6 and t['sio'] - sio_hist[0] >= 1 and t['cpu'] >= LOAD_UP
         hot['busy'] = hot.get('busy', 0) + 1 if busy else 0
@@ -256,7 +305,7 @@ def main():
                     why = 'hot' if hot.get('sio', 0) >= 2 and hot.get('load', 0) < 2 else 'load'
                 got = bmc('set', want)
                 log(f'offset {level} -> {got} (sio={t["sio"]} cpu={t["cpu"]} vr={t["vr"]} dimm={t["dimm"]}'
-                    f' threads={threads}{"; " + why if want == WARM and level in (QUIET, BUSY) else ""})')
+                    f' threads={threads} pkg={pkg}{"; " + why if want == WARM and level in (QUIET, BUSY) else ""})')
                 level, last_verify = got, now
                 cool.clear(); hot.clear()   # every level starts its own counts
             except Exception as ex:
@@ -271,7 +320,7 @@ def main():
             except Exception as ex:
                 log(f'BMC check failed: {ex!r}')
         with open(STATE, 'w') as f:
-            json.dump({'time': time.strftime('%F %T'), 'offset': level, **t, 'threads': threads}, f)
+            json.dump({'time': time.strftime('%F %T'), 'offset': level, **t, 'threads': threads, 'pkg_w': pkg}, f)
         time.sleep(INTERVAL)
 
 if __name__ == '__main__':
