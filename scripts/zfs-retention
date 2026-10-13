@@ -1,5 +1,5 @@
 #!/bin/bash
-# GFS retention for mementos's hourly @<epoch> snapshots - the same policy as tinynas's retention script:
+# GFS retention for the hourly @<epoch> snapshots - the same policy as tinynas's retention script (copied from mementos):
 # per dataset keep the newest HOURLY snapshots, plus the newest snapshot of each of the last WEEKLY ISO weeks,
 # MONTHLY months and YEARLY years that have snapshots. Only @<digits> names are touched (@cutover etc. stay).
 # Datasets: everything under the roots in /etc/zfs-snapshot-targets. Usage: DRY_RUN=1 zfs-retention

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Hourly @<epoch> snapshots on mementos (same naming as tinynas's snapshot script, so syncoid pulls ride them).
+# Hourly @<epoch> snapshots (same naming as tinynas's snapshot script and mementos's zfs-snapshot).
 # Each root in /etc/zfs-snapshot-targets is snapshotted recursively in one atomic operation.
 set -uo pipefail
 TARGETS=/etc/zfs-snapshot-targets

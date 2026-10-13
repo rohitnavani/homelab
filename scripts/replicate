@@ -44,7 +44,11 @@ for entry in "${SOURCES[@]}"; do
     fail=1
   fi
 done
-zfs inherit -r mountpoint "$DEST" >> "$LOG" 2>&1
-/usr/local/bin/prune-replica "$DEST" >> "$LOG" 2>&1 || fail=1
+# Mount fixes and pruning cover only the replica trees (backupPool/<source pool>), never this box's own
+# backupPool/logs, which is mounted at /var/log and has its own GFS retention (zfs-retention).
+for root in $(for e in "${SOURCES[@]}"; do read -r _ ds <<< "$e"; echo "${ds%%/*}"; done | sort -u); do
+  zfs inherit -r mountpoint "$DEST/$root" >> "$LOG" 2>&1
+  /usr/local/bin/prune-replica "$DEST/$root" >> "$LOG" 2>&1 || fail=1
+done
 echo "--- $(date '+%F %T') - done (fail=$fail) ---" >> "$LOG"
 exit $fail
