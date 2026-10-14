@@ -23,6 +23,7 @@ SOURCES=(
   "backuppull@10.0.0.10 dataPool/docker"
   "backuppull@10.0.0.10 dataPool/docker-compose/nextcloud-aio"
   "backuppull@10.0.0.10 vmPool/logs"
+  "backuppull@10.0.0.10 dataPool/labShare"   # lab NFS bulk share, all of it (Rohit 2026-10-14)
 )
 
 mkdir -p "$LOGDIR"

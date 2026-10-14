@@ -42,8 +42,8 @@ covers the whole lab.
 |---|---|---|---|
 | tinynas | `homePool` | 8x 4 TB raidz2; SLOG and L2ARC on partitions of one NVMe | Media, game servers, Samba, VM images, the iSCSI zvol, logs and `/etc` backups |
 | tinynas | `nvmePool` | One NVMe partition (no redundancy) | Minecraft servers, SSD-backed VM images |
-| mementos | `vmPool` | 24x 1.2 TB as 12 two-way mirrors; SLOG and L2ARC on a rear SSD | VMs and VM disks |
-| mementos | `dataPool` | 12x 8 TB raidz2 on the MD1200; SLOG on a rear SSD | Nextcloud (files, database and app), bulk storage |
+| mementos | `vmPool` | 24x 1.2 TB as 12 two-way mirrors; SLOG and L2ARC on a rear SSD | VMs and VM disks; the lab's fast NFS share `vmPool/labShare` |
+| mementos | `dataPool` | 12x 8 TB raidz2 on the MD1200; SLOG on a rear SSD | Nextcloud (files, database and app), bulk storage; the lab's bulk NFS share `dataPool/labShare` |
 | ryuji | `computePool` | 6x 4 TB as 3 two-way mirrors | Compute working storage (empty so far) and logs |
 | sojiro | `backupPool` | 2 mirrors (2 TB + 4 TB pairs) | Replicas of tinynas and mementos |
 | makoto | `backupPool` | 3x 1 TB SATA SSD, striped (no redundancy) | Logs; was the tinynas replica target until 2026-09-26 |
@@ -56,8 +56,8 @@ every log line lands in a snapshot.
 
 - tinynas runs `scripts/snapshot` and `scripts/retention` over all of its datasets.
 - mementos, ryuji, sojiro and makoto run `scripts/zfs-snapshot` (hourly) and `scripts/zfs-retention` (01:00) from
-  `/usr/local/sbin` over the dataset roots listed in `/etc/zfs-snapshot-targets`: Nextcloud, Docker, the VMs and
-  the logs on mementos, only the logs dataset on the others.
+  `/usr/local/sbin` over the dataset roots listed in `/etc/zfs-snapshot-targets`: Nextcloud, Docker, the VMs,
+  the logs and the two `labShare` NFS shares on mementos, only the logs dataset on the others.
 - sojiro's `scripts/replicate` (03:00) pulls replicas into `backupPool/<source pool>/...` with syncoid and prunes them
   with `scripts/prune-replica` (72 hourly, 14 daily, 8 weekly, 6 monthly), independent of the source's retention.
   Its mountpoint reset and pruning run per replica tree, so they never touch sojiro's own `backupPool/logs`.
