@@ -89,6 +89,7 @@ specific to this lab.
     ├── drivecheck.cron         # /etc/cron.d/drivecheck: check 00:00, short self-tests Sat 22:00, long the 1st 12:00
     │                           #   (tinynas runs the same jobs from root's crontab)
     ├── nextcloud-update        # Nextcloud AIO file permissions and rescan
+    ├── newvm                   # Interactive: creates a KVM guest in its own ZFS dataset (mementos; not cron)
     ├── prune-replica           # GFS pruning of received replicas, run by replicate (sojiro)
     ├── replicate               # Nightly syncoid pull of tinynas and mementos datasets (sojiro)
     ├── retention               # GFS snapshot pruning (tinynas)
@@ -98,5 +99,17 @@ specific to this lab.
     ├── zfs-snapshot            # Hourly snapshots of /etc/zfs-snapshot-targets (same hosts; /usr/local/sbin)
     └── zfs_metrics             # ZFS pool and I/O metrics for Prometheus (tinynas, mementos, ryuji)
 ```
+
+## VMs
+
+`scripts/newvm` creates a libvirt/KVM guest in its own ZFS dataset `vmPool/kvm/<name>` on mementos (recordsize 64K,
+holding the qcow2 and a copy of its XML), from ISOs in `vmPool/kvm/img`, bridged onto the LAN through `br0`, with VNC on
+the next free port from 5900. Profiles: `win11`, `2k22`, `2k25` (Secure Boot with Microsoft keys, TPM 2.0, the virtio-win
+CD), `ubuntu`, `rocky` (plain UEFI; Rocky 10 needs AVX2, which mementos's Ivy Bridge Xeons lack) and `iso` (any ISO).
+Install it to `/usr/local/bin` with the symlinks `newwin11`, `new2k22`, `new2k25`, `newubuntu` and `newrocky`, which pick
+the profile. It replaced tinynas's `~/newwin11`, `~/new2k22` and `~/new2k25` on 2026-10-06.
+
+To reuse it elsewhere: it needs libvirt, virtinst, ovmf and swtpm, a `<pool>/kvm` dataset with an `img` folder of ISOs
+(the ISO file names are in the profile table near the top), and a `br0` bridge.
 
 Not in the repo: Nextcloud AIO, cloudflared, Jellyfin and the game servers.

@@ -1,0 +1,151 @@
+#!/bin/bash
+# newvm - create a KVM guest in its own ZFS dataset (one dataset per VM).
+#
+#   newvm [win11|2k22|2k25|ubuntu|rocky|iso]
+#   newwin11, new2k22, new2k25, newubuntu, newrocky are symlinks that pick the profile.
+#
+# Each VM gets <pool>/kvm/<name> (recordsize 64K = qcow2 cluster size) holding
+# <name>.qcow2 and a copy of its libvirt XML. Bridged onto the LAN via br0, VNC on 0.0.0.0.
+# ISOs come from <pool>/kvm/img. Works on mementos (vmPool/kvm) and tinynas (homePool/kvm).
+# virt-install registers a libvirt storage pool for each directory it uses (one per VM,
+# plus "img"); that's normal and is how tinynas ended up with its pools.
+set -euo pipefail
+
+V="sudo virsh -c qemu:///system"
+
+# where VMs live on this host
+BASE=
+for b in vmPool/kvm homePool/kvm; do
+  if zfs list -H -o name "$b" >/dev/null 2>&1; then BASE=$b; break; fi
+done
+[ -n "$BASE" ] || { echo "no vmPool/kvm or homePool/kvm dataset on $(hostname)"; exit 1; }
+MP=$(zfs get -H -o value mountpoint "$BASE")
+IMG=$MP/img
+VIRTIO=$IMG/virtio-win.iso
+
+# profile from the command name, else the first argument, else ask
+case "$(basename "$0")" in
+  newwin11)  profile=win11 ;;
+  new2k22)   profile=2k22 ;;
+  new2k25)   profile=2k25 ;;
+  newubuntu) profile=ubuntu ;;
+  newrocky)  profile=rocky ;;
+  *)         profile=${1:-} ;;
+esac
+[ -n "$profile" ] || read -p "OS? (win11 / 2k22 / 2k25 / ubuntu / rocky / iso): " profile
+
+windows=no
+case "$profile" in
+  win11)  osinfo=win11;       iso=Win11_25H2.iso;        ram=8192; cpu=4; size=64; windows=yes ;;
+  2k22)   osinfo=win2k22;     iso=2k22.iso;              ram=8192; cpu=4; size=80; windows=yes ;;
+  2k25)   osinfo=win2k25;     iso=2k25.iso;              ram=8192; cpu=4; size=80; windows=yes ;;
+  ubuntu) osinfo=ubuntu24.04; iso=UbuntuServer24-04.iso; ram=4096; cpu=2; size=32 ;;
+  rocky)  osinfo=rhel10.0;    iso=Rocky10.iso;           ram=4096; cpu=2; size=32 ;;
+  iso)    osinfo=;            iso=;                      ram=4096; cpu=2; size=32 ;;
+  *)      echo "unknown OS '$profile' (win11 / 2k22 / 2k25 / ubuntu / rocky / iso)"; exit 1 ;;
+esac
+
+# Rocky/RHEL 10 need an x86-64-v3 CPU (AVX2); mementos' Ivy Bridge Xeons don't have it
+if [ "$profile" = rocky ] && ! grep -qw avx2 /proc/cpuinfo; then
+  echo "Rocky 10 needs a CPU with AVX2, and $(hostname) doesn't have one."
+  echo "Use a Rocky 9 ISO with 'newvm iso', or build this one on tinynas."
+  exit 1
+fi
+
+if [ "$profile" = iso ]; then
+  echo "ISOs in $IMG:"; ls -1 "$IMG" | grep -iE '\.iso$' | sed 's/^/  /'
+  read -p "ISO file?: " iso
+  read -p "OS id? (blank = detect from the ISO; 'virt-install --osinfo list' shows them): " osinfo
+  [[ $osinfo == win* ]] && windows=yes
+fi
+[ -f "$IMG/$iso" ] || { echo "ISO not found: $IMG/$iso"; exit 1; }
+
+# lowest VNC port from 5900 up that no VM is configured for and nothing listens on
+next_vnc_port() {
+  local used p=5900
+  used=$( {
+    for d in $($V list --all --name); do
+      $V dumpxml "$d" | grep -oP "<graphics type='vnc' port='\K[0-9]+" || true
+    done
+    ss -Htln | awk '{print $4}' | grep -oE '[0-9]+$' || true
+  } | sort -un )
+  while grep -qx "$p" <<<"$used"; do p=$((p + 1)); done
+  echo "$p"
+}
+num() { [[ $2 =~ ^[0-9]+$ ]] || { echo "$1 must be a number"; exit 1; }; }
+pool_for_dir() {
+  local p
+  for p in $($V pool-list --all --name); do
+    [ "$($V pool-dumpxml "$p" | grep -oP '<path>\K[^<]+')" = "$1" ] && echo "$p"
+  done
+  return 0
+}
+
+read -p "Name?: " name
+[[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "name: letters, digits, . _ - only"; exit 1; }
+$V dominfo "$name" >/dev/null 2>&1 && { echo "a VM named $name already exists"; exit 1; }
+zfs list -H "$BASE/$name" >/dev/null 2>&1 && { echo "$BASE/$name already exists"; exit 1; }
+read -p "RAM (in MB)? [$ram]: " a;      ram=${a:-$ram};   num RAM "$ram"
+read -p "vCPUs? [$cpu]: " a;            cpu=${a:-$cpu};   num vCPUs "$cpu"
+read -p "Disk size (in G)? [$size]: " a; size=${a:-$size}; num "Disk size" "$size"
+port=$(next_vnc_port)
+read -p "VNC port? [$port]: " a;        port=${a:-$port}; num "VNC port" "$port"
+read -p "Start on boot? [y/N]: " a;     autostart=${a:-n}
+
+DS=$BASE/$name
+DIR=$MP/$name
+DISK=$DIR/$name.qcow2
+args=(--name "$name" --memory "$ram" --vcpus "$cpu"
+      --disk "path=$DISK,size=$size,format=qcow2,bus=virtio,discard=unmap"
+      --osinfo "${osinfo:-detect=on,require=off}"
+      --machine q35
+      --cdrom "$IMG/$iso"
+      --network bridge=br0,model=virtio
+      --graphics "vnc,listen=0.0.0.0,port=$port"
+      --channel unix,target.type=virtio,name=org.qemu.guest_agent.0
+      --noautoconsole)
+if [ "$windows" = yes ]; then
+  # Secure Boot with Microsoft keys + TPM 2.0, and the virtio driver CD for setup
+  args+=(--boot "uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=yes"
+         --tpm backend.type=emulator,backend.version=2.0,model=tpm-crb
+         --disk "path=$VIRTIO,device=cdrom")
+else
+  # plain UEFI: any ISO boots, and DKMS modules (zfs, nvidia) don't need MOK signing
+  args+=(--boot "uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=no")
+fi
+
+sudo zfs create -o recordsize=64K "$DS"
+if ! sudo virt-install "${args[@]}"; then
+  if ! $V dominfo "$name" >/dev/null 2>&1; then
+    echo "!! creating $name failed - removing $DS"
+    for p in $(pool_for_dir "$DIR"); do $V pool-destroy "$p" >/dev/null 2>&1 || true; $V pool-undefine "$p" >/dev/null; done
+    sudo zfs destroy -r "$DS"
+  fi
+  exit 1
+fi
+
+if [ "$windows" = yes ]; then
+  # Windows ISOs only wait a few seconds at "Press any key to boot from CD"; press it for you
+  for _ in $(seq 1 15); do sleep 1; $V send-key "$name" KEY_ENTER >/dev/null 2>&1 || true; done
+fi
+
+[[ $autostart == [yY]* ]] && $V autostart "$name" >/dev/null
+$V dumpxml --inactive "$name" | sudo tee "$DIR/$name.xml" >/dev/null
+mac=$($V domiflist "$name" | awk '$3 == "br0" {print $5}')
+ip=$(ip -4 -o addr show br0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+
+echo
+echo "Created $name on $(hostname)"
+echo "  dataset : $DS ($DIR)"
+echo "  disk    : $DISK (${size}G)"
+echo "  console : VNC ${ip:-$(hostname -I | awk '{print $1}')}:$port"
+echo "  MAC     : $mac (add a DHCP reservation if it needs a fixed IP)"
+echo "  autostart: $([[ $autostart == [yY]* ]] && echo on || echo off)"
+if [ "$windows" = yes ]; then
+  echo
+  echo "Windows setup:"
+  echo "  - Enter was pressed for the CD boot prompt; if VNC shows the UEFI boot menu instead,"
+  echo "    pick the DVD-ROM entry (or sudo virsh reset $name and press a key in VNC)"
+  echo "  - No disks listed? Load driver -> virtio-win CD -> viostor\\<version>\\amd64"
+  echo "  - Afterwards run virtio-win-gt-x64.msi and guest-agent\\qemu-ga-x86_64.msi from that CD"
+fi
