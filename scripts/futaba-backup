@@ -1,0 +1,56 @@
+#!/bin/bash
+# Nightly copy of futaba's service configs onto the lab NFS share (mementos dataPool/labShare, mounted at /dataPool).
+# mementos snapshots labShare hourly with GFS retention and sojiro pulls dataPool/labShare offsite, so each run
+# simply replaces the previous copy (/dataPool/backups/futaba/futaba-configs.tar.gz).
+# Secrets stay off the share: password, token, SNMP community and TLS key values are replaced with <redacted>
+# (the run fails if any unredacted one is left), and cloudflared's token, /etc/letsencrypt (cloudflare.ini),
+# nginx's .htpasswd and the cloudflare-ddns project are not copied. Uptime Kuma was retired 2026-10-15
+# (its final database is in uptime-kuma/ next to the tarball).
+# Runs as rohit from /etc/cron.d/futaba-backup (sudo -n for root-only files); results: journalctl -t futaba-backup
+set -euo pipefail
+DEST=/dataPool/backups/futaba
+W=$(mktemp -d); R=$W/futaba
+log() { logger -t futaba-backup -- "$*"; echo "$(date '+%F %T') $*"; }
+trap 'log "FAILED at line $LINENO"' ERR
+trap 'rm -rf "$W"' EXIT
+redact() {
+  sed -E -e 's/^(\s*-?\s*(smtp_auth_password|password|community|private_key|auth_key|priv_password|api_token|token)\s*:\s*)\S.*$/\1<redacted>/I' \
+         -e 's/^(\s*-\s*GF_SECURITY_ADMIN_PASSWORD=).*/\1<redacted>/'
+}
+put() { mkdir -p "$(dirname "$R$1")"; cat > "$R$1"; chmod 600 "$R$1"; }   # stdin -> $R<path>
+
+# Plain config files rohit can read
+for f in /home/rohit/monitoring/docker-compose.yml /home/rohit/monitoring/prometheus/prometheus.yml \
+         /home/rohit/monitoring/blackbox/config.yml /home/rohit/monitoring/snmp-exporter/snmp.yml \
+         /home/rohit/homepage/docker-compose.yml /home/rohit/homepage/glance.yml \
+         /home/rohit/adguard/docker-compose.yml /home/rohit/resume-site/docker-compose.yml \
+         /etc/nginx/sites-available/*.conf /etc/cockpit/cockpit.conf /etc/systemd/system/cockpit.socket.d/listen.conf \
+         /usr/local/bin/resume-uptime /usr/local/bin/futaba-backup /etc/cron.d/resume-uptime /etc/cron.d/futaba-backup; do
+  redact < "$f" | put "$f"
+done
+for d in /home/rohit/monitoring/prometheus/rules /home/rohit/monitoring/grafana/provisioning /home/rohit/resume-site/public; do
+  mkdir -p "$R$(dirname "$d")"; cp -a "$d" "$R$(dirname "$d")/"
+done
+# Root-only files
+sudo -n cat /home/rohit/monitoring/alertmanager/alertmanager.yml | redact | put /home/rohit/monitoring/alertmanager/alertmanager.yml
+sudo -n cat /home/rohit/adguard/conf/AdGuardHome.yaml | redact | put /home/rohit/adguard/conf/AdGuardHome.yaml
+# Grafana's SQLite database: consistent copy through the backup API (the Docker volume is root-only)
+mkdir -p "$R/grafana"
+sudo -n python3 -I - "$R/grafana/grafana.db" <<'PY'
+import sqlite3, sys
+src = sqlite3.connect("file:/var/lib/docker/volumes/monitoring_grafana_data/_data/grafana.db?mode=ro", uri=True)
+dst = sqlite3.connect(sys.argv[1]); src.backup(dst)
+assert dst.execute("pragma integrity_check").fetchone()[0] == "ok", "grafana copy failed integrity_check"
+dst.close(); src.close()
+PY
+sudo -n chown "$(id -u):$(id -g)" "$R/grafana/grafana.db"
+
+# Refuse to write anything if a secret value slipped through
+if grep -rInE '^\s*-?\s*(smtp_auth_password|password|community|private_key|auth_key|priv_password|api_token|token)\s*:\s*[^<[:space:]]' \
+     --exclude=grafana.db "$R" >/dev/null; then
+  log "secret value left unredacted; nothing written"; exit 1
+fi
+
+tar -C "$W" -czf "$DEST/.futaba-configs.tar.gz.tmp" futaba
+mv -f "$DEST/.futaba-configs.tar.gz.tmp" "$DEST/futaba-configs.tar.gz"
+log "configs: $(tar -tzf "$DEST/futaba-configs.tar.gz" | grep -vc '/$') files, $(stat -c %s "$DEST/futaba-configs.tar.gz") bytes"

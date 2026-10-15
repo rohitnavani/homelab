@@ -1,0 +1,24 @@
+  - job_name: 'blackbox'
+    # Public sites probed through Cloudflare like a visitor (Jellyfin is direct). Added 2026-10-14.
+    scrape_interval: 60s
+    scrape_timeout: 15s
+    metrics_path: /probe
+    static_configs:
+      - targets:
+          - 'https://rohitnavani.com'
+          - 'https://nextcloud.rohitnavani.com/status.php'
+          - 'https://ha.rohitnavani.com'
+          - 'https://jellyfin.rohitnavani.com/health'
+          - 'https://cockpit.rohitnavani.com'
+        labels: {module: http_2xx}
+      - targets: ['https://homelab.rohitnavani.com']
+        labels: {module: http_2xx_or_401}
+    relabel_configs:
+      - source_labels: [module]
+        target_label: __param_module
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter:9115'

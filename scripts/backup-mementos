@@ -1,0 +1,36 @@
+#!/bin/bash
+# Onsite backup of Nextcloud from mementos: its files, the Docker data-root (AIO's database and volumes)
+# and the AIO compose dir, pulled into homePool/backups/mementos/<pool>/<dataset> (read-only copies).
+# Pull, never push: mementos accepts this key only from 10.0.0.5, for the unprivileged backuppull user,
+# which may only `zfs send`/`hold` these datasets. Rides mementos's hourly @<epoch> snapshots.
+set -uo pipefail
+SRC="backuppull@10.0.0.10"
+KEY="/root/.ssh/id_ed25519_backuppull"
+DEST="homePool/backups/mementos"
+LOGDIR="/var/log/replication"
+DATASETS=(
+  dataPool/nextcloud
+  vmPool/docker
+  vmPool/docker-compose/nextcloud-aio
+)
+
+mkdir -p "$LOGDIR"
+LOG="$LOGDIR/backup-mementos-$(date +%Y%m%d).log"
+exec 9>/var/lock/backup-mementos.lock
+flock -n 9 || { echo "$(date '+%F %T') - already running, skipping" >> "$LOG"; exit 0; }
+
+fail=0
+echo "--- $(date '+%F %T') - start ---" >> "$LOG"
+for ds in "${DATASETS[@]}"; do
+  if syncoid --no-sync-snap --recursive --quiet --no-privilege-elevation --sshkey "$KEY" \
+       "$SRC:$ds" "$DEST/$ds" >> "$LOG" 2>&1; then
+    echo "$(date '+%F %T') - OK $ds" >> "$LOG"
+  else
+    echo "$(date '+%F %T') - FAILED $ds" >> "$LOG"
+    fail=1
+  fi
+done
+zfs inherit -r mountpoint "$DEST" >> "$LOG" 2>&1
+/usr/local/sbin/prune-replica "$DEST" >> "$LOG" 2>&1 || fail=1
+echo "--- $(date '+%F %T') - done (fail=$fail) ---" >> "$LOG"
+exit $fail

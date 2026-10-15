@@ -1,1 +1,8 @@
-sudo chown -R 33:33 /pool/nextcloud/data; docker exec --user www-data -it nextcloud-aio-nextcloud php occ files:scan --all
+#!/bin/bash
+# Nextcloud AIO on mementos: give www-data the user files and rescan them. Runs nightly at 00:00 from root's
+# crontab (mementos has the same line inline). It skips when dataPool's Nextcloud data mount is missing: Docker no
+# longer depends on the MD1200 shelf (data-root on vmPool since 2026-10-14), and a scan of an empty folder would
+# drop every file's ID, shares and tags from the database.
+mountpoint -q /pool/nextcloud/data || exit 0
+chown -R 33:33 /pool/nextcloud/data
+docker exec --user www-data nextcloud-aio-nextcloud php occ files:scan --all

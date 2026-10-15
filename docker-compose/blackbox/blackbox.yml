@@ -1,0 +1,19 @@
+groups:
+  - name: blackbox
+    rules:
+      # A public site stopped answering (probed every 60s from futaba through Cloudflare; Jellyfin direct)
+      - alert: SiteDown
+        expr: probe_success{job="blackbox"} == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Site down: {{ $labels.instance }}"
+          description: "The blackbox probe from futaba ({{ $labels.module }}) has failed for 5m. Check the Cloudflare tunnel, the nginx host and the app behind it."
+      # TLS certificate close to expiry (Cloudflare's edge certs; Jellyfin's certbot cert on tinynas)
+      - alert: CertExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry{job="blackbox"} - time()) / 86400 < 14
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'TLS cert for {{ $labels.instance }} expires in {{ $value | printf "%.0f" }} days'
+          description: "Renewal should happen 30 days before expiry. Jellyfin renews with snap certbot on tinynas; Cloudflare renews its edge certificates itself."

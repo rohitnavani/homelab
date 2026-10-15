@@ -1,0 +1,35 @@
+#!/usr/bin/python3
+# Writes TinyNAS's uptime for the rohitnavani.com resume site (index.html shows "TinyNAS Uptime").
+# The site runs on futaba since 2026-10-14, so the value comes from futaba's Prometheus (node_exporter on
+# tinynas, instance 10.0.0.5), formatted like `uptime -p`. Writes "offline" when tinynas is down or unknown.
+import json, os, tempfile, urllib.parse, urllib.request
+
+PROM = "http://127.0.0.1:9090/api/v1/query"
+OUT = "/home/rohit/resume-site/public/uptime.json"
+
+def query(expr):
+    url = PROM + "?" + urllib.parse.urlencode({"query": expr})
+    with urllib.request.urlopen(url, timeout=5) as r:
+        res = json.load(r)["data"]["result"]
+    return float(res[0]["value"][1]) if res else None
+
+def fmt(seconds):
+    left, parts = int(seconds // 60), []
+    for name, size in (("week", 10080), ("day", 1440), ("hour", 60), ("minute", 1)):
+        n, left = divmod(left, size)
+        if n:
+            parts.append(f"{n} {name}{'' if n == 1 else 's'}")
+    return ", ".join(parts) or "0 minutes"
+
+try:
+    up = query('up{job="node",instance="10.0.0.5"}')
+    secs = query('time() - node_boot_time_seconds{job="node",instance="10.0.0.5"}')
+    text = fmt(secs) if up == 1 and secs is not None else "offline"
+except Exception:
+    text = "offline"
+
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(OUT), prefix=".uptime.")
+with os.fdopen(fd, "w") as f:
+    json.dump({"uptime": text}, f)
+os.chmod(tmp, 0o644)
+os.replace(tmp, OUT)

@@ -1,0 +1,16 @@
+# Blackbox exporter modules for Prometheus job 'blackbox' on futaba. Added 2026-10-14.
+modules:
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      preferred_ip_protocol: ip4
+      fail_if_not_ssl: true
+  # homelab.rohitnavani.com sits behind nginx basic auth, so a 401 means it answers.
+  http_2xx_or_401:
+    prober: http
+    timeout: 10s
+    http:
+      preferred_ip_protocol: ip4
+      fail_if_not_ssl: true
+      valid_status_codes: [200, 401]

@@ -1,9 +1,11 @@
+# rohitnavani.com resume site on futaba (moved from tinynas 2026-10-14), behind futaba's host nginx
+# (/etc/nginx/sites-available/rohitnavani.com.conf). public/uptime.json comes from /usr/local/bin/resume-uptime.
 services:
   resume-site:
-    image: nginx:alpine
+    image: nginx:alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
     container_name: rohit-resume-container
     restart: unless-stopped
     ports:
-      - "8081:80"
+      - "127.0.0.1:8081:80"
     volumes:
-      - ${COMPOSE_BASE_PATH}/resume-site/public:/usr/share/nginx/html:ro
+      - ./public:/usr/share/nginx/html:ro

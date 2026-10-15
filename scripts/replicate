@@ -20,8 +20,8 @@ SOURCES=(
   "root@10.0.0.5 nvmePool/mcserver4"
   # mementos (Nextcloud since 2026-10-05: files, Docker data-root with AIO's database, AIO compose dir; its logs)
   "backuppull@10.0.0.10 dataPool/nextcloud"
-  "backuppull@10.0.0.10 dataPool/docker"
-  "backuppull@10.0.0.10 dataPool/docker-compose/nextcloud-aio"
+  "backuppull@10.0.0.10 vmPool/docker"
+  "backuppull@10.0.0.10 vmPool/docker-compose/nextcloud-aio"
   "backuppull@10.0.0.10 vmPool/logs"
   "backuppull@10.0.0.10 dataPool/labShare"   # lab NFS bulk share, all of it (Rohit 2026-10-14)
 )

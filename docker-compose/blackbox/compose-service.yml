@@ -1,0 +1,9 @@
+  blackbox-exporter:
+    # HTTP/TLS probes of the public sites for job 'blackbox' (replaces Uptime Kuma). Added 2026-10-14.
+    # Pinned to 0.29.0 by digest; bump on purpose.
+    image: prom/blackbox-exporter@sha256:9613f2884689b6fad9f1939f6a3b0388c93a022cfaededb19545b329b5c83dea
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    volumes:
+      - ./blackbox:/etc/blackbox_exporter:ro
+    command: ['--config.file=/etc/blackbox_exporter/config.yml']
