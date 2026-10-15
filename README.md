@@ -89,7 +89,7 @@ specific to this lab.
     ├── drivecheck.cron         # /etc/cron.d/drivecheck: check 00:00, short self-tests Sat 22:00, long the 1st 12:00
     │                           #   (tinynas runs the same jobs from root's crontab)
     ├── nextcloud-update        # Nextcloud AIO file permissions and rescan
-    ├── newvm                   # Interactive: creates a KVM guest in its own ZFS dataset (mementos; not cron)
+    ├── newvm                   # Interactive: creates a KVM guest in its own ZFS dataset (mementos, ryuji; not cron)
     ├── prune-replica           # GFS pruning of received replicas, run by replicate (sojiro)
     ├── replicate               # Nightly syncoid pull of tinynas and mementos datasets (sojiro)
     ├── retention               # GFS snapshot pruning (tinynas)
@@ -102,14 +102,21 @@ specific to this lab.
 
 ## VMs
 
-`scripts/newvm` creates a libvirt/KVM guest in its own ZFS dataset `vmPool/kvm/<name>` on mementos (recordsize 64K,
-holding the qcow2 and a copy of its XML), from ISOs in `vmPool/kvm/img`, bridged onto the LAN through `br0`, with VNC on
+`scripts/newvm` creates a libvirt/KVM guest in its own ZFS dataset `<pool>/kvm/<name>` (recordsize 64K, holding the
+qcow2 and a copy of its XML), from ISOs in `<pool>/kvm/img`, bridged onto the LAN through `br0`, with VNC on
 the next free port from 5900. Profiles: `win11`, `2k22`, `2k25` (Secure Boot with Microsoft keys, TPM 2.0, the virtio-win
 CD), `ubuntu`, `rocky` (plain UEFI; Rocky 10 needs AVX2, which mementos's Ivy Bridge Xeons lack) and `iso` (any ISO).
 Install it to `/usr/local/bin` with the symlinks `newwin11`, `new2k22`, `new2k25`, `newubuntu` and `newrocky`, which pick
 the profile. It replaced tinynas's `~/newwin11`, `~/new2k22` and `~/new2k25` on 2026-10-06.
 
+It uses the first of `vmPool/kvm` (mementos), `computePool/kvm` (ryuji) and `homePool/kvm` (tinynas) that exists, and
+stops early if the `img` folder or `br0` is missing. Installed on mementos and ryuji since 2026-10-14; ryuji still
+needs its `computePool/kvm` dataset, the ISOs and a `br0` bridge before it can build VMs. VMs that need many cores
+or AVX2 (Rocky 10, Kubernetes nodes) belong on ryuji (2x E5-2696 v4, 88 threads); small always-on VMs such as
+2k25-test stay on mementos, next to their storage.
+
 To reuse it elsewhere: it needs libvirt, virtinst, ovmf and swtpm, a `<pool>/kvm` dataset with an `img` folder of ISOs
-(the ISO file names are in the profile table near the top), and a `br0` bridge.
+(the ISO file names are in the profile table near the top), and a `br0` bridge. Set `NEWVM_BASE=<pool>/kvm` (or edit
+the `BASES` list) for a dataset with another name.
 
 Not in the repo: Nextcloud AIO, cloudflared, Jellyfin and the game servers.

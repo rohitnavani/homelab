@@ -6,22 +6,27 @@
 #
 # Each VM gets <pool>/kvm/<name> (recordsize 64K = qcow2 cluster size) holding
 # <name>.qcow2 and a copy of its libvirt XML. Bridged onto the LAN via br0, VNC on 0.0.0.0.
-# ISOs come from <pool>/kvm/img. Works on mementos (vmPool/kvm) and tinynas (homePool/kvm).
+# ISOs come from <pool>/kvm/img. Works on mementos (vmPool/kvm), ryuji (computePool/kvm) and
+# tinynas (homePool/kvm); NEWVM_BASE=<pool>/kvm picks another dataset on other hosts.
+# The host needs a br0 bridge on its LAN NIC.
 # virt-install registers a libvirt storage pool for each directory it uses (one per VM,
 # plus "img"); that's normal and is how tinynas ended up with its pools.
 set -euo pipefail
 
 V="sudo virsh -c qemu:///system"
 
-# where VMs live on this host
+# where VMs live on this host: the first of these datasets that exists
+BASES=${NEWVM_BASE:-"vmPool/kvm computePool/kvm homePool/kvm"}
 BASE=
-for b in vmPool/kvm homePool/kvm; do
+for b in $BASES; do
   if zfs list -H -o name "$b" >/dev/null 2>&1; then BASE=$b; break; fi
 done
-[ -n "$BASE" ] || { echo "no vmPool/kvm or homePool/kvm dataset on $(hostname)"; exit 1; }
+[ -n "$BASE" ] || { echo "none of these datasets exist on $(hostname): $BASES"; exit 1; }
 MP=$(zfs get -H -o value mountpoint "$BASE")
 IMG=$MP/img
 VIRTIO=$IMG/virtio-win.iso
+[ -d "$IMG" ] || { echo "no ISO folder $IMG: create it and copy the ISOs in (mementos has them in /vmPool/kvm/img)"; exit 1; }
+ip link show br0 >/dev/null 2>&1 || { echo "no br0 bridge on $(hostname): VMs here are bridged onto the LAN through br0"; exit 1; }
 
 # profile from the command name, else the first argument, else ask
 case "$(basename "$0")" in
@@ -48,7 +53,7 @@ esac
 # Rocky/RHEL 10 need an x86-64-v3 CPU (AVX2); mementos' Ivy Bridge Xeons don't have it
 if [ "$profile" = rocky ] && ! grep -qw avx2 /proc/cpuinfo; then
   echo "Rocky 10 needs a CPU with AVX2, and $(hostname) doesn't have one."
-  echo "Use a Rocky 9 ISO with 'newvm iso', or build this one on tinynas."
+  echo "Use a Rocky 9 ISO with 'newvm iso', or build this one on ryuji or tinynas."
   exit 1
 fi
 
