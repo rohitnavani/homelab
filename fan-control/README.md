@@ -35,7 +35,7 @@ sg3-utils 1.46, python3-serial 3.5.
 | Rear bays | 2x HGST HUSMM8080ASS20 (800 GB SAS SSD), SLOG for `dataPool` |
 | Storage controllers | Dell H710P mini (internal bays) and Dell H810 (external, to the MD1200), both crossflashed to IT mode; both show as Broadcom/LSI SAS2308 |
 | Fans | 6 system fans (`Fan1`-`Fan6` in IPMI); 10% is about 3,400 rpm, 35% about 7,600 rpm |
-| Power | One PSU installed on purpose (the iDRAC reports PS1 as AC lost; expected) |
+| Power | One working PSU (PS2). PS1 is a unit with a failed fan, left in its bay uncorded as a blank (the R720 needs a PSU or a blank in every bay for its airflow); the iDRAC reports it, expected |
 | Serial adapter | FTDI FT232R USB-UART (USB ID 0403:6001), `/dev/ttyUSB0`, to the MD1200's top EMM |
 
 ### MD1200 shelf (controlled from mementos by `md1200-fan`)
@@ -47,7 +47,7 @@ sg3-utils 1.46, python3-serial 3.5.
 | Drives | 11x Seagate ST8000NM0075 and 1x ST8000NM0185 (8 TB 7.2K SAS), ZFS `dataPool` raidz2 |
 | Fans | No separate fan modules: 2 PSU/cooling modules with 2 fans each, set together as one % |
 | Fan speeds | Measured: 10% 2,330 rpm, 15% 2,800, 20% 3,290, 25% 3,770, 30% 4,250; firmware default about 5,000; thermal ramp about 7,600 |
-| Control path | EMM serial console at 38400 baud, 8N1 (pyserial defaults), from the FTDI adapter on mementos; SES (`sg_ses`) through the H810 shows up as `/dev/sg39` |
+| Control path | EMM serial console at 38400 baud, 8N1 (pyserial defaults), from the FTDI adapter on mementos; SES (`sg_ses`) through the H810: the sg number moves (`/dev/sg39` until 2026-10-13, `/dev/sg38` since), so md1200-fan finds it by type |
 | Slot layout | Slot 0 top left, 3 rows of 4. The hottest drives sit in the middle row, not the top row under mementos |
 
 ### ryuji: Gigabyte MD70-HB0 (runs `ryuji-fan-guard`)
@@ -58,15 +58,19 @@ sg3-utils 1.46, python3-serial 3.5.
 | BMC | Avocent MergePoint, firmware 8.44 (IPMI and web UI; its clock runs on UTC) |
 | CPUs | 2x Intel Xeon E5-2696 v4 since 2026-10-12 (Broadwell-EP, an OEM E5-2699 v4: 22 cores / 44 threads each, 2.2 GHz base, up to 3.7 GHz on a few cores; the BIOS sets 150 W PL1 / 180 W PL2 per package; microcode 0xb000040). The BMC warns at 82C and is critical at 85C for these CPUs. Before: 2x E5-2650 v3 (Haswell-EP, 10 cores, 105 W), which ryuji-fan-guard v2.3 and earlier were tuned for |
 | Memory | 8x 16 GB DDR4-2133 (Kingston 9965640-001), 128 GB |
-| Drives | 6x Toshiba MG04ACA400N (4 TB 7.2K SATA) as three ZFS mirrors (`computePool`, since 2026-10-12), 1x HGST HTS721010A9 (1 TB), 1x Kingston SUV400S (120 GB SSD) |
+| Drives | Since 2026-10-15: 2x Toshiba MG04ACA400N (4 TB 7.2K SATA) as one ZFS mirror (`computePool`; four more went to sojiro), four older MG04ACA (2x 4 TB, 2x 2 TB) in the other front bays, not in use; 1x Kingston SUV400S (120 GB SSD, boot). The 1 TB 2.5-inch HGST in the rear was removed on 2026-10-14 |
+| Power | One FSP Group FSP800-20ERM (800 W, 80 PLUS Platinum, one small fan, no PMBus reading in the BMC). Its fan's tone under load is ryuji's main noise. A second supply (load sharing) was tried 2026-10-14/16: the same at idle, louder at 11 workers, quieter at 22-33 (see the results) |
 | Storage controller | Broadcom/LSI SAS3008 |
 | Fans | `CPU0_FAN`, `CPU1_FAN`, `SYS_FAN1`-`SYS_FAN4` (`SYS_FAN5` not connected). The BMC runs its own curve; the only setting it exposes is a PWM offset (-127 to 127) added to that curve |
 | Limiting sensors | At idle `SIO Temp 1` (BMC warns at 80C, critical 85C), which follows system-fan airflow more than CPU load; under load the CPUs (CPU1 runs ~10C hotter than CPU0 at the same 150 W: 74 vs 63C at full load and -80) |
 
 ### The rack and the room
 
-- One rack in a living room: mementos, the MD1200 and ryuji (and sojiro, a Xeon D-1521
-  backup box with no fan controller) on a CyberPower PDU20SW8FNET on a 20 A circuit. About 700 W at idle.
+- One rack in a living room, bottom to top: the MD1200, mementos, ryuji, then other gear; a CyberPower PDU20SW8FNET
+  on a 20 A circuit with nothing else on it (its NEMA 5-20 plug reaches a 15 A outlet through an adapter). About
+  700 W at idle; 12.9 A at most with everything at full load. sojiro, a Xeon D-1521 backup box with no fan
+  controller, sits behind the rack with its BMC fan offset at -80 (set once with
+  `ryuji-fan-guard/gbt-fan-offset.py`; the BMC keeps it).
 - An AC cools the room. During the 2026-10-04 to 10-06 work it was failing and the room cycled 24-28C;
   the numbers below were measured in that room.
 
@@ -349,3 +353,133 @@ Guard v2.5 live (`v25val`): from idle, a 30 min full load stayed at -80 the whol
 80C, 538 W, -53.00 dB(A)); 22 workers took it to -60 1.6 min in; growing to 44 workers took it back to -80 5 min
 later; four 3 min full-load bursts 4 min apart changed nothing; back to -80 10 idle min after each load. v2.6 keeps
 that logic with the line moved to 160 / 180 W.
+
+## Results, 2026-10-13/16: the final rack (room 22-25C)
+
+The rack in its final form for 72 hours (bottom to top: the MD1200, mementos, ryuji, racked for the first time;
+sojiro about 3 ft behind it), with idle, light, medium, heavy and combined loads. Every step ran as a persistent
+systemd unit on its host, chained across hosts by `testing/fin-gate.py`, with backstops and a load cut on the rack
+current (`testing/pdu-cut.sh`). The mic sat on a mattress about 4 ft from the rack front, so its numbers compare only
+within this run: the idle floor there is -69.5 dB(A) (-70.0 on the quietest night). Rohit's goal for the run: as
+quiet as possible at all times, not audible from the living room or the kitchen (or mistakable for the A/C), with no
+throttling and nothing sitting just under its limit. No thermal throttling and no BMC event in any test.
+
+### ryuji: ryuji-fan-guard v2.6 to v2.10
+
+Light loads, ryuji in the rack (20 min A/B/A holds, load held through, last 10 min against the idle floor):
+
+| Load | -80 | -60 | -40 |
+|---|---|---|---|
+| 2 threads | +2.3 dB, tone 750 Hz at -80 dBFS | +4.3 dB, 636 Hz at -73 | |
+| 4 threads | +4.2 dB, 715 Hz at -79 | +4.1 to +4.9 dB, 592-639 Hz at -72 | +5.8 dB, 609 Hz at -71 |
+| 11 workers | +3.9 dB, 738 Hz at -78 | +6.3 dB, 656 Hz at -70 | +9.1 dB, 560 Hz at -74 |
+
+More system-fan air moves the power supply's whine below the 680-830 Hz band the rack and room ring at, but in the
+rack the fans add more than the whine loses, and Rohit heard the -40 step from the living room. Hence v2.7: -80 under
+any light load.
+
+Drives: at -80 with the CPUs idle the system fans stay at ~1,050 rpm, and random reads (~55 MB/s over the six
+MG04ACA400s) took the hottest from 47 to 50C in 6 min. Performance (~2,200 rpm) held it flat at 49-50C for 30 min; -8
+reached 51C. Hence v2.8 (Performance for a hot data disk); v2.9 counts only the 3.5-inch disks after a spare 2.5-inch
+disk in the CPU exhaust (49C under an 11-worker CPU load, no disk job) triggered it falsely. The live check went to
+Performance 4 min into a soak, held the disks at 50C and came back 14.5 min after it.
+
+Idle offsets (3 min holds against -80 on either side): -127 and -60 0.0 dB, -40 +0.3, -16 +1.1, 0 (Performance) +2.5.
+
+Heavy loads (20 min A/B/A holds at -80 / -127 / -80, last 8 min):
+
+| Workers | dB(A) at -80 / -127 | Hottest CPU | VR | System fans |
+|---|---|---|---|---|
+| 22 | -62.44 / -64.05 (1.6 dB quieter) | 67 / 71C | 71 / 75C | 3,175 / 2,475 rpm |
+| 33 | -56.42 / -60.08 (3.7 dB) | 70 / 75C | 74 / 80C | 4,275-4,750 / 3,875 |
+| 44 | -49.62 / -57.00 (7.4 dB) | 73-74 / 77-78C | 79-81 / 84C | 5,650-6,125 / 4,525 |
+
+Hence v2.10: -127 for a heavy job while the hottest CPU allows. Its first long run, 33 workers for two hours under the
+guard: -127 from 5.5 min in to 6 min after the load, the hottest CPU flat at 75C (76C at most) in every 20 min block,
+VR 80C, 452 W at the wall. A full load stays at -80 (74-76C over 100 min in the combined test).
+
+Those holds ran on two power supplies. ryuji now runs on one, and the same A/B/A on Friday flipped the 22-worker case:
+-80 -61.95 / -127 -60.28 / -80 -62.02 dB(A), because less chassis air warms the lone supply and its tone drops from
+973 Hz (above the band, -74 dBFS) into the band at 809 Hz (-63 dBFS). 33 workers keep a 3.9 dB gain (-53.80 / -57.65 /
+-53.73). Hence v2.11: -127 only from 220 W of package power (about 28 busy threads; 22 workers draw ~190 W, 33 ~250 W).
+
+Friday's validation on one supply, the guard in control (15-20 min holds, against the day's idle floor of about -69.0):
+2 threads +2.4 dB, 4 threads +3.8, 11 workers +5.3 (all at -80), 22 workers at -127 +8.9 (v2.10; v2.11 keeps -80
+there), 33 workers at -127 +12.1, 44 workers +20.1 (back to -80 at 77C, 2.3 min in). No cycling, no throttling.
+
+Two power supplies (both FSP800-20ERM, load sharing) against one: the same at idle over a whole night (+0.06 dB);
+louder at 11 workers on Wednesday (about 3 dB, an evening with house sounds); quieter at 22-33 workers on Friday's
+comparison (2.6-3.4 dB: each supply's fan runs slower, 601-694 Hz at -72..-76 dBFS against 823-858 Hz at -63/-64 with
+one); the same at full load. ryuji runs on one, and the guard is tuned for that.
+
+### mementos: fan-watchdog v4.2 (unchanged)
+
+| Busy threads | Fans (max) | CPU (max) | dB(A) over the floor |
+|---|---|---|---|
+| 0 | 10% | 49-51C | 0 |
+| 6 | 16% (17) | 71C (72) | +1.4 |
+| 12 | 19% (20) | 73C (74) | +1.7 |
+| 18 | 23% (27) | 76C (78) | +2.4 |
+| 24 | 32% (35) | 80C (82) | +4.6 |
+| 36 | 31-32% (41-45 at the onset) | 80C (84-85 at the onset) | +4.3 |
+| 48 | 31% (33) | 80C (81) | +4.2 |
+
+A full load from idle overshoots: the iDRAC's CPU reading lags coretemp by ~40 s, so the fans answer a peak that has
+already passed (2026-10-16, room 24C: 85C and 45% for about a minute, 31% two minutes later). Bursts of 0-18 workers
+take the fans to 26-31% and the unwind is 1% per loop (16 min from 31%); no hunting. A faster unwind (4% per loop once
+everything asks for the floor) was modelled with `testing/mementos-thermal-model.py` and `testing/fw-sim.py` and
+dropped: mementos's real load (1.5-4 busy cores) never takes its fans off 10%.
+
+### Shelf: md1200-fan v3.2 (unchanged)
+
+Idle nights at 10% with the hottest drive at 49-50C (the first night's 13-14% was the warm-up after a cold start).
+Random reads on all 12 drives for 1-2 hours (~120 MB/s) take the hottest from 49-50C to 53C in ~14 min; md1200-fan
+answers with its urgent step (11 -> 16%) and nudges to 19-22%, after which the drives sit at 48-52C. Once, during the
+combined test, the shelf firmware ramped its own fans for a few seconds; md1200-fan took them back.
+
+### Noise per fan level at this spot (idle, A/B/A against the neighbouring references)
+
+| Shelf (vs 15%) | dB | R720 (vs 10%) | dB |
+|---|---|---|---|
+| 10% | -0.6 | 15% / 20% / 25% / 30% | +0.3 / +1.1 / +2.4 / +3.2 |
+| 20% | +0.6 | 35% / 40% / 41% | +5.5 / +9.0 / +7.6 |
+| 25% | +2.1 | 42% / 43% / 44% | +9.9 / +11.3 / +12.4 |
+| 30% / 40% | +3.4 / +7.1 | 45% / 50% | +13.2 / +13.8 |
+
+The R720's loud zone now starts at 42% (blade rate 724-760 Hz, in the ringing band); the 38-40% hump of 10-08 is a
+small bump here.
+
+### Everything at once, and the circuit
+
+ryuji at 44 workers, mementos at 24 then 48, and random reads on every pool for an hour: the rack PDU read 6.1 A at
+idle, 9.1-9.2 with ryuji at full load, 11.2-11.3 with mementos at 24 workers, 12.6-12.8 with everything (12.9 A peak).
+Every temperature stayed inside its limits. At the mic the rack measured -49.0 dB(A), and ryuji alone at full load
+-49.6: its power supply's whine (890-935 Hz) is the sound. The PDU's NEMA 5-20 plug reaches a 15 A outlet through an
+adapter, and 12.6-12.8 A for an hour is past the 80% continuous guideline for it; real use draws about 6 A.
+
+### sojiro
+
+sojiro's BMC (the same Avocent firmware as ryuji's) never takes its CPU fan below 3,100 rpm (3,400 at offset 0), and
+its system fan already sits at its 600 rpm floor. Offset steps at idle: 0 3,400 rpm / 62C, -31 3,300 / 64C, -61 to
+-127 3,100 / 65-67C; the rack mic heard none of it. It runs at -80 (set with `gbt-fan-offset.py`; the BMC keeps it
+through reboots). Load check, a 50 min scrub of its pool: CPU 74C (package 79C, critical 102C), board sensor 72C,
+drives 46C.
+
+### Listening test (Rohit, Thursday evening)
+
+From the living room, mementos at 30% (its high and full-load level) is "pretty audible" and "what high (not full)
+load would sound like", which he accepts; at 20-25% (its medium-load levels) it is lost in the idle rack. ryuji at a
+medium load (11 workers, -80, two supplies at the time) "almost sounds like a small plastic gear spinning very fast"
+(the power supply), and once warm, heard from the floor in front of the rack, it was "the medium load noise i want
+ideally": about +6 dB(A) at this mic.
+### What ryuji can do (2026-10-16, `testing/ryuji-maxbench.sh`)
+
+7-Zip 23.01 (`7z b`, total rating in MIPS): 4,957 on one thread, 9,712 on 2, 17,502 on 4, 32,114 on 8, 44,160 on 11,
+75,253 on 22, 96,470 on 33, 115,367 on 44 (one per core), 151,501 on 66 and 181,403 on all 88. Flat out for 15 minutes
+under the guard it holds 182,000-186,000 with every core at 2.8 GHz (the E5-2696 v4's all-core turbo, ~139 W per
+package, under the 150 W PL1), 519-550 W at the wall, the hottest CPU at 74C (78C at most). The same at Full Speed
+fans: +0.5% (within run-to-run spread), the CPUs 12C cooler, 85 W more at the wall: cooling buys nothing here.
+Memory bandwidth (stress-ng stream, 44 copies): 59.1 GB/s read + 39.4 GB/s write = 98.5 GB/s (8 channels of
+DDR4-2133). openssl 3.0.13 on 88 processes: AES-256-GCM 119 GB/s (one thread 3.45), SHA-256 16.2 GB/s, RSA-2048
+57,961 signs/s. sysbench cpu: 487 events/s on one thread, 24,598 on 88. The standard run for the comparison table
+(`testing/bench-7zip.sh`'s procedure): 4,991 / 113,283 / 174,086 on ryuji, 4,152 / 68,217 / 103,448 on mementos.

@@ -356,6 +356,33 @@ speed about 1C. If one does, a drive-temperature controller with a BIOS hand-bac
   Ryzen 5 9600X in tinynas: 7,644 and 70,305.
 - Recheck once ryuji is back in the rack: the PSU tone and the noise numbers depend on where it sits.
 
+### Done 2026-10-13/16: the final rack (72 h, ryuji racked, room 22-25C)
+- The schedule ran as persistent systemd units on the hosts (`testing/make-units.py`), each gated by
+  `testing/fin-gate.py` on the blocks it depends on (any host, via Prometheus) and refusing after a deadline, with
+  backstop timers at the end of every window. The session running the tests was suspended for hours twice; nothing
+  was lost. The first gate version matched one-shot timers, which stay "active" after they fire, so a block hung in its
+  gate for 8 min: gates now query services only, and the alarm loop (`testing/alarm.sh`) flags a unit stuck in its gate.
+- mementos's load tool no longer reads IPMI while fan-watchdog runs (a second in-band reader can fail one of its reads
+  and send the R720 to iDRAC auto); it reads fan-watchdog's state file, coretemp and RAPL instead.
+- ryuji in the rack behaves unlike ryuji on the bench: at light loads more fan (-60, -40) was louder than -80 at this
+  mic spot, and Rohit heard the -40 step from the living room (guard v2.7, no light-load step). Measure in place.
+- A disk soak found the gap the guard had: with idle CPUs nothing raised the system fans for hot data disks (v2.8). A
+  false trigger from a spare 2.5-inch disk in the CPU exhaust followed within hours (v2.9: 3.5-inch disks only).
+  Disk temperatures are worth watching in every CPU test too.
+- At heavy loads the offset still shifts the BMC's own curve: -127 is 1.6-7.4 dB quieter than -80 from 22 to 44
+  workers (v2.10), held for a 2 h soak at 33 workers with the hottest CPU flat at 75C. Full load stays at -80.
+- A second power supply (load sharing): the same at idle, louder at 11 workers (an evening with house sounds), but
+  2.6-3.4 dB quieter at 22-33 workers. ryuji runs on one, and the guard is tuned for that.
+- The combined full load (everything, every pool read-soaked) ran under an automatic load cut at 14 A; peak 12.9 A.
+- A blind listening test (`testing/mic-r720-listen.sh`: fixed fan levels in 90 s slots on a timetable, the key kept
+  from the listener) ties the mic's numbers to what Rohit hears from the couch and the kitchen. Slots of 15 s are too
+  short to judge small steps; the fans take a few seconds to settle.
+- sojiro joined late (its BMC web login was fixed mid-run): an idle offset step test, then -80, checked under a scrub.
+- On one power supply the 22-worker case flipped (-127 1.7 dB louder: the lone supply warms and its tone drops into
+  the band), so v2.11 raises the -127 line to 220 W. A hardware change can move a controller's crossover: re-measure.
+- `testing/ryuji-maxbench.sh`: what the E5-2696 v4s can do (7-Zip 1-88 threads, 15 min sustained, Full Speed A/B,
+  memory, crypto). Cooling does not limit them: they sit at their 2.8 GHz all-core turbo at any offset.
+
 ## 9. Checklists
 
 **Before:** room flat for 2-3 h (ac-verify); loggers writing; stop rules in the scripts; fallbacks tested; idle

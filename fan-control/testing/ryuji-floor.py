@@ -42,6 +42,19 @@ FULL = len({tuple(l.split(',')) for l in subprocess.run(['lscpu', '-p=CORE,SOCKE
             .stdout.splitlines() if not l.startswith('#')}) or 20   # physical cores
 STEPS = [(0, 10), (4, 6), (FULL, 6)]
 LOW = 'LOW'   # resolved at run time: the lowest offset (-127, then -100) that has not hit the fan floor
+
+
+def seq(steps):
+    """2026-10-13: a designed burst sequence [(workers, minutes)] as guard-controlled phases (hunting check)"""
+    return [(f'b{i:02d}_{w}t', None, w, m) for i, (w, m) in enumerate(steps)]
+
+
+BURST_MED = [(11, 2), (0, 1.5), (4, 3), (11, 1), (0, 0.5), (2, 4), (11, 5), (0, 2), (4, 1.5), (11, 3), (0, 3), (2, 1.5),
+             (11, 2)]
+BURST_ALL = [(44, 1.5), (0, 2), (22, 3), (4, 2), (33, 1), (0, 1), (44, 4), (11, 2), (0, 3), (33, 2), (2, 1.5),
+             (44, 0.5), (0, 1.5), (22, 5)]
+
+
 PLANS = {
     'floor': [('o-80_0t', -80, 0, 8), ('o-100_0t', -100, 0, 10), ('o-127_0t', -127, 0, 10), ('o-80_0t_b', -80, 0, 6),
               ('o-80_4t', -80, 4, 6), ('o-100_4t', -100, 4, 6), ('o-127_4t', -127, 4, 6), ('o-80_4t_b', -80, 4, 4),
@@ -130,6 +143,53 @@ PLANS = {
                  + [(f'o-24_{FULL}t', -24, FULL, 6)]
                  + [(f'o-80_{w}t', -80, w, m) for w, m in ((0, 8), (4, 6), (FULL, 6))]
                  + [('R80_idle', -80, 0, 8)]),
+    # Final rack run 2026-10-14/16 (ryuji racked, mic on the mattress ~4 ft from the rack): 20 min holds
+    # with the load held through (the PSU tone needs 10-25 min to settle), A/B/A against -80.
+    # fin_light (Wednesday, medium window): does v2.6's -60 band still pay in the rack at 2, 4 and 11 workers?
+    'fin_light': [('r_ref', G, 0, 10),
+                  ('t2_a1', -80, 2, 20), ('t2_b', -60, 2, 20), ('t2_a2', -80, 2, 20), ('t2_cool', G, 0, 10),
+                  # Rohit 10-13 21:5x: in the living room it must pass for the A/C, so a tone counts against an offset
+                  # more than broadband does: -40 (tone pushed under the band, ~+1 dB broadband on 10-12) joins -60/-80.
+                  ('t4_a1', -60, 4, 20), ('t4_b', -80, 4, 20), ('t4_c', -40, 4, 20), ('t4_a2', -60, 4, 20),
+                  ('t4_cool', G, 0, 10),
+                  ('t11_a1', -60, 11, 20), ('t11_b', -80, 11, 20), ('t11_c', -40, 11, 20), ('t11_a2', -60, 11, 20),
+                  ('g_unwind', G, 0, 15)],
+    # fin_mixed: ryuji's half of an everyday medium mix (mementos 12 workers and a shelf read at the same time).
+    'fin_mixed': [('x_ref', G, 0, 10), ('x_11w', G, 11, 45), ('x_unwind', G, 0, 20)],
+    # fin_burstm: random medium-window loads under the guard (hunting check), then the unwind.
+    'fin_burstm': [('bm_ref', G, 0, 5)] + seq(BURST_MED) + [('bm_unwind', G, 0, 20)],
+    # fin_psu2 (Wed 19:00, in place of the medium bursts): ryuji on BOTH FSP800-20ERM supplies since 10-14 11:42
+    # (Rohit seated the spare, so each carries about half the load). The same holds as fin_light's -80 phases, to
+    # compare with the single-supply numbers of this morning: does the PSU whine drop?
+    'fin_psu2': [('p_idle', G, 0, 10), ('p4', -80, 4, 20), ('p11', -80, 11, 20), ('p_unwind', G, 0, 5)],
+    # fin_drive (Wed 14:40, after ryuji's drive soak hit 50C in 6 min at -80 with idle CPUs): how much do the system fans
+    # cool the six MG04s? At idle CPU they leave their ~1,050 rpm floor only from -16 up (1,260 at -16, 1,650 at -8,
+    # 2,240 at 0 on 10-06). Run with a disk-soak (random reads) beside it; the soak stops itself at 51C.
+    'fin_drive': [('dP', 0, 0, 30), ('d8', -8, 0, 30), ('d16', -16, 0, 30), ('d_back', G, 0, 15)],
+    # fin_idleoff (Thursday noise sweep): what each offset costs at idle, A/B against -80, 3 min each.
+    'fin_idleoff': [('i80_a', -80, 0, 3), ('i127', -127, 0, 3), ('i80_b', -80, 0, 3), ('i60', -60, 0, 3),
+                    ('i80_c', -80, 0, 3), ('i40', -40, 0, 3), ('i80_d', -80, 0, 3), ('i16', -16, 0, 3),
+                    ('i80_e', -80, 0, 3), ('i0', 0, 0, 3), ('i80_f', -80, 0, 3)],
+    # fin_heavy (Thursday): can an offset below -80 make 22-44 workers quieter, and at what CPU temperature?
+    # fin_heavy1 (Friday 10-16, ryuji on ONE supply since 10-15): the validation run found 22 / 33 workers at -127 2.6-3.4
+    # dB louder than fin_heavy's dual-supply holds (the lone supply's tone 823-858 Hz at -63/-64 dBFS); is -127 still
+    # quieter than -80 with one supply? Same A/B/A, 20 min holds, in place of Friday's bursts.
+    'fin_heavy1': [('h_ref', G, 0, 5),
+                   ('k80_a', -80, 22, 20), ('k127', -127, 22, 20), ('k80_b', -80, 22, 20),
+                   ('m80_a', -80, 33, 20), ('m127', -127, 33, 20), ('m80_b', -80, 33, 20), ('h_cool', G, 0, 10)],
+    'fin_heavy': [('h_ref', G, 0, 5),
+                  ('k80_a', -80, 22, 20), ('k127', -127, 22, 20), ('k80_b', -80, 22, 20), ('k_cool', G, 0, 10),
+                  ('m80_a', -80, 33, 20), ('m127', -127, 33, 20), ('m80_b', -80, 33, 20),
+                  ('f80_a', -80, 44, 15), ('f127', -127, 44, 15), ('f80_b', -80, 44, 15), ('h_cool', G, 0, 10)],
+    # fin_comb (Thursday combined full tilt): 44 workers under the guard for 100 min while mementos steps up and every
+    # drive soak runs (see mementos-steps fin_comb), then the unwind.
+    'fin_comb': [('c_ref', G, 0, 3), ('c_44w', G, 44, 100), ('c_unwind', G, 0, 22)],
+    # fin_val (Friday): every load level under the guard as deployed, then the unwind.
+    'fin_val': [('v_idle', G, 0, 10), ('v2', G, 2, 15), ('v4', G, 4, 20), ('v11', G, 11, 20), ('v22', G, 22, 20),
+                ('v33', G, 33, 20), ('v44', G, 44, 20), ('v_unwind', G, 0, 20)],
+    'fin_burst': [('b_ref', G, 0, 5)] + seq(BURST_ALL) + [('b_unwind', G, 0, 20)],
+    'fin_soak': [('s_ref', G, 0, 5), ('s_33w', G, 33, 120), ('s_unwind', G, 0, 25)],
+    'dry': [('d_idle', G, 0, 1), ('d_1t', G, 1, 1), ('d_cool', G, 0, 1)],
 }
 PLAN = PLANS[sys.argv[2] if len(sys.argv) > 2 else 'floor']
 # Room gating. makoto's lab-inlet-guard writes "<epoch> <mementos inlet>" to ROOM_FILE every minute. A load step

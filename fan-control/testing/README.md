@@ -1,4 +1,4 @@
-# Test tools (2026-10-05 to 10-11)
+# Test tools (2026-10-05 to 10-16)
 
 The scripts used to measure the rack and validate the fan controllers, kept as they ran so the tests can be
 repeated. How they fit together, and what to change for the repeat runs, is in `../METHODOLOGY.md`.
@@ -13,8 +13,8 @@ setup the tests use:
 |---|---|---|
 | mementos | Dell PowerEdge R720xd, iDRAC7 2.65, 2x Xeon E5-2697 v2, 256 GB DDR3, 24x ST1200MM0007 + 2x HUSMM SSD, H710P and H810 in IT mode, FTDI FT232R serial to the MD1200 | load and fan tests; owns the MD1200 serial console and SES device; its iDRAC inlet sensor is the room reference |
 | MD1200 shelf | Dell PowerVault MD1200, 2 EMMs fw 1.06, 12x 8 TB Seagate SAS (ST8000NM0075 / ST8000NM0185) | shelf fan experiments (driven from mementos) |
-| ryuji | Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2650 v3 (E5-2696 v4 pending), 128 GB DDR4 | BMC fan offset profile and guard tests |
-| sojiro | Gigabyte MB10-series board, Xeon D-1521, 32 GB, BMC automatic fans | logging and room proxy only (no fan control) |
+| ryuji | Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 (since 2026-10-12; E5-2650 v3 before), 128 GB DDR4, one FSP800-20ERM supply | BMC fan offset profile and guard tests |
+| sojiro | Gigabyte MB10-series board, Xeon D-1521, 32 GB, Avocent BMC | room proxy; since 2026-10-15 its BMC fan offset sits at -80 (`sojiro-floor.py` step test; set by hand with `../ryuji-fan-guard/gbt-fan-offset.py`, the BMC keeps it), no fan controller |
 | tinynas | ASUS PRIME B650M-A AX II, Ryzen 5 9600X, 64 GB DDR5, 8x HGST HUS724040AL 4 TB, 2x Crucial P3 Plus 1 TB NVMe; Nuvoton NCT6799 super I/O (`nct6775` driver) | drive-cage fan test; NVMe and SYSTIN as room proxies |
 | makoto | ASRock Rack board, Xeon D-1622, 32 GB | runs the makoto-side tools, the room logger and the PDU poller |
 | morgana (formerly arsene) | Dell Latitude 5420 (i5-1135G7), Realtek codec, internal mic | noise measurements (`mic-level-log.py`) |
@@ -192,6 +192,30 @@ The session that ran these tests was suspended for 7 hours one night, so the day
 - `dryrun/` runs `noise-sweep.py`, `r720-notch-sweep.py`, `mementos-fixedfan-night.py` and `ryuji-floor.py` on fake
   clocks with fake hardware: `python3 -I dryrun/dryrun_noise_sweep.py noise-sweep.py`,
   `PLAN=ab python3 -I dryrun/dryrun_ryuji_floor.py ryuji-floor.py '{"-80": 1000, "-100": 900}'`.
+
+## The final rack run (2026-10-13/16)
+
+72 hours with the rack in its final form (ryuji racked), every step a persistent systemd unit on the hosts, chained
+across hosts, with backstops. Plans, schedule and results: `../METHODOLOGY.md` ("Done 2026-10-13/16") and
+`../README.md` ("Results, 2026-10-13/16").
+
+| Script | Runs on | What it does |
+|---|---|---|
+| `fin-gate.py <not-after epoch> ['<instance>:<unit regex>' ...]` | every host (ExecStartPre) | waits until none of the named services is active anywhere (Prometheus `node_systemd_unit_state`, services only: a one-shot timer stays "active" after it fires), refuses after the not-after time; an unreachable Prometheus counts as busy. Units need `TimeoutStartSec=infinity` |
+| `make-units.py` | makoto | writes the run's schedule as units and timers per host into the run directory (one service + timer per block: the gate, `ExecStopPost`, `RuntimeMaxSec`, `LOAD_UNTIL`) |
+| `ryuji-floor.py <label> <plan>` | ryuji | as before, plus the final run's plans: `fin_light` (2 / 4 / 11 workers at -80 / -60 / -40), `fin_psu2`, `fin_drive` (a disk soak at offsets 0 / -8 / -16), `fin_idleoff`, `fin_heavy` (22 / 33 / 44 workers at -80 / -127 / -80), `fin_comb`, `fin_val`, `fin_burst`, `fin_soak` |
+| `mementos-steps.py <plan> <label>` | mementos | reworked: no IPMI reads at all while fan-watchdog runs (a second in-band reader can fail one of its reads and send the R720 to iDRAC auto): fan-watchdog's state file, coretemp, RAPL and the kernel throttle counters instead; no RAPL writes; `LOAD_UNTIL`; stops at CPU 89, DIMM 75, exhaust 60, HDD 50, SSD 60C, iDRAC auto or a stale state. Plans `fin_steps`, `fin_mixed`, `fin_burstm`, `fin_high`, `fin_comb`, `fin_val`, `fin_burst`, `fin_soak`; restore `mementos-steps-restore-fin.sh` |
+| `disk-soak.py <label> <pool> <phases> [limit C]` (phases like `rand:60`) | mementos, ryuji | read-only fio load on one pool's disks (sequential or random), every disk's temperature each minute, stops at the limit. `--readonly` goes on the command line: fio rejects `readonly` in a job file and drops the job |
+| `pdu-cut.sh` | mementos, ryuji | during a combined test, every 15 s reads the rack PDU's current from Prometheus (futaba polls the PDU by SNMP GET) and kills this host's test load at `LIMIT` deciamps on two fresh samples, or when no fresh sample comes for two checks |
+| `lab-loadoff-mementos.sh`, `lab-loadoff-ryuji.sh` | each host (timers) | the final run's backstops: stop every test unit (incl. `pdu-cut*`), kill stress-ng and fio, start the controllers |
+| `alarm.sh` | makoto (a loop every 2 min) | one pass over the run's danger signs: failed or stuck units, abort/stop notes in the run CSVs, iDRAC auto while fan-watchdog runs, the shelf EMM not primary, 2+ shelf takeovers between passes, a controller down with no test holding its fans, ryuji at Full Speed or long at Performance with cool drives, sojiro's BMC sensors (from Prometheus, once its offset is set) |
+| `phase-table.py`, `mementos-phase-table.py`, `sojiro-phase-table.py` | anywhere | one row per phase of a `ryuji-floor.py` / `mementos-steps.py` / `sojiro-floor.py` run: settled sensor medians, peaks, throttle events, dB(A), octave bands and the strongest tone |
+| `sweep-aba.py <mic.csv> <sweep.csv>` | anywhere | each step of a `noise-sweep.py` / `r720-notch-sweep.py` run against the mean of the reference holds before and after it |
+| `mic-window.py <mic.csv> <date> <label>=<HH:MM:SS>-<HH:MM:SS> ...`, `prom-stats.py "<start>" "<end>" [label=promql ...]` | anywhere | mic medians per window; min / p50 / max of Prometheus series over a window |
+| `sojiro-floor.py <label> [plan]` | sojiro | idle step test of sojiro's BMC fan offset (0 to -127, 6 min each), back to 0 at SYS_FAN1 < 600 rpm, CPU0_FAN < 1,000 rpm, CPU 85C or MB_TEMP1 75C; restore `sojiro-floor-restore.sh`, gate `sojiro-gate.sh` (uptime after a reboot, not-after) |
+| `mic-r720-listen.sh` | mementos | the blind listening test: R720 fans at fixed levels in 90 s slots on a fixed timetable while Rohit listens from the couch and the kitchen (key kept out of sight); `listen-table.py <mic.csv> --start HH:MM:SS` joins the slots with the mic |
+| `mementos-thermal-model.py <run.csv> ...`, `fw-sim.py` | anywhere | a two-node model of mementos's hotter CPU fitted to `mementos-steps.py` runs (rmse 1.1C) and fan-watchdog's loop simulated on it, to compare down-step rules (2026-10-15: a faster unwind would cut burst noise, but mementos's real load never leaves 10%) |
+| `ryuji-maxbench.sh <label> [dry]` | ryuji | what the E5-2696 v4s can do: 7-Zip at 1-88 threads, 15 min sustained under the guard, 8 min at Full Speed fans, stress-ng stream and sysbench memory, openssl, sysbench cpu, with sensors and turbostat; restore `ryuji-maxbench-restore.sh` |
 
 ## Deploying a controller
 
