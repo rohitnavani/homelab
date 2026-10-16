@@ -1,8 +1,9 @@
 # Homelab Infrastructure
 
 Configuration, scripts and tools for Rohit's home lab: a 15U rack plus a few small boxes on one UniFi-routed LAN.
-Every server runs Ubuntu Server 24.04 with ZFS for storage. The repo started as the config for tinynas alone and now
-covers the whole lab.
+Every server runs Ubuntu Server 24.04. The storage and compute hosts (tinynas, mementos, ryuji, sojiro and makoto)
+keep their data on ZFS; futaba, morgana and yusuke have one ext4 disk and no pools. The repo started as the config
+for tinynas alone and now covers the whole lab.
 
 ## Machines
 
@@ -13,11 +14,12 @@ covers the whole lab.
 | **tinynas** | ASUS PRIME B650M-A AX II, Ryzen 5 9600X (6c/12t), 64 GB DDR5, 8x HGST Ultrastar 4 TB SATA, 2x Crucial P3 Plus 1 TB NVMe | Always-on main NAS and services box: Jellyfin, game servers (Valheim, Minecraft), Samba, iSCSI for tinypc, the downloader VM, the fallback DNS resolver (an AdGuard Home replica of futaba's) and a second Cloudflare DDNS updater, a second Cloudflare Tunnel connector, and node-exporter and cAdvisor for its own metrics. Jellyfin is the only site it serves (directly, with its own certificate) |
 | **mementos** | Dell PowerEdge R720xd, 2x Xeon E5-2697 v2 (12c/24t each), 256 GB DDR3-1600 RDIMM, 24x Seagate ST1200MM0007 1.2 TB 10K SAS, 2x HGST HUSMM8080 800 GB SAS SSD (rear bays), H710P mini and H810 both in IT mode, iDRAC7 | Primary storage and VM host: Nextcloud AIO (Docker on `vmPool` since 2026-10-14, user files on `dataPool`), libvirt VMs, the lab NFS shares. Runs the MD1200 and R720xd fan controllers (`fan-control/`) |
 | **MD1200 shelf** | Dell PowerVault MD1200, 2 EMMs (fw 1.06), 12x 8 TB Seagate SAS (11x ST8000NM0075, 1x ST8000NM0185) | Bulk storage for mementos (`dataPool`), on the H810 |
-| **ryuji** | Gigabyte MD70-HB0 in a 2U 12-bay chassis, 2x Xeon E5-2696 v4 (22c/44t each), 128 GB DDR4-2133, onboard LSI SAS3008 to a 12-bay backplane, 6x Toshiba MG04 4 TB, Avocent BMC | Compute box (`computePool`), no workload yet. Runs `ryuji-fan-guard` (`fan-control/`) |
-| **sojiro** | Gigabyte MB10-series board, Xeon D-1521 (4c/8t), 32 GB DDR4, 4x Toshiba MG04 (2x 2 TB, 2x 4 TB) | Backup target: pulls ZFS replicas from tinynas and mementos nightly. Moves offsite later |
+| **ryuji** | Gigabyte MD70-HB0 in a 2U 12-bay chassis, 2x Xeon E5-2696 v4 (22c/44t each), 128 GB DDR4-2133, onboard LSI SAS3008 to a 12-bay backplane, 2x Toshiba MG04 4 TB (its other four went to sojiro on 2026-10-15), Avocent BMC | Compute box (`computePool`), no workload yet. Runs `ryuji-fan-guard` (`fan-control/`). For now it also holds sojiro's four old drives, not imported, as the rollback for sojiro's pool move |
+| **sojiro** | Gigabyte MB10-series board, Xeon D-1521 (4c/8t), 32 GB DDR4, 4x Toshiba MG04 4 TB (from ryuji since 2026-10-15; before that 2x 2 TB and 2x 4 TB) | Backup target: pulls ZFS replicas from tinynas and mementos nightly. Moves offsite later |
 | **futaba** | Lenovo mini PC (10HY002AUS), Core i5-6500T, 32 GB DDR4, 256 GB SATA SSD | Network and web services: DNS (AdGuard Home, primary; tinynas runs a synced replica), Cloudflare DDNS (tinynas runs a second updater), strongSwan IPsec VPN, Home Assistant VM, a Cloudflare Tunnel connector, the lab monitoring stack (Prometheus, Alertmanager, Grafana, blackbox probes of the public sites), the Glance dashboard, the rohitnavani.com resume site, and the lab's only Cockpit |
 | **makoto** | ASRock Rack board, Xeon D-1622 (4c/8t), 32 GB DDR4 ECC, 3x 1 TB Crucial MX500 SATA SSD | Admin box: runs the Claude Code sessions and the lab test loggers |
 | **morgana** (formerly arsene) | Dell Latitude 5420, Core i5-1135G7, 16 GB DDR4, 256 GB NVMe | Experiments (Kubernetes candidate); its internal mic is the lab noise meter for fan tests |
+| **yusuke** | Lenovo ThinkPad T14s Gen 4, Ryzen 7 PRO 7840U (8c/16t), 32 GB LPDDR5-6400, 512 GB NVMe | Headless lab box since 2026-10-13, no workload yet; sleep is disabled and its battery acts as a built-in UPS. Monitored like the servers (node-exporter, drivecheck, futaba's Cockpit) |
 
 ### Network and rack
 
@@ -33,8 +35,8 @@ covers the whole lab.
 
 | Host | Function |
 |---|---|
-| tinypc | Desktop workstation (i7-12700F, Fedora KDE); uses an iSCSI disk from tinynas |
-| ultrabook | Framework Laptop 13 (Kubuntu) |
+| tinypc | Desktop workstation (i7-12700F, RTX 3070, Fedora KDE); uses an iSCSI disk from tinynas and runs the lab's local AI stack (Ollama, Open WebUI, SearXNG) |
+| akechi (formerly ultrabook) | Framework Laptop 13 Pro (Core Ultra 5 325, 32 GB, Kubuntu); Rohit's daily laptop, used as a thin client |
 
 ## Storage (ZFS)
 
@@ -44,8 +46,8 @@ covers the whole lab.
 | tinynas | `nvmePool` | One NVMe partition (no redundancy) | Minecraft servers, SSD-backed VM images |
 | mementos | `vmPool` | 24x 1.2 TB as 12 two-way mirrors; SLOG and L2ARC on a rear SSD | VMs and VM disks; Docker's data-root `vmPool/docker` (Nextcloud AIO's database, app and containers) and AIO's compose folder; the lab's fast NFS share `vmPool/labShare` |
 | mementos | `dataPool` | 12x 8 TB raidz2 on the MD1200; SLOG on a rear SSD | Nextcloud user files (`dataPool/nextcloud`), bulk storage; the lab's bulk NFS share `dataPool/labShare` |
-| ryuji | `computePool` | 6x 4 TB as 3 two-way mirrors | Compute working storage (empty so far) and logs |
-| sojiro | `backupPool` | 2 mirrors (2 TB + 4 TB pairs) | Replicas of tinynas and mementos |
+| ryuji | `computePool` | 2x 4 TB mirror (3 mirrors of 4 TB until 2026-10-15) | Compute working storage (empty so far) and logs |
+| sojiro | `backupPool` | 4x 4 TB raidz1 (since 2026-10-15; 2 mirrors of 2 TB and 4 TB pairs before) | Replicas of tinynas and mementos |
 | makoto | `backupPool` | 3x 1 TB SATA SSD, striped (no redundancy) | Logs; was the tinynas replica target until 2026-09-26 |
 
 Every host with a ZFS pool keeps `/var/log` on a dataset of that pool (tinynas `homePool/logBackup`, mementos
@@ -82,7 +84,7 @@ specific to this lab.
 │   ├── cloudflare-ddns/        # Dynamic DNS for rohitnavani.com (futaba; docker-compose.tinynas.yml for tinynas)
 │   ├── exporters/              # node-exporter (tinynas)
 │   └── resume-site/            # nginx for the rohitnavani.com resume site, with its host nginx site (futaba)
-├── fail2ban/                  # sshd jails for futaba (reachable from the internet) and tinynas
+├── fail2ban/                   # sshd jails for futaba (reachable from the internet) and tinynas
 ├── fan-control/                # Fan controllers for mementos, the MD1200 shelf and ryuji, with tests and test tools
 │                               #   (see fan-control/README.md for the exact hardware)
 └── scripts/                    # Installed to /usr/local/bin and run from root's cron
@@ -125,4 +127,6 @@ To reuse it elsewhere: it needs libvirt, virtinst, ovmf and swtpm, a `<pool>/kvm
 (the ISO file names are in the profile table near the top), and a `br0` bridge. Set `NEWVM_BASE=<pool>/kvm` (or edit
 the `BASES` list) for a dataset with another name.
 
-Not in the repo: Nextcloud AIO, cloudflared, Jellyfin and the game servers.
+Not in the repo: Nextcloud AIO, cloudflared, Jellyfin, the game servers, the Home Assistant VM, the rest of
+futaba's monitoring stack (the Prometheus, Alertmanager and Grafana compose and configs; `docker-compose/blackbox`
+holds only the probe parts), the Glance dashboard config and tinypc's local AI stack.
