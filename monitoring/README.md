@@ -131,7 +131,7 @@ else polls the drives.
 
 ## Storage alert rules
 
-`storage-rules.yml` holds 15 Prometheus alert rules for ZFS pools and drive health; `storage-rules.test.yml` holds
+`storage-rules.yml` holds 16 Prometheus alert rules for ZFS pools and drive health; `storage-rules.test.yml` holds
 promtool unit tests for them. On futaba the rules live at `prometheus/rules/storage.yml` beside `alerts.yml`, and
 Prometheus loads every `rules/*.yml`. The tests sit outside that directory (in `prometheus/tests/`), so Prometheus never
 tries to load them as rules.
@@ -157,7 +157,8 @@ Where the numbers come from:
 |---|---|---|
 | ZpoolNotOnline | a pool is DEGRADED, FAULTED, UNAVAIL, SUSPENDED, OFFLINE or REMOVED for 5 min | critical |
 | ZpoolErrors | a pool counts read, write or checksum errors | warning |
-| DrivePendingSectors | ATA attribute 197 or 198 (unreadable sectors) is above 0 | critical |
+| DrivePendingSectors | an HDD's ATA attribute 197 or 198 (unreadable sectors) is above 0 | critical |
+| DriveSSDPendingPersistent | an SSD's attribute 197 or 198 stays above 0 for 25 h, two daily reads in a row (Crucial MX500 firmware blips 197 for a single read) | warning |
 | DriveSectorsReallocated | ATA attribute 5, 187 or 196 rose within 7 days | warning |
 | DriveAttrNearThreshold | a normalized SMART attribute is within 10 of its failure threshold | warning |
 | DriveNVMeCriticalWarning | an NVMe drive sets any critical-warning bit | critical |

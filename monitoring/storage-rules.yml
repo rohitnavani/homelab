@@ -29,14 +29,24 @@ groups:
           summary: 'ZFS pool {{ $labels.zpool }} on {{ $labels.instance }} counts {{ $value }} read/write/checksum errors'
           description: 'ZFS saw I/O or checksum errors while the pool stayed ONLINE. Run "zpool status -v {{ $labels.zpool }}" to find the disk, check its SMART data and the kernel log, and run a scrub. Clear the counters only once the cause is understood.'
 
-      # Sectors the drive cannot read (197 pending, 198 offline uncorrectable).
+      # Sectors a hard drive cannot read (197 pending, 198 offline uncorrectable). HDDs only: SSDs are below.
       - alert: DrivePendingSectors
-        expr: drivecheck_ata_attr_raw{id=~"197|198"} > 0
+        expr: (drivecheck_ata_attr_raw{id=~"197|198"} > 0) and on(host, device, serial) drivecheck_drive_info{kind="hdd"}
         for: 10m
         labels: {severity: critical}
         annotations:
           summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): {{ $value }} {{ if eq $labels.id "197" }}pending (unreadable){{ else }}offline-uncorrectable{{ end }} sectors'
-          description: 'The drive found sectors it cannot read. Check the pool on that host (zpool status), run a SMART long test and replace the drive if the count stays or grows. A Crucial MX500 can flip attribute 197 to 1 and back on its own: if the next daily drivecheck reads 0, it was that firmware quirk.'
+          description: 'The drive found sectors it cannot read. Check the pool on that host (zpool status), run a SMART long test and replace the drive if the count stays or grows.'
+
+      # The same counters on a SATA SSD, only when they stay above 0 for 25 h, which takes two daily drivecheck runs
+      # in a row: Crucial MX500 firmware flips 197 from 0 to 1 and back on its own, and one daily read can catch that.
+      - alert: DriveSSDPendingPersistent
+        expr: (drivecheck_ata_attr_raw{id=~"197|198"} > 0) and on(host, device, serial) drivecheck_drive_info{kind="ssd"}
+        for: 25h
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): SSD {{ $labels.name }} = {{ $value }} on two daily reads in a row'
+          description: 'A Crucial MX500 can flip attribute 197 from 0 to 1 and back by itself, but two daily reads in a row are not that blip. Check attribute 187 (reported uncorrectable) and the kernel log on the host, back up what is on the SSD, and plan a replacement.'
 
       # Reallocated sectors (5), reported uncorrectable reads (187) or reallocation events (196) rose within a week.
       # These SMART counters never restart, so increase() is safe.

@@ -38,13 +38,15 @@ tests:
               summary: 'ZFS pool homePool on tinynas counts 3 read/write/checksum errors'
               description: 'ZFS saw I/O or checksum errors while the pool stayed ONLINE. Run "zpool status -v homePool" to find the disk, check its SMART data and the kernel log, and run a scrub. Clear the counters only once the cause is understood.'
 
-  - name: DrivePendingSectors fires on pending sectors
+  - name: DrivePendingSectors fires on an HDD's pending sectors
     interval: 1m
     input_series:
       - series: 'drivecheck_ata_attr_raw{host="TinyNAS",device="/dev/sda",serial="TEST0001",id="197",name="Current_Pending_Sector",instance="tinynas",job="node"}'
         values: '0x10 2x30'
       - series: 'drivecheck_ata_attr_raw{host="TinyNAS",device="/dev/sda",serial="TEST0001",id="5",name="Reallocated_Sector_Ct",instance="tinynas",job="node"}'
         values: '0x40'
+      - series: 'drivecheck_drive_info{host="TinyNAS",device="/dev/sda",serial="TEST0001",class="sata",kind="hdd",model="HGST HUS724040ALA640",firmware="MFAOAA70",instance="tinynas",job="node"}'
+        values: '1x40'
     alert_rule_test:
       - {eval_time: 9m, alertname: DrivePendingSectors, exp_alerts: []}
       - eval_time: 30m
@@ -53,7 +55,7 @@ tests:
           - exp_labels: {severity: critical, host: TinyNAS, device: /dev/sda, serial: TEST0001, id: "197", name: Current_Pending_Sector, instance: tinynas, job: node}
             exp_annotations:
               summary: 'TinyNAS /dev/sda (TEST0001): 2 pending (unreadable) sectors'
-              description: 'The drive found sectors it cannot read. Check the pool on that host (zpool status), run a SMART long test and replace the drive if the count stays or grows. A Crucial MX500 can flip attribute 197 to 1 and back on its own: if the next daily drivecheck reads 0, it was that firmware quirk.'
+              description: 'The drive found sectors it cannot read. Check the pool on that host (zpool status), run a SMART long test and replace the drive if the count stays or grows.'
 
   - name: DriveSASNonMediumSurge fires above 500 a day, not on a normal day
     interval: 1h
@@ -146,3 +148,45 @@ tests:
             exp_annotations:
               summary: 'mementos /dev/sdb (TEST0007): loss_sync errors on SAS port 0 rose by 20 in a day'
               description: 'SAS link errors point at the cable, backplane or connector rather than the drive. Reseat the drive and its backplane cable at the next downtime.'
+
+  - name: An SSD's one-day 197 blip (Crucial MX500 firmware) fires neither pending-sector rule
+    interval: 1m
+    input_series:
+      - series: 'drivecheck_ata_attr_raw{host="makoto",device="/dev/sdb",serial="TEST0008",id="197",name="Current_Pending_Sector",instance="makoto",job="node"}'
+        values: '0x10 1x1440 0x200'
+      - series: 'drivecheck_drive_info{host="makoto",device="/dev/sdb",serial="TEST0008",class="sata",kind="ssd",model="CT1000MX500SSD1",firmware="M3CR032",instance="makoto",job="node"}'
+        values: '1x1650'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: DrivePendingSectors, exp_alerts: []}
+      - {eval_time: 1440m, alertname: DriveSSDPendingPersistent, exp_alerts: []}
+      - {eval_time: 1600m, alertname: DriveSSDPendingPersistent, exp_alerts: []}
+
+  - name: DriveSSDPendingPersistent fires once an SSD stays above 0 for 25 h
+    interval: 1m
+    input_series:
+      - series: 'drivecheck_ata_attr_raw{host="makoto",device="/dev/sdb",serial="TEST0009",id="197",name="Current_Pending_Sector",instance="makoto",job="node"}'
+        values: '0x10 1x1600'
+      - series: 'drivecheck_drive_info{host="makoto",device="/dev/sdb",serial="TEST0009",class="sata",kind="ssd",model="CT1000MX500SSD1",firmware="M3CR032",instance="makoto",job="node"}'
+        values: '1x1611'
+    alert_rule_test:
+      - {eval_time: 1500m, alertname: DriveSSDPendingPersistent, exp_alerts: []}
+      - {eval_time: 1560m, alertname: DrivePendingSectors, exp_alerts: []}
+      - eval_time: 1560m
+        alertname: DriveSSDPendingPersistent
+        exp_alerts:
+          - exp_labels: {severity: warning, host: makoto, device: /dev/sdb, serial: TEST0009, id: "197", name: Current_Pending_Sector, instance: makoto, job: node}
+            exp_annotations:
+              summary: 'makoto /dev/sdb (TEST0009): SSD Current_Pending_Sector = 1 on two daily reads in a row'
+              description: 'A Crucial MX500 can flip attribute 197 from 0 to 1 and back by itself, but two daily reads in a row are not that blip. Check attribute 187 (reported uncorrectable) and the kernel log on the host, back up what is on the SSD, and plan a replacement.'
+
+  - name: akechi-style SSD series away for 24 h never fire either pending-sector rule
+    interval: 1m
+    input_series:
+      - series: 'drivecheck_ata_attr_raw{host="akechi",device="/dev/sda",serial="AKECHI-SSD",id="197",name="Current_Pending_Sector",instance="akechi",job="node"}'
+        values: '1x120 _x1440 1x200'
+      - series: 'drivecheck_drive_info{host="akechi",device="/dev/sda",serial="AKECHI-SSD",class="sata",kind="ssd",model="TEST",firmware="TEST",instance="akechi",job="node"}'
+        values: '1x120 _x1440 1x200'
+    alert_rule_test:
+      - {eval_time: 12h, alertname: DriveSSDPendingPersistent, exp_alerts: []}
+      - {eval_time: 1700m, alertname: DriveSSDPendingPersistent, exp_alerts: []}
+      - {eval_time: 1700m, alertname: DrivePendingSectors, exp_alerts: []}
