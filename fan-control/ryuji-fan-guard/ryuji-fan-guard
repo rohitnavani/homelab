@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# ryuji-fan-guard v2.10: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under light loads, -127 under heavy
-# ones while the CPUs allow (v2.10) (v2.7: no light-load
+# ryuji-fan-guard v2.11: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under light loads, -127 under heavy
+# ones while the CPUs allow (v2.10; v2.11: from 220 W) (v2.7: no light-load
 # step any more; v2.4-v2.6 used -60, v2.3 -40), go to a moderate -16 only when the board or the CPUs run hot, and use
 # Performance / Full only if -16 is not enough, or (v2.8) when the drives get hot. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
 # Measured 2026-10-06 (room ~27C; ryuji-profile sweeps, STATUS-LOG.md):
@@ -128,11 +128,17 @@
 # At idle -127 equals -80 (fin_idleoff), so light loads stay at -80 (more fan was louder there, less is untested).
 # Rohit's margin rule (about 10C under each limit; TjMax 85C): -127 only while the hottest CPU stays under 77C, i.e. for
 # 22-33 workers; a full load lifts the CPUs to 77-78C at -127, so it goes back to -80 (74-75C) and stays there.
-#   QUIET -> HEAVY: >= 2 busy threads and package power >= H127_IN_W (180 W) for H127_READINGS (5) readings in a row,
+#   QUIET -> HEAVY: >= 2 busy threads and package power >= H127_IN_W (180 W; 220 W since v2.11) for 5 readings in a row,
 #                   the hottest CPU <= H127_CPU_IN (72C), nothing else warm, and not within H127_LOCK after a CPU exit
 #   HEAVY -> QUIET: hottest CPU >= H127_CPU_OUT (77C) on 2 readings, or SIO1 / VR / DIMM / climbing rules (then a 15 min
-#                   lockout), or package power under H127_OUT_W (160 W) for 5 readings (the job ended: no lockout)
+#                   lockout), or package power under H127_OUT_W (160 W; 200 W since v2.11) for 5 readings (the job ended: no lockout)
 #   HEAVY -> PERF / FULL: hot drives / emergencies, as from any level.
+# v2.11 (2026-10-16): ryuji now runs on one power supply (the second came out 10-15). With one supply the 22-worker
+# case flips: 20 min A/B/A holds (ryuji-floor.py plan fin_heavy1, room 24-25C, last 8 min) -80 -61.95 / -127 -60.28 /
+# -80 -62.02 dB(A): -127 is 1.7 dB louder, because less chassis air warms the lone supply and its fan's tone drops from
+# 973 Hz (above the band, -74 dBFS) into the band at 809 Hz (-63 dBFS). At 33 workers -127 still wins by 3.9 dB
+# (-53.80 / -57.65 / -53.73; the supply's tone the same at both, the system fans 5,075 vs 3,875 rpm). So HEAVY needs
+# H127_IN_W 220 W (22 workers draw ~190 W, 33 ~250 W) and leaves under H127_OUT_W 200 W; everything else as v2.10.
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
@@ -153,7 +159,7 @@ RAPL = ('/sys/class/powercap/intel-rapl:0', '/sys/class/powercap/intel-rapl:1')
 CPU_UP, VR_UP, DIMM_UP = 78, 90, 75
 VR_COOL, DIMM_COOL = 80, 65
 SIO_EMERG, CPU_EMERG = 83, 83   # v2.4: CPU 86 -> 83 (E5-2696 v4: BMC critical 85)
-H127_IN_W, H127_OUT_W, H127_READINGS = 180, 160, 5   # v2.10: package W (both CPUs) to enter / leave -127, readings
+H127_IN_W, H127_OUT_W, H127_READINGS = 220, 200, 5   # v2.11 (v2.10: 180, 160): package W (both CPUs) to enter / leave -127
 H127_CPU_IN, H127_CPU_OUT, H127_LOCK = 72, 77, 900    # v2.10: hottest CPU to enter / leave, lockout s after a CPU exit
 LOCK = {'until': 0}
 DRIVE_UP, DRIVE_EMERG, DRIVE_BACK, DRIVE_HOLD = 49, 52, 46, 600   # v2.8: hottest spinning disk (MG04ACA400 rated 55C); 49 so a 27C room idles under it

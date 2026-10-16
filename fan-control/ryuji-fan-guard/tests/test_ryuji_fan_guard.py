@@ -1,4 +1,5 @@
-# Closed-loop harness for ryuji-fan-guard (v2, 2026-10-06; v2.3 2026-10-10; v2.4-v2.6 2026-10-13; v2.7-v2.8 2026-10-14): fake clock + a ryuji
+# Closed-loop harness for ryuji-fan-guard (v2, 2026-10-06; v2.3 2026-10-10; v2.4-v2.6 2026-10-13; v2.7-v2.8 2026-10-14;
+# v2.10 2026-10-15; v2.11 2026-10-16): fake clock + a ryuji
 # model. SIO Temp 1 and the hottest CPU settle (tau 3.5 min / 1 min) toward values that depend on the guard level, the
 # load (busy threads) and the room. usage: python3 tests/test_ryuji_fan_guard.py ryuji-fan-guard
 # v2.4: the model is for the 2x Xeon E5-2696 v4 fitted 2026-10-12 (44 cores / 88 threads, 150 W PL1 each). Idle and 4
@@ -156,7 +157,7 @@ expect(o == [] and any('assuming -80' in m for _, m in logs) and any('BMC check 
        f'assumes -80, retries the check until the BMC answers, no change ({o})')
 # v2.5 (2026-10-13 afternoon)
 o = run('22 half load (22 workers, 188 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(22)), (90, L(0))])
-expect(vals(o) == [-127, -80] and 34 <= o[0][0] <= 38 and o[1][0] >= 94, f'v2.10: -127 ~5 min into the half load, back after it ({o})')
+expect(o == [], f'v2.11: stays at -80 (22 workers draw ~190 W, under the 220 W line; with one supply -127 is louder there) ({o})')
 o = run('22b 11 workers (148 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(11)), (90, L(0))])
 expect(o == [], f'v2.7: stays at -80 at 11 workers (-80 3 dB quieter than -60 in the rack) ({o})')
 o = run('23 a job that grows: 11 workers for 20 min, then 44 for 30 min, 24C room', 160, room=24,
@@ -210,14 +211,20 @@ expect(o[:1] and o[0][1] == 0, f'Performance for the drives ({o[:1]})')
 expect(vals(o)[-1:] == [-80] and all(v not in (127,) for v in vals(o)), f'back to -80 once drives cool (CPU load alone keeps -80) ({o})')
 # v2.10 (2026-10-15): -127 for heavy loads
 o = run('40 22 workers for 60 min, 24C room', 160, room=24, evs=[(30, L(22)), (90, L(0))])
-expect(vals(o) == [-127, -80] and o[0][0] <= 37 and plant['cpu_max'] < 77, f'-127 ~5 min in, CPU under 77C, back after ({o}, {plant["cpu_max"]:.1f})')
+expect(o == [], f'v2.11: stays at -80 (188 W < 220 W) ({o})')
+o = run('40b 29 workers (~224 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(29)), (90, L(0))])
+expect(vals(o) == [-127, -80] and o[0][0] <= 37 and plant['cpu_max'] < 77, f'v2.11: -127 just over the line, CPU under 77C, back after ({o}, {plant["cpu_max"]:.1f})')
+o = run('40c 26 workers (~209 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(26)), (90, L(0))])
+expect(o == [], f'v2.11: stays at -80 just under the line ({o})')
 o = run('41 33 workers for 60 min, 24C room', 160, room=24, evs=[(30, L(33)), (90, L(0))])
 expect(vals(o) == [-127, -80] and plant['cpu_max'] < 77, f'-127 held, CPU under 77C ({o}, {plant["cpu_max"]:.1f})')
 o = run('42 full load (44 workers) for 60 min, 24C room', 160, room=24, evs=[(30, L(44)), (90, L(0))])
 expect(o == [], f'full load stays at -80 (CPU 74C > the 72C entry line) ({o})')
-o = run('43 a job growing from 22 to 44 workers, 24C room', 180, room=24, evs=[(30, L(22)), (60, L(44)), (120, L(0))])
-expect(vals(o)[:2] == [-127, -80] and len(o) == 2, f'-127 at 22 workers, back to -80 once the CPUs reach 77C at full load, no cycling ({o})')
+o = run('43 a job growing from 33 to 44 workers, 24C room', 180, room=24, evs=[(30, L(33)), (60, L(44)), (120, L(0))])
+expect(vals(o)[:2] == [-127, -80] and len(o) == 2, f'-127 at 33 workers, back to -80 once the CPUs reach 77C at full load, no cycling ({o})')
 expect(plant['cpu_max'] < 79, f'hottest CPU under 79C ({plant["cpu_max"]:.1f})')
+o = run('43b a job growing from 22 to 44 workers, 24C room', 180, room=24, evs=[(30, L(22)), (60, L(44)), (120, L(0))])
+expect(o == [] and plant['cpu_max'] < 79, f'v2.11: -80 throughout (22 under the line, 44 too warm to enter) ({o}, {plant["cpu_max"]:.1f})')
 o = run('44 33 workers in a warm 28C room', 160, room=28, evs=[(30, L(33)), (90, L(0))])
 expect(-127 not in vals(o) and all(v not in (0, 127) for v in vals(o)), f'no -127 in a warm room (CPU over 72C at -80) ({o})')
 o = run('45 bursts: 2 min of 44 workers every 10 min, 24C room', 200, room=24,
