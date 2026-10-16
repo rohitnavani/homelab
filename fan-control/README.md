@@ -157,13 +157,16 @@ thresholds from the hardware above. What carries over and what to change:
   reaches 78C, a VR 90C or a DIMM 75C. -16 to Performance if that is not enough. Full at SIO1 83C or CPU 83C
   (v2.4; 86C before, above the E5-2696 v4's 85C critical). Back to -80 from -16 after 10 idle minutes once SIO1 is
   72C or lower (30 min at 71C or lower after a hot room).
-- Drives (v2.8): the hottest spinning disk (smartctl attribute 194; a disk in standby or one that cannot be read is
-  skipped) at 49C on 2 readings -> Performance, at 52C on 2 readings -> Full; from a drive-triggered Performance
+- Drives (v2.8): the hottest 3.5-inch spinning disk (smartctl attribute 194; a disk in standby or one that cannot be
+  read is skipped) at 49C on 2 readings -> Performance, at 52C on 2 readings -> Full; from a drive-triggered Performance
   back to -80 after 10 min with the hottest disk at 46C or lower and the board and CPUs cool. At -80 with the CPUs
   idle the system fans stay at ~1,050 rpm, and a random-read job (~55 MB/s over the six MG04ACA400s, rated 55C) took
   the hottest from 47 to 50C in 6 min; Performance (~2,200 rpm) held it flat at 49-50C for 30 min, -8 let it reach
   51C (2026-10-14). Below -16 the system fans do not leave their floor at idle, so Performance is the step that
-  works. 49C rather than 48: a 27C room idles the warmest disk at 47-48C at -80.
+  works. 49C rather than 48: a 27C room idles the warmest disk at 47-48C at -80. Only disks that report "Form
+  Factor: 3.5 inches" count (v2.9; every spinning disk if none does): v2.8 also read a spare 2.5-inch disk in the
+  CPUs' exhaust, which reached 49C under an 11-worker CPU load with no disk job while the front-bay disks fell to
+  38C, and went to Performance for 15 min.
 - Idle means less than one logical CPU busy (`/proc/stat`) with VR and DIMMs cool (v2.3; before, the hottest CPU at
   50C or lower, which a light load at -40 in a cool room can undercut). The state file shows it as `threads`, and
   every level change logs it (v2.4).
@@ -173,7 +176,7 @@ thresholds from the hardware above. What carries over and what to change:
   wants network-online.target.
 - Needs the BMC password in `/root/.bmc-pass` (0600, root only); the BMC web API needs legacy TLS.
   `gbt-fan-offset.py <bmc ip> get|set N` reads or sets the offset by hand (stop the guard first).
-- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 since 2026-10-12 (v2.4 to v2.8
+- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 since 2026-10-12 (v2.4 to v2.9
   are tuned for them); see "Hardware".
 
 ## Install or update
@@ -196,7 +199,7 @@ TAU=2700 CYC=1 python3 -I md1200-fan/tests/test_md1200_lag_sweep.py md1200-fan/m
 python3 -I md1200-fan/tests/test_md1200_scenarios.py md1200-fan/md1200-fan             # 9 scenarios, 10-08 shelf model
 python3 -I md1200-fan/tests/sweep_md1200_scenarios.py <older md1200-fan> md1200-fan/md1200-fan  # 81 models, ~12 min
 fan-watchdog/tests/run-tests.sh                                                        # about 2 minutes
-python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 39 scenarios (v2.8)
+python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 39 scenarios (v2.9)
 python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)
 ```
 

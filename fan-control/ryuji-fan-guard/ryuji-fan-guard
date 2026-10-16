@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ryuji-fan-guard v2.8: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under every load (v2.7: no light-load
+# ryuji-fan-guard v2.9: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under every load (v2.7: no light-load
 # step any more; v2.4-v2.6 used -60, v2.3 -40), go to a moderate -16 only when the board or the CPUs run hot, and use
 # Performance / Full only if -16 is not enough, or (v2.8) when the drives get hot. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
 # Measured 2026-10-06 (room ~27C; ryuji-profile sweeps, STATUS-LOG.md):
@@ -114,6 +114,11 @@
 #                                  CPUs, VRs and DIMMs cool ('perf' rule); a heat reason keeps the usual path.
 # Disks: every rotational disk (lsblk ROTA=1) read with smartctl -n standby -A (attribute 194); a disk in standby or one
 # that cannot be read is skipped; no readable disk = no drive rule (the CPU/board rules as before).
+# v2.9 (2026-10-14 18:3x): only the 3.5-inch disks (smartctl -i "Form Factor: 3.5 inches"), i.e. the front bays the
+# system fans cool. v2.8 also read the spare 2.5-inch HGST Travelstar (sdb, rated 60C, unused), which sits in the CPUs'
+# exhaust: under 11 busy workers the MG04s fell 44 -> 38C while sdb rose 42 -> 49C, so v2.8 went to Performance at 18:13
+# with no disk load at all (the rack measured -54.6 dB(A), +15 over idle, until 18:29). If no disk reports a form
+# factor, every rotational disk counts, as in v2.8.
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
@@ -201,9 +206,18 @@ def temps():
             'dimm': max([v for k, v in t.items() if k.startswith('DIMM')] or [0])}
 
 def find_hdds():
-    """v2.8: every rotational whole disk (lsblk ROTA=1)"""
+    """v2.8: every rotational whole disk (lsblk ROTA=1); v2.9: only the 3.5-inch ones if any report a form factor"""
     out = subprocess.run(['lsblk', '-dno', 'NAME,ROTA,TYPE'], capture_output=True, text=True, timeout=20).stdout
-    return [l.split()[0] for l in out.splitlines() if l.split()[1:] == ['1', 'disk']]
+    rot = [l.split()[0] for l in out.splitlines() if l.split()[1:] == ['1', 'disk']]
+    big = []
+    for d in rot:
+        try:
+            i = subprocess.run(['smartctl', '-i', f'/dev/{d}'], capture_output=True, text=True, timeout=20).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if re.search(r'^Form Factor:\s+3\.5 inches', i, re.M):
+            big.append(d)
+    return big or rot
 
 HDDS = None
 def drives():
@@ -211,6 +225,7 @@ def drives():
     global HDDS
     if HDDS is None:
         HDDS = find_hdds()
+        log(f'drive rule watches {" ".join(HDDS) or "no disk"}')
     best = None
     for d in HDDS:
         try:
