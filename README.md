@@ -81,7 +81,8 @@ mementos. sojiro (the backup box, going offsite) and akechi (a laptop) do not mo
 - **Tools you run as yourself: straight from the share.** `/etc/profile.d/lab-scripts.sh` appends `bin/` to PATH on
   those hosts, last, so a host's own commands win: `newvm` with its profile names, `autorar`, `deploy-monitoring`
   and `lab-scripts`. An edit there is live on every host at once. On mementos and ryuji `/usr/local/bin/newvm` is a
-  symlink to the share. sudo's own PATH is left alone; `newvm` asks for sudo itself where it needs it.
+  symlink to the share. `lab-scripts setup` also appends the two folders to sudo's `secure_path` in
+  `/etc/sudoers.d/lab-scripts`, after every entry the host had, so `sudo rename-host` works; `newvm` asks for sudo itself.
 - **What root runs, from cron, systemd or boot: installed on each host.** The share is a hard mount that hangs while
   mementos is down, and nothing unattended (least of all a fan controller) may wait on it; the share is also
   writable from every client, so root never runs it unattended. `deploy.list` says which repo file is installed
@@ -97,7 +98,7 @@ mementos. sojiro (the backup box, going offsite) and akechi (a laptop) do not mo
 lab-scripts                        # run on makoto: what is uncommitted, unpushed or out of line
 lab-scripts diff zfs-snapshot mementos
 lab-scripts install drivecheck sojiro ryuji
-lab-scripts setup yusuke           # writes the PATH snippet (once per host that mounts the share)
+lab-scripts setup yusuke           # the PATH snippet and sudo's secure_path (once per host that mounts the share)
 lab-scripts timer                  # on mementos: pull GitHub's main into the share every 15 minutes
 lab-scripts push                   # checks the new commits for secrets and vendor names, then pushes via tinynas
 ```

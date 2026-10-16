@@ -5,7 +5,7 @@
 #                                         or not on GitHub, and installed copies that differ from their source
 #   lab-scripts diff NAME [HOST]          the source against the copy installed on HOST (default: this machine)
 #   lab-scripts install NAME [HOST...]    copy the source over the installed copy on HOST (default: this machine)
-#   lab-scripts setup [HOST...]           put the shared bin/ on PATH (new logins) on a host that mounts dataPool
+#   lab-scripts setup [HOST...]           put the shared bin/ on PATH and on sudo's, on a host that mounts dataPool
 #   lab-scripts timer                     on mementos: pull GitHub's main into the share every 15 min (fast-forward only)
 #   lab-scripts push                      check the new commits for secrets, then push them to GitHub via tinynas
 #
@@ -206,8 +206,9 @@ cmd_install(){
     return 0
 }
 
-# runs as root on the target: the profile.d PATH snippet, and on mementos the /dataPool/homelab symlink. sudo keeps
-# its own secure_path: run a shared tool as root with its full path, or through a /usr/local/bin symlink to the share.
+# runs as root on the target: the profile.d PATH snippet, a sudoers drop-in that appends the same folders to the
+# host's own secure_path (every entry it had stays first), and on mementos the /dataPool/homelab symlink. Changes
+# only what is missing or different; a drop-in that fails visudo is never left in place.
 SETUP='set -eu
 share=$1 profile=/etc/profile.d/lab-scripts.sh
 if grep -qs "labShare[[:space:]]\+/dataPool[[:space:]]" /etc/fstab; then
@@ -229,6 +230,18 @@ esac
 EOF
 )
 if [ "$(cat $profile 2>/dev/null)" != "$want" ]; then printf "%s\n" "$want" > $profile.new && chmod 644 $profile.new && mv $profile.new $profile && echo "wrote $profile"; fi
+sudoers=/etc/sudoers.d/lab-scripts
+base=$(sed -n "s/^Defaults[[:space:]]\+secure_path[[:space:]]*=[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*$/\1/p" /etc/sudoers | tail -1)
+[ -n "$base" ] || base=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+want="# Lets sudo find the lab scripts on the share, after every path this host had (lab-scripts setup).
+Defaults secure_path=\"$base:$share/bin:$share/private/bin\""
+if [ "$(cat $sudoers 2>/dev/null)" != "$want" ]; then
+  tmp=$(mktemp); printf "%s\n" "$want" > "$tmp"
+  visudo -cqf "$tmp" || { rm -f "$tmp"; echo "sudoers drop-in failed visudo; nothing changed" >&2; exit 1; }
+  install -m 0440 -o root -g root "$tmp" $sudoers.new; rm -f "$tmp"; mv -f $sudoers.new $sudoers
+  visudo -cq || { rm -f $sudoers; echo "sudo config failed visudo with the drop-in; removed it" >&2; exit 1; }
+  echo "wrote $sudoers"
+fi
 echo "$(hostname -s): set up"'
 
 # runs as root on mementos: a timer that pulls GitHub's main into the share, fast-forward only, so uncommitted or
