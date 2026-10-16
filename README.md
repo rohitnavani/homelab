@@ -10,12 +10,12 @@ covers the whole lab.
 
 | Host | Hardware | Function |
 |---|---|---|
-| **tinynas** | ASUS PRIME B650M-A AX II, Ryzen 5 9600X (6c/12t), 64 GB DDR5, 8x HGST Ultrastar 4 TB SATA, 2x Crucial P3 Plus 1 TB NVMe | Always-on main NAS and services box: Jellyfin, game servers (Valheim, Minecraft), Samba, iSCSI for tinypc, the downloader VM, a second Cloudflare Tunnel connector, and node-exporter and cAdvisor for its own metrics. Jellyfin is the only site it serves (directly, with its own certificate) |
+| **tinynas** | ASUS PRIME B650M-A AX II, Ryzen 5 9600X (6c/12t), 64 GB DDR5, 8x HGST Ultrastar 4 TB SATA, 2x Crucial P3 Plus 1 TB NVMe | Always-on main NAS and services box: Jellyfin, game servers (Valheim, Minecraft), Samba, iSCSI for tinypc, the downloader VM, the fallback DNS resolver (an AdGuard Home replica of futaba's) and a second Cloudflare DDNS updater, a second Cloudflare Tunnel connector, and node-exporter and cAdvisor for its own metrics. Jellyfin is the only site it serves (directly, with its own certificate) |
 | **mementos** | Dell PowerEdge R720xd, 2x Xeon E5-2697 v2 (12c/24t each), 256 GB DDR3-1600 RDIMM, 24x Seagate ST1200MM0007 1.2 TB 10K SAS, 2x HGST HUSMM8080 800 GB SAS SSD (rear bays), H710P mini and H810 both in IT mode, iDRAC7 | Primary storage and VM host: Nextcloud AIO (Docker on `vmPool` since 2026-10-14, user files on `dataPool`), libvirt VMs, the lab NFS shares. Runs the MD1200 and R720xd fan controllers (`fan-control/`) |
 | **MD1200 shelf** | Dell PowerVault MD1200, 2 EMMs (fw 1.06), 12x 8 TB Seagate SAS (11x ST8000NM0075, 1x ST8000NM0185) | Bulk storage for mementos (`dataPool`), on the H810 |
 | **ryuji** | Gigabyte MD70-HB0 in a 2U 12-bay chassis, 2x Xeon E5-2696 v4 (22c/44t each), 128 GB DDR4-2133, onboard LSI SAS3008 to a 12-bay backplane, 6x Toshiba MG04 4 TB, Avocent BMC | Compute box (`computePool`), no workload yet. Runs `ryuji-fan-guard` (`fan-control/`) |
 | **sojiro** | Gigabyte MB10-series board, Xeon D-1521 (4c/8t), 32 GB DDR4, 4x Toshiba MG04 (2x 2 TB, 2x 4 TB) | Backup target: pulls ZFS replicas from tinynas and mementos nightly. Moves offsite later |
-| **futaba** | Lenovo mini PC (10HY002AUS), Core i5-6500T, 32 GB DDR4, 256 GB SATA SSD | Network and web services: DNS (AdGuard Home), Cloudflare DDNS, strongSwan IPsec VPN, Home Assistant VM, a Cloudflare Tunnel connector, the lab monitoring stack (Prometheus, Alertmanager, Grafana, blackbox probes of the public sites), the Glance dashboard, the rohitnavani.com resume site, and the lab's only Cockpit |
+| **futaba** | Lenovo mini PC (10HY002AUS), Core i5-6500T, 32 GB DDR4, 256 GB SATA SSD | Network and web services: DNS (AdGuard Home, primary; tinynas runs a synced replica), Cloudflare DDNS (tinynas runs a second updater), strongSwan IPsec VPN, Home Assistant VM, a Cloudflare Tunnel connector, the lab monitoring stack (Prometheus, Alertmanager, Grafana, blackbox probes of the public sites), the Glance dashboard, the rohitnavani.com resume site, and the lab's only Cockpit |
 | **makoto** | ASRock Rack board, Xeon D-1622 (4c/8t), 32 GB DDR4 ECC, 3x 1 TB Crucial MX500 SATA SSD | Admin box: runs the Claude Code sessions and the lab test loggers |
 | **morgana** (formerly arsene) | Dell Latitude 5420, Core i5-1135G7, 16 GB DDR4, 256 GB NVMe | Experiments (Kubernetes candidate); its internal mic is the lab noise meter for fan tests |
 
@@ -77,10 +77,12 @@ specific to this lab.
 ├── .gitignore                  # Keeps .env secrets, databases and service data out of git
 ├── docker-compose/             # Container services (paths come from ${COMPOSE_BASE_PATH} in a gitignored .env)
 │   ├── AdGuardHome/            # DNS ad-blocking (runs on futaba)
+│   ├── adguardhome-fallback/   # AdGuard Home replica of futaba's, kept in sync by adguardhome-sync (tinynas)
 │   ├── blackbox/               # Probes of the public sites with site-down and cert-expiry alerts (futaba)
-│   ├── cloudflare-ddns/        # Dynamic DNS for rohitnavani.com (runs on futaba)
+│   ├── cloudflare-ddns/        # Dynamic DNS for rohitnavani.com (futaba; docker-compose.tinynas.yml for tinynas)
 │   ├── exporters/              # node-exporter (tinynas)
 │   └── resume-site/            # nginx for the rohitnavani.com resume site, with its host nginx site (futaba)
+├── fail2ban/                  # sshd jails for futaba (reachable from the internet) and tinynas
 ├── fan-control/                # Fan controllers for mementos, the MD1200 shelf and ryuji, with tests and test tools
 │                               #   (see fan-control/README.md for the exact hardware)
 └── scripts/                    # Installed to /usr/local/bin and run from root's cron

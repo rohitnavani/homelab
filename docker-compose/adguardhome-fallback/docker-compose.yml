@@ -1,0 +1,20 @@
+# AdGuard Home fallback resolver on tinynas (10.0.0.5), a copy of futaba's (10.0.0.3). Added 2026-10-15.
+# The UDW's DHCP hands out both resolvers. adguardhome-sync copies futaba's settings, filters, rewrites and client
+# rules here every 10 minutes, so make changes on futaba. Config and data live in /var/lib/adguardhome (not
+# replicated; rebuilt from futaba); the sync login is in /etc/lab-secrets/adguardhome-sync.env (root:docker 0640).
+services:
+  adguardhome:
+    image: adguard/adguardhome@sha256:aba9e3bf0613be3ba3755e1fc311b126e2c24bec25e18b6483894a88283074f0 # v0.107.79, as on futaba
+    container_name: adguardhome
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/lib/adguardhome/conf:/opt/adguardhome/conf
+      - /var/lib/adguardhome/work:/opt/adguardhome/work
+  adguardhome-sync:
+    image: ghcr.io/bakito/adguardhome-sync@sha256:4fec72b9c580c6711036ea42db645232d86384fde687365b0d0452d38d507280 # v0.9.4
+    container_name: adguardhome-sync
+    restart: unless-stopped
+    command: run
+    env_file: /etc/lab-secrets/adguardhome-sync.env
+    depends_on: [adguardhome]

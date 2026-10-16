@@ -1,0 +1,16 @@
+# futaba: ban addresses that fail SSH logins. The router forwards WAN port 2000 here as Rohit's fallback access
+# (public-key only). Rohit 2026-10-15: 3 failures within 10 minutes = 30-minute ban. Aggressive mode also counts
+# the pre-auth disconnects key-only bots produce. The lab LAN and the VPN pool are never banned.
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/24 10.0.1.0/24
+
+[sshd]
+enabled  = true
+port     = ssh
+backend  = systemd
+# Ubuntu 24.04 runs sshd as ssh.service; the stock match (sshd.service) sees nothing.
+journalmatch = _SYSTEMD_UNIT=ssh.service + _COMM=sshd
+mode     = aggressive
+maxretry = 3
+findtime = 10m
+bantime  = 30m

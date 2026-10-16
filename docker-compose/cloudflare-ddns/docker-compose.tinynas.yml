@@ -1,0 +1,14 @@
+# Second Cloudflare DDNS updater for direct-ip.rohitnavani.com (Jellyfin's CNAME and the VPN's vpn CNAME point at it),
+# running alongside futaba's. Both run all the time and write the same public IP, so either one keeps the record
+# right while the other box is down; no failover logic needed. Added 2026-10-15, same image as futaba's.
+# The API token lives in /etc/lab-secrets/cloudflare-ddns.env (root:docker 0640), outside this replicated dataset.
+services:
+  cloudflare-ddns:
+    image: favonia/cloudflare-ddns@sha256:61013368c8f95981c0bb8bf56d962078d8b4e95724a554fa2dabb20d6e478097
+    container_name: cloudflare-ddns
+    restart: always
+    env_file: /etc/lab-secrets/cloudflare-ddns.env
+    environment:
+      - DOMAINS=direct-ip.rohitnavani.com
+      - PROXY=false # unproxied (grey cloud): Jellyfin and the VPN connect to the home IP directly
+      - IP6_PROVIDER=none

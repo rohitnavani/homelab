@@ -1,0 +1,9 @@
+[sshd]
+enabled = true
+port = ssh
+backend = systemd
+# Ubuntu 24.04 runs sshd as ssh.service; the stock match (sshd.service) saw nothing (fixed 2026-10-15).
+journalmatch = _SYSTEMD_UNIT=ssh.service + _COMM=sshd
+bantime = 1h
+findtime = 10m
+maxretry = 3
