@@ -36,7 +36,7 @@ for tinynas alone and now covers the whole lab.
 | Host | Function |
 |---|---|
 | tinypc | Desktop workstation (i7-12700F, RTX 3070, Fedora KDE); uses an iSCSI disk from tinynas and runs the lab's local AI stack (Ollama, Open WebUI, SearXNG) |
-| akechi (formerly ultrabook) | Framework Laptop 13 Pro (Core Ultra 5 325, 32 GB, Kubuntu); Rohit's daily laptop, used as a thin client |
+| akechi (formerly ultrabook) | Framework Laptop 13 Pro (Core Ultra 5 325, 32 GB, Kubuntu); Rohit's daily laptop, used as a thin client; monitored as a roaming host that pushes its metrics (see `monitoring/`) |
 
 ## Storage (ZFS)
 
@@ -87,6 +87,8 @@ specific to this lab.
 ├── fail2ban/                   # sshd jails for futaba (reachable from the internet) and tinynas
 ├── fan-control/                # Fan controllers for mementos, the MD1200 shelf and ryuji, with tests and test tools
 │                               #   (see fan-control/README.md for the exact hardware)
+├── monitoring/                 # deploy-monitoring: adds a host to the lab's monitoring in one command; servers are
+│                               #   scraped, roaming hosts such as akechi push from a Prometheus agent
 └── scripts/                    # Installed to /usr/local/bin and run from root's cron
     ├── autorar                 # Compresses finished downloads (tinynas)
     ├── backup-mementos         # Nightly syncoid pull of mementos's Nextcloud datasets, the onsite copy (tinynas; sbin)

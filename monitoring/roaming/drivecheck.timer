@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily drivecheck that catches up after suspend or power-off
+Documentation=https://github.com/rohitnavani/homelab/tree/main/monitoring
+
+[Timer]
+# Cron skips a run the machine slept through, and two missed days would trip DriveCheckStale. A calendar timer that
+# came due during suspend fires on resume, and Persistent= covers time spent powered off.
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

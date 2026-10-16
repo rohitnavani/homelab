@@ -1,0 +1,10 @@
+[Unit]
+Description=Drive health check (drivecheck) for a roaming host
+Documentation=https://github.com/rohitnavani/homelab/tree/main/monitoring
+
+[Service]
+Type=oneshot
+Environment=DRIVECHECK_LOG_DIR=/var/log/drive_logs DRIVECHECK_NO_MAIL=1
+ExecStart=/bin/bash -c '/usr/local/bin/drivecheck >> /var/log/drive_logs/drive_check_$(date +%%Y-%%m-%%d).log 2>&1'
+Nice=10
+IOSchedulingClass=idle

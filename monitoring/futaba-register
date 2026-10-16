@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""futaba-register - the futaba half of deploy-monitoring (2026-10-16).
+
+Adds a host to:
+  - Prometheus's node job (servers only; a roaming host pushes from its own agent instead of being scraped),
+  - the Glance dashboard: a host card after the last one (a roaming host's card says "away" and when it was last
+    seen instead of a red "offline"), plus a line in "Drives healthy by system" and "Hottest drive by system",
+  - futaba's Cockpit host list (servers only).
+
+Each file is edited in place, so the inode stays the same for Docker's single-file bind mounts, after a dated backup
+(<file>.bak-YYYY-MM-DD-<name>), and only where the host is missing, so running it again changes nothing. A Prometheus
+change is checked with promtool and reloaded, a Glance change is checked on the rendered page, and either is put back
+if the check fails. Runs on futaba as rohit; the Cockpit list belongs to root and is written with sudo.
+
+Usage: futaba-register --name NAME (--ip ADDR | --roaming) [--drive-host LABEL] [--icon NAME] [--dry-run]
+"""
+import argparse
+import datetime
+import difflib
+import ipaddress
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+PROM_YML = '/home/rohit/monitoring/prometheus/prometheus.yml'
+PROM_YML_IN_CONTAINER = '/etc/prometheus/prometheus.yml'
+GLANCE_YML = '/home/rohit/homepage/glance.yml'
+COCKPIT_JSON = '/etc/cockpit/machines.d/51-lab.json'
+
+# Clause appended to each drive widget's query, per widget title: {h} = drivecheck's host label, {g} = row name
+DRIVE_WIDGETS = {
+    'Drives healthy by system': 'label_replace(sum(drivecheck_health_ok{{host="{h}"}}),"grp","{g}","","")',
+    'Hottest drive by system': 'label_replace(max(drivecheck_temperature_celsius{{host="{h}"}}),"grp","{g}","","")',
+}
+
+
+def q(promql):
+    return urllib.parse.quote(promql, safe='')
+
+
+def short(line, width=180):
+    return line if len(line) <= width else line[:80] + ' ... ' + line[-95:]
+
+
+def show_diff(path, old, new):
+    for line in difflib.unified_diff(old.splitlines(), new.splitlines(), path, path, n=0, lineterm=''):
+        if not line.startswith(('---', '+++')):
+            print('    ' + short(line))
+
+
+def http(url, data=None, timeout=10):
+    req = urllib.request.Request(url, data=data, method='POST' if data is not None else 'GET')
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.status, r.read().decode()
+
+
+# ---- Prometheus ----
+
+def add_prom_target(text, ip):
+    """Add ip:9100 to the node job's one-line target list, in address order. None when it is already there."""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, l in enumerate(lines) if re.match(r"\s*- job_name: ['\"]?node['\"]?\s*$", l)), None)
+    if start is None:
+        sys.exit("futaba-register: prometheus.yml has no job_name 'node'")
+    for i in range(start + 1, len(lines)):
+        if re.match(r'\s*- job_name:', lines[i]):
+            break
+        m = re.match(r"(\s*- targets: \[)(.*)(\]\s*)$", lines[i])
+        if m:
+            items = re.findall(r"'([^']+)'", m.group(2))
+            want = f'{ip}:9100'
+            if want in items:
+                return None
+
+            def key(t):
+                try:
+                    return (0, ipaddress.ip_address(t.rsplit(':', 1)[0]))
+                except ValueError:
+                    return (1, t)
+            items = sorted(items + [want], key=key)
+            lines[i] = m.group(1) + ','.join(f"'{t}'" for t in items) + m.group(3)
+            return ''.join(lines)
+    sys.exit("futaba-register: the node job has no one-line '- targets: [...]' list; add the target by hand")
+
+
+# ---- Glance ----
+
+def widget_blocks(lines):
+    """Every '- type: ...' widget block as dict(start, end, indent, title, url, url_line); end is exclusive."""
+    blocks = []
+    for i, line in enumerate(lines):
+        m = re.match(r'(\s*)- type: ', line)
+        if not m:
+            continue
+        ind = len(m.group(1))
+        j = i + 1
+        while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > ind):
+            j += 1
+        while j > i + 1 and not lines[j - 1].strip():
+            j -= 1
+        b = {'start': i, 'end': j, 'indent': ind, 'title': None, 'url': '', 'url_line': None}
+        for k in range(i, j):
+            t = re.match(r'\s*title: (.*?)\s*$', lines[k])
+            if t and b['title'] is None:
+                b['title'] = t.group(1).strip('\'"')
+            u = re.match(r'\s*url: (\S+)\s*$', lines[k])
+            if u and b['url_line'] is None:
+                b['url'], b['url_line'] = u.group(1), k
+        blocks.append(b)
+    return blocks
+
+
+def is_host_card(b):
+    return 'node_cpu_seconds_total' in b['url'] and 'instance%3D%22' in b['url']
+
+
+def make_card(lines, tpl, name, instance, icon, roaming):
+    """A new host card copied from the server card tpl, with instance, title and icon changed."""
+    old_title = tpl['title']
+    old_inst = re.search(r'instance%3D%22([^%]+)%22', tpl['url']).group(1)
+    out, titled = [], False
+    for k in range(tpl['start'], tpl['end']):
+        line = lines[k]
+        if not titled and re.match(r'\s*title: ', line):
+            line = re.sub(r'(title: ).*', lambda m: m.group(1) + name, line)
+            titled = True
+        line = line.replace(f'instance%3D%22{old_inst}%22', f'instance%3D%22{instance}%22')
+        line = re.sub(r'dashboard-icons/png/[A-Za-z0-9._-]+\.png', f'dashboard-icons/png/{icon}.png', line)
+        line = line.replace(f'color-base">{old_title}</span>', f'color-base">{name}</span>')
+        if roaming and '>offline</div>' in line:
+            lead = line[:len(line) - len(line.lstrip())]
+            line = (lead + '{{ $seen := (.Subrequest "seen").JSON.String "data.result.0.value.1" }}'
+                    '<div class="size-h6 color-subdue">away{{ if $seen }}, last seen '
+                    '<span {{ parseRelativeTime "unix" $seen }}></span> ago{{ end }}</div>\n')
+        out.append(line)
+        if roaming and k == tpl['url_line']:
+            ind = line[:len(line) - len(line.lstrip())]
+            base = tpl['url'].split('query?query=')[0] + 'query?query='
+            seen = f'floor(max_over_time(timestamp(up{{job="node",instance="{instance}"}})[30d:5m]))'
+            out += [f'{ind}subrequests:\n', f'{ind}  seen:\n', f'{ind}    url: {base}{q(seen)}\n']
+    if roaming and not any('$seen' in line for line in out):
+        sys.exit('futaba-register: the template card has no "offline" line to turn into "away"; update make_card')
+    return out
+
+
+def add_glance(text, name, instance, drive_host, icon, roaming):
+    """Returns (new text or None, list of what changed)."""
+    lines = text.splitlines(keepends=True)
+    blocks = widget_blocks(lines)
+    cards = [b for b in blocks if is_host_card(b)]
+    if not cards:
+        sys.exit('futaba-register: no host cards found in glance.yml')
+    notes = []
+    inserts = {}   # line index -> lines to insert before it
+    appends = {}   # line index -> new line
+    if any(b['title'] == name or f'instance%3D%22{instance}%22' in b['url'] for b in cards):
+        pass
+    else:
+        tpl = next((b for b in reversed(cards) if 'subrequests:' not in ''.join(lines[b['start']:b['end']])), None)
+        if tpl is None:
+            sys.exit('futaba-register: no plain server card to copy')
+        inserts[cards[-1]['end']] = make_card(lines, tpl, name, instance, icon, roaming)
+        notes.append(f'Glance card "{name}" ({"roaming, shows away" if roaming else "server"})')
+    for title, clause in DRIVE_WIDGETS.items():
+        b = next((b for b in blocks if b['title'] == title), None)
+        if b is None:
+            print(f'  note: no "{title}" widget in glance.yml, skipped')
+            continue
+        if f'host%3D%22{drive_host}%22' in b['url']:
+            continue
+        line = lines[b['url_line']].rstrip('\n')
+        appends[b['url_line']] = line + '%20or%20' + q(clause.format(h=drive_host, g=name)) + '\n'
+        notes.append(f'Glance "{title}" row "{name}" (drivecheck host {drive_host})')
+    if not notes:
+        return None, []
+    out = []
+    for k, line in enumerate(lines):
+        out += inserts.get(k, [])
+        out.append(appends.get(k, line))
+    out += inserts.get(len(lines), [])
+    return ''.join(out), notes
+
+
+def check_glance(glance_url, name, roaming):
+    """The rendered home page has the card, rendered without a template error."""
+    for _ in range(10):
+        time.sleep(2)
+        try:
+            _, page = http(f'{glance_url}/api/pages/home/content/')
+        except Exception as e:
+            page, err = '', str(e)
+        i = page.find(f'<h2 class="uppercase">{name}</h2>')
+        if i < 0:
+            continue
+        card = page[i:i + 3000].split('<div class="widget widget-type')[0]
+        if re.search(r'error', card, re.I):
+            return False, re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', card))[:300]
+        if 'away' in card or 'CPU' in card:
+            return True, 'away' if 'away' in card else 'online'
+    return False, 'card not on the rendered page after 20 s'
+
+
+# ---- Cockpit ----
+
+def add_cockpit(text, name, ip, user):
+    data = json.loads(text)
+    if name in data or any(v.get('address') == ip for v in data.values()):
+        return None
+
+    def key(kv):
+        try:
+            return (0, ipaddress.ip_address(kv[1].get('address', '')))
+        except ValueError:
+            return (1, kv[0])
+    data[name] = {'address': ip, 'user': user}
+    width = max(len(k) for k in data) + 3
+    rows = ['  ' + (json.dumps(k) + ':').ljust(width) + ' ' + json.dumps(v, separators=(', ', ': '))
+            for k, v in sorted(data.items(), key=key)]
+    return '{\n' + ',\n'.join(rows) + '\n}' + ('\n' if text.endswith('\n') else '')
+
+
+# ---- writing ----
+
+def backup_path(path, name):
+    return f'{path}.bak-{datetime.date.today():%Y-%m-%d}-{name}'
+
+
+def write_in_place(path, text, name, sudo=False):
+    bak = backup_path(path, name)
+    if sudo:
+        subprocess.run(['sudo', '-n', 'sh', '-c', f'[ -e "{bak}" ] || cp -p "{path}" "{bak}"'], check=True)
+        subprocess.run(['sudo', '-n', 'tee', path], input=text.encode(), stdout=subprocess.DEVNULL, check=True)
+    else:
+        if not os.path.exists(bak):
+            shutil.copy2(path, bak)
+        with open(path, 'r+') as f:   # same inode: Docker's single-file bind mounts keep seeing it
+            f.seek(0)
+            f.write(text)
+            f.truncate()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    ap.add_argument('--name', required=True)
+    ap.add_argument('--ip', help='server mode: the address Prometheus scrapes and Cockpit connects to')
+    ap.add_argument('--roaming', action='store_true')
+    ap.add_argument('--drive-host', help="drivecheck's host label (the host's `hostname -s`), default --name")
+    ap.add_argument('--icon', default='ubuntu-linux', help='dashboard-icons name for the Glance card')
+    ap.add_argument('--cockpit-user', default='rohit')
+    ap.add_argument('--no-cockpit', action='store_true')
+    ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--no-check', action='store_true', help='skip promtool, reload and page checks (tests on copies)')
+    ap.add_argument('--prometheus-yml', default=PROM_YML)
+    ap.add_argument('--glance-yml', default=GLANCE_YML)
+    ap.add_argument('--cockpit-json', default=COCKPIT_JSON)
+    ap.add_argument('--prometheus-container', default='prometheus')
+    ap.add_argument('--prometheus-url', default='http://127.0.0.1:9090')
+    ap.add_argument('--glance-url', default='http://127.0.0.1:8085')
+    a = ap.parse_args()
+    if not a.roaming and not a.ip:
+        sys.exit('futaba-register: a server needs --ip (or use --roaming)')
+    name, drive_host = a.name, a.drive_host or a.name
+    instance = name if a.roaming else a.ip
+    tag = ' (dry run)' if a.dry_run else ''
+    changed = 0
+
+    # Prometheus: servers are scraped; roaming hosts push to the remote-write receiver
+    if not a.roaming:
+        old = open(a.prometheus_yml).read()
+        new = add_prom_target(old, a.ip)
+        if new is None:
+            print(f'  Prometheus: {a.ip}:9100 already in the node job')
+        else:
+            print(f'  Prometheus: add {a.ip}:9100 to the node job{tag}')
+            show_diff(a.prometheus_yml, old, new)
+            if not a.dry_run:
+                write_in_place(a.prometheus_yml, new, name)
+                changed += 1
+                if not a.no_check:
+                    r = subprocess.run(['docker', 'exec', a.prometheus_container, 'promtool', 'check', 'config',
+                                        PROM_YML_IN_CONTAINER], capture_output=True, text=True)
+                    if r.returncode != 0:
+                        write_in_place(a.prometheus_yml, old, name)
+                        sys.exit('futaba-register: promtool rejected the change, put prometheus.yml back:\n'
+                                 + r.stdout + r.stderr)
+                    try:
+                        status, _ = http(f'{a.prometheus_url}/-/reload', data=b'')
+                    except Exception as e:
+                        write_in_place(a.prometheus_yml, old, name)
+                        http(f'{a.prometheus_url}/-/reload', data=b'')
+                        sys.exit(f'futaba-register: Prometheus reload failed ({e}); put prometheus.yml back')
+                    print(f'  Prometheus: config checked and reloaded (HTTP {status})')
+
+    # Glance
+    old = open(a.glance_yml).read()
+    new, notes = add_glance(old, name, instance, drive_host, a.icon, a.roaming)
+    if new is None:
+        print(f'  Glance: {name} already has a card and drive rows')
+    else:
+        for n in notes:
+            print(f'  {n}: add{tag}')
+        show_diff(a.glance_yml, old, new)
+        if not a.dry_run:
+            write_in_place(a.glance_yml, new, name)
+            changed += 1
+            if not a.no_check:
+                ok, detail = check_glance(a.glance_url, name, a.roaming)
+                if not ok:
+                    write_in_place(a.glance_yml, old, name)
+                    sys.exit(f'futaba-register: the new Glance card did not render ({detail}); put glance.yml back')
+                print(f'  Glance: card renders ({detail})')
+
+    # Cockpit (servers only: futaba's Cockpit reaches hosts over SSH at a fixed address)
+    if not a.roaming and not a.no_cockpit:
+        try:
+            old = open(a.cockpit_json).read()
+        except OSError as e:
+            old = None
+            print(f'  Cockpit: cannot read {a.cockpit_json} ({e}); skipped')
+        if old is not None:
+            new = add_cockpit(old, name, a.ip, a.cockpit_user)
+            if new is None:
+                print(f'  Cockpit: {name} already listed')
+            else:
+                print(f'  Cockpit: add {name} ({a.ip}){tag}')
+                show_diff(a.cockpit_json, old, new)
+                if not a.dry_run:
+                    try:
+                        write_in_place(a.cockpit_json, new, name, sudo=not os.access(a.cockpit_json, os.W_OK))
+                        changed += 1
+                    except subprocess.CalledProcessError:
+                        print(f'  Cockpit: no passwordless sudo on futaba; add this line to {a.cockpit_json} by hand:\n'
+                              f'    "{name}": {{"address": "{a.ip}", "user": "{a.cockpit_user}"}}')
+
+    print(f'futaba-register: {"dry run, nothing changed" if a.dry_run else f"{changed} file(s) changed"}')
+
+
+if __name__ == '__main__':
+    main()

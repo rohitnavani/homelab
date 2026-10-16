@@ -1,0 +1,233 @@
+#!/bin/bash
+# install-host - the host half of deploy-monitoring (2026-10-16). Runs as root on the machine being added, from a
+# staging copy of the files it installs, and is safe to run again: it only changes what is missing or different.
+#
+#   server   (default) node_exporter on :9100 for futaba's Prometheus to scrape; drivecheck from /etc/cron.d (daily
+#            check at 00:00, short SMART self-tests Saturday 22:00, long ones on the 1st at 12:00); thermal-log;
+#            with --cockpit, Cockpit's bridge so futaba's Cockpit can manage the host.
+#   roaming  a machine that is often away, asleep or off (a laptop): node_exporter on localhost only, a Prometheus
+#            agent that pushes to futaba from wherever the host is and buffers up to 24 h while futaba is out of
+#            reach, drivecheck from a systemd timer that catches up after suspend or power-off, no scheduled
+#            self-tests (a suspend aborts them, which drivecheck reports as a failure), thermal-log.
+#
+# Usage: install-host --name NAME [--roaming --push-url URL] [--cockpit] [--dry-run]
+# Ubuntu and Debian (apt) only.
+set -euo pipefail
+
+mode=server name="" push_url="" cockpit=0 dry=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --name) name="$2"; shift 2 ;;
+        --roaming) mode=roaming; shift ;;
+        --push-url) push_url="$2"; shift 2 ;;
+        --cockpit) cockpit=1; shift ;;
+        --dry-run) dry=1; shift ;;
+        *) echo "install-host: unknown argument $1" >&2; exit 2 ;;
+    esac
+done
+src=$(cd "$(dirname "$0")" && pwd)
+die(){ echo "install-host: $*" >&2; exit 1; }
+[ -n "$name" ] || die "--name is required"
+[ "$mode" = server ] || [ -n "$push_url" ] || die "--roaming needs --push-url"
+[ "$(id -u)" = 0 ] || [ $dry = 1 ] || die "run as root (a --dry-run can run as any user)"
+command -v apt-get >/dev/null || die "apt-based hosts only (Ubuntu, Debian)"
+
+TEXTFILE_DIR=/var/lib/node_exporter/textfile_collector
+TODAY=$(date +%F)
+changed=()
+would(){ echo "  would $*"; }
+installed(){ dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
+
+# put SRC DEST MODE: install a file only when it is missing or different. Returns 0 when it changed (or would).
+put(){
+    if [ -f "$2" ] && cmp -s "$1" "$2"; then return 1; fi
+    if [ $dry = 1 ]; then would "install $2"; else install -D -m "$3" "$1" "$2"; changed+=("$2"); fi
+    return 0
+}
+
+# set_args FILE VALUE: set the ARGS= line of a Debian defaults file. Returns 0 when it changed (or would).
+set_args(){
+    local f="$1" want="ARGS=\"$2\""
+    if [ -f "$f" ] && grep -qxF -- "$want" "$f"; then return 1; fi
+    if [ $dry = 1 ]; then would "set $want in $f"; return 0; fi
+    if [ -f "$f" ] && [ ! -e "$f.bak-$TODAY" ]; then cp -p "$f" "$f.bak-$TODAY"; fi
+    if [ -f "$f" ] && grep -q '^ARGS=' "$f"; then
+        sed -i "s|^ARGS=.*|$want|" "$f"
+    else
+        echo "$want" >> "$f"
+    fi
+    changed+=("$f")
+    return 0
+}
+
+# svc UNIT RESTART: enable the unit, then restart it (RESTART=1) or start it if it is not running.
+svc(){
+    if [ $dry = 1 ]; then
+        systemctl is-enabled -q "$1" 2>/dev/null || would "enable $1"
+        if [ "$2" = 1 ]; then would "restart $1"; elif ! systemctl is-active -q "$1"; then would "start $1"; fi
+        return 0
+    fi
+    if ! systemctl is-enabled -q "$1" 2>/dev/null; then systemctl enable -q "$1"; changed+=("enabled $1"); fi
+    if [ "$2" = 1 ]; then systemctl restart "$1"; changed+=("restarted $1")
+    elif ! systemctl is-active -q "$1"; then systemctl start "$1"; changed+=("started $1"); fi
+    return 0
+}
+
+apt_updated=0
+apt_install(){  # apt_install [apt-get options] PKG...
+    if [ $apt_updated = 0 ]; then apt-get update -qq; apt_updated=1; fi
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+}
+
+echo "install-host on $(hostname -s): $mode mode$([ $dry = 1 ] && echo ', dry run')"
+
+# ---- packages ----
+missing=()
+for p in prometheus-node-exporter nvme-cli smartmontools python3; do installed "$p" || missing+=("$p"); done
+if [ ${#missing[@]} -gt 0 ]; then
+    extra=()
+    # No BMC: keep openipmi from being pulled in (its service fails at boot without one). One that is already
+    # installed (ipmitool brings it) is left alone.
+    if ! installed openipmi && ! dmidecode -t 38 2>/dev/null | grep -q 'IPMI Device Information'; then
+        extra+=(openipmi-)
+    fi
+    if [ $dry = 1 ]; then would "apt-get install ${missing[*]} ${extra[*]}"
+    else apt_install "${missing[@]}" "${extra[@]}"; changed+=("installed ${missing[*]}"); fi
+fi
+if [ $mode = roaming ] && ! installed prometheus; then
+    if [ $dry = 1 ]; then would "apt-get install prometheus (run as an agent)"
+    else
+        # The package would start a full Prometheus server on *:9090 with its sample config; keep it stopped until
+        # the agent config below is in place.
+        policy=0
+        if [ ! -e /usr/sbin/policy-rc.d ]; then
+            printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d; chmod 755 /usr/sbin/policy-rc.d; policy=1
+            trap 'rm -f /usr/sbin/policy-rc.d' EXIT
+        fi
+        apt_install prometheus
+        if [ $policy = 1 ]; then rm -f /usr/sbin/policy-rc.d; trap - EXIT; fi
+        changed+=("installed prometheus")
+    fi
+fi
+if [ $cockpit = 1 ]; then
+    cmiss=()
+    for p in cockpit-bridge cockpit-system cockpit-storaged; do installed "$p" || cmiss+=("$p"); done
+    if [ ${#cmiss[@]} -gt 0 ]; then
+        # Bridge, system and storaged only: no cockpit-ws (futaba's Cockpit is the entry point) and never
+        # cockpit-networkmanager (it pulls in NetworkManager on systemd-networkd hosts).
+        if [ $dry = 1 ]; then would "apt-get install --no-install-recommends ${cmiss[*]}"
+        else apt_install --no-install-recommends "${cmiss[@]}"; changed+=("installed ${cmiss[*]}"); fi
+    fi
+fi
+
+# ---- node_exporter ----
+[ -d "$TEXTFILE_DIR" ] || { if [ $dry = 1 ]; then would "create $TEXTFILE_DIR"; else mkdir -p "$TEXTFILE_DIR"; fi; }
+if [ $mode = roaming ]; then
+    node_args=" --web.listen-address=127.0.0.1:9100 --collector.textfile.directory=$TEXTFILE_DIR"
+else
+    node_args=" --collector.textfile.directory=$TEXTFILE_DIR"
+fi
+r=0
+if set_args /etc/default/prometheus-node-exporter "$node_args"; then r=1; fi
+svc prometheus-node-exporter $r
+
+# ---- drivecheck ----
+put "$src/drivecheck" /usr/local/bin/drivecheck 755 || true
+put "$src/drive-selftest" /usr/local/bin/drive-selftest 755 || true
+[ -d /var/log/drive_logs ] || { if [ $dry = 1 ]; then would "create /var/log/drive_logs"; else mkdir -p /var/log/drive_logs; fi; }
+if [ $mode = server ]; then
+    put "$src/drivecheck.cron" /etc/cron.d/drivecheck 644 || true
+    if [ -e /etc/systemd/system/drivecheck.timer ]; then   # switched back from roaming
+        if [ $dry = 1 ]; then would "remove drivecheck.timer and drivecheck.service"
+        else
+            systemctl disable -q --now drivecheck.timer || true
+            rm -f /etc/systemd/system/drivecheck.timer /etc/systemd/system/drivecheck.service
+            systemctl daemon-reload; changed+=("removed drivecheck.timer")
+        fi
+    fi
+else
+    if [ -e /etc/cron.d/drivecheck ]; then
+        if [ $dry = 1 ]; then would "remove /etc/cron.d/drivecheck (the timer replaces it)"
+        else rm -f /etc/cron.d/drivecheck; changed+=("removed /etc/cron.d/drivecheck"); fi
+    fi
+    t=0
+    if put "$src/roaming/drivecheck.service" /etc/systemd/system/drivecheck.service 644; then t=1; fi
+    if put "$src/roaming/drivecheck.timer" /etc/systemd/system/drivecheck.timer 644; then t=1; fi
+    if [ $t = 1 ] && [ $dry = 0 ]; then systemctl daemon-reload; fi
+    svc drivecheck.timer 0
+fi
+# A first reading now, so the drive metrics exist right away instead of after midnight
+if [ ! -s "$TEXTFILE_DIR/drivecheck.prom" ]; then
+    if [ $dry = 1 ]; then would "run drivecheck once"
+    elif [ $mode = roaming ]; then systemctl start drivecheck.service; changed+=("ran drivecheck")
+    else
+        DRIVECHECK_LOG_DIR=/var/log/drive_logs DRIVECHECK_NO_MAIL=1 /usr/local/bin/drivecheck \
+            >> "/var/log/drive_logs/drive_check_$TODAY.log" 2>&1 || true
+        changed+=("ran drivecheck")
+    fi
+fi
+
+# ---- thermal-log ----
+r=0
+if put "$src/thermal-log" /usr/local/sbin/thermal-log 755; then r=1; fi
+if put "$src/thermal-log.service" /etc/systemd/system/thermal-log.service 644; then r=1; fi
+put "$src/thermal-log.logrotate" /etc/logrotate.d/thermal-log 644 || true
+if [ $r = 1 ] && [ $dry = 0 ]; then systemctl daemon-reload; fi
+svc thermal-log $r
+
+# ---- Prometheus agent (roaming) ----
+if [ $mode = roaming ]; then
+    cfg=/etc/prometheus/prometheus.yml
+    tmp=$(mktemp)
+    sed -e "s|@NAME@|$name|g" -e "s|@PUSH_URL@|$push_url|g" "$src/roaming/prometheus-agent.yml" > "$tmp"
+    r=0
+    if ! { [ -f $cfg ] && cmp -s "$tmp" $cfg; }; then
+        r=1
+        if [ $dry = 1 ]; then would "write $cfg (agent: scrape 127.0.0.1:9100 as instance=$name, push to $push_url)"
+        else
+            if [ -f $cfg ] && [ ! -e "$cfg.bak-$TODAY" ]; then cp -p $cfg "$cfg.bak-$TODAY"; fi
+            install -D -m 644 "$tmp" $cfg; changed+=("$cfg")
+        fi
+    fi
+    rm -f "$tmp"
+    # Agent mode is --agent from Prometheus 3.0, --enable-feature=agent before (Ubuntu 24.04 and 26.04 ship 2.x)
+    help=$(prometheus --help 2>&1 || true)
+    if grep -qE -- '--(\[no-\])?agent\b' <<<"$help"; then agent_flag=--agent
+    else agent_flag=--enable-feature=agent; fi
+    agent_args="$agent_flag --config.file=$cfg --storage.agent.path=/var/lib/prometheus/agent"
+    agent_args+=" --storage.agent.retention.max-time=24h --web.listen-address=127.0.0.1:9090"
+    if set_args /etc/default/prometheus "$agent_args"; then r=1; fi
+    if [ $dry = 0 ]; then
+        promtool check config --agent $cfg >/dev/null || die "promtool rejected $cfg"
+    fi
+    svc prometheus $r
+    if [ -n "$(find /var/lib/prometheus/metrics2 -mindepth 1 -print -quit 2>/dev/null)" ]; then
+        echo "  note: /var/lib/prometheus/metrics2 holds data from Prometheus running as a full server; the agent does not use it"
+    fi
+fi
+
+# ---- check what is listening ----
+if [ $dry = 0 ]; then
+    sleep 2
+    python3 - "$mode" <<'EOF'
+import sys, urllib.request
+def get(url):
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return r.read().decode()
+    except Exception as e:
+        return 'ERROR %s' % e
+m = get('http://127.0.0.1:9100/metrics')
+n = sum(1 for l in m.splitlines() if l and not l.startswith('#'))
+print('  node_exporter: %s' % ('%d samples' % n if not m.startswith('ERROR') else m))
+print('  drivecheck metrics: %s' % ('yes' if 'drivecheck_last_run_timestamp_seconds' in m else 'not yet'))
+if sys.argv[1] == 'roaming':
+    print('  agent: %s' % get('http://127.0.0.1:9090/-/ready').strip())
+EOF
+fi
+
+echo
+if [ $dry = 1 ]; then echo "install-host: dry run, nothing changed"
+elif [ ${#changed[@]} -eq 0 ]; then echo "install-host: nothing needed changing"
+else echo "install-host: changed:"; printf '  - %s\n' "${changed[@]}"; fi

@@ -1,0 +1,154 @@
+#!/bin/bash
+# deploy-monitoring - add a Linux host to the lab's monitoring in one command (2026-10-16).
+#
+#   deploy-monitoring HOST [--roaming] [--no-cockpit] [--ip ADDR] [--icon NAME] [--dry-run]
+#
+# Run it from a checkout of this repo on a machine that can SSH to HOST and to futaba (makoto, tinypc or akechi; the
+# servers hold no SSH logins). It does the whole new-host checklist:
+#   on HOST    (install-host, as root) node_exporter with the textfile collector, drivecheck and drive-selftest,
+#              thermal-log, and Cockpit's bridge (servers);
+#   on futaba  (futaba-register) the Prometheus scrape target (servers), a Glance host card plus a row in the two
+#              drive widgets, and the Cockpit host list (servers);
+# then waits until Prometheus has the host's metrics.
+#
+# --roaming is for a machine that is often away, asleep or off, such as a laptop: nothing scrapes it. A Prometheus
+# agent on the host scrapes node_exporter on localhost and pushes to futaba at home or over the VPN, so its changing
+# address does not matter, and it keeps up to 24 h of samples while futaba is out of reach. Away time is normal: with
+# no samples, up never reads 0, so nothing alerts, and its Glance card says "away" and when it was last seen.
+#
+# Needs: key-based SSH to HOST and futaba; sudo on HOST (passwordless, e.g. after `sudo-grant HOST`, or it asks once
+# on a terminal); for --roaming, futaba's Prometheus started with --web.enable-remote-write-receiver. Safe to run
+# again: both halves change only what is missing or different. Ubuntu and Debian hosts. Details: monitoring/README.md.
+set -euo pipefail
+
+FUTABA=${FUTABA:-futaba}                            # SSH name of the monitoring host
+PROM_URL=${PROM_URL:-http://futaba.home.arpa:9090}  # its Prometheus, as this machine and roaming hosts reach it
+
+usage(){ echo "usage: deploy-monitoring HOST [--roaming] [--no-cockpit] [--ip ADDR] [--icon NAME] [--dry-run]" >&2; exit 2; }
+die(){ echo "deploy-monitoring: $*" >&2; exit 1; }
+
+host="" roaming=0 cockpit=1 ip="" icon="" dry=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --roaming) roaming=1; shift ;;
+        --no-cockpit) cockpit=0; shift ;;
+        --ip) ip="${2:-}"; shift 2 ;;
+        --icon) icon="${2:-}"; shift 2 ;;
+        --dry-run) dry=1; shift ;;
+        -h|--help) usage ;;
+        -*) echo "deploy-monitoring: unknown option $1" >&2; usage ;;
+        *) [ -z "$host" ] || usage; host="$1"; shift ;;
+    esac
+done
+[ -n "$host" ] || usage
+name=$(tr '[:upper:]' '[:lower:]' <<<"${host%%.*}")
+
+here=$(cd "$(dirname "$0")" && pwd)
+repo=$(dirname "$here")
+host_files=("$here/install-host" "$repo/scripts/drivecheck" "$repo/scripts/drive-selftest" "$repo/scripts/drivecheck.cron"
+            "$repo/fan-control/monitoring/thermal-log" "$repo/fan-control/monitoring/thermal-log.service"
+            "$repo/fan-control/monitoring/thermal-log.logrotate")
+roaming_files=("$here/roaming/prometheus-agent.yml" "$here/roaming/drivecheck.service" "$here/roaming/drivecheck.timer")
+for f in "${host_files[@]}" "${roaming_files[@]}" "$here/futaba-register"; do
+    [ -f "$f" ] || die "missing $f (run it from a full checkout of the homelab repo)"
+done
+
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10)
+on_futaba(){  # on_futaba COMMAND-STRING (stdin passes through)
+    if [ "$(hostname -s)" = "$FUTABA" ]; then bash -c "$1"; else "${SSH[@]}" "$FUTABA" "$1"; fi
+}
+prom(){  # prom PATH-AND-QUERY -> the response body, or nothing
+    python3 -c 'import sys, urllib.request
+try:
+    print(urllib.request.urlopen(sys.argv[1], timeout=10).read().decode())
+except Exception:
+    pass' "$PROM_URL$1"
+}
+prom_value(){  # prom_value PROMQL -> the first sample's value, or nothing
+    prom "/api/v1/query?query=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1")" |
+        python3 -c 'import json, sys
+try:
+    r = json.load(sys.stdin)["data"]["result"]
+    print(r[0]["value"][1] if r else "")
+except Exception:
+    pass'
+}
+
+mode=$([ $roaming = 1 ] && echo roaming || echo server)
+echo "== $name ($mode)$([ $dry = 1 ] && echo ', dry run'): checking access"
+"${SSH[@]}" "$host" true 2>/dev/null || die "cannot SSH to $host with a key"
+facts=$("${SSH[@]}" "$host" '. /etc/os-release; hostname -s; echo "${ID:-unknown}"; echo "${PRETTY_NAME:-unknown}"
+    sudo -n true 2>/dev/null && echo sudo || echo nosudo; command -v apt-get >/dev/null && echo apt || echo noapt')
+drive_host=$(sed -n 1p <<<"$facts"); os_id=$(sed -n 2p <<<"$facts"); os_name=$(sed -n 3p <<<"$facts")
+sudo_ok=$(sed -n 4p <<<"$facts"); has_apt=$(sed -n 5p <<<"$facts")
+[ "$has_apt" = apt ] || die "$host runs $os_name; install-host supports apt-based hosts (Ubuntu, Debian) only"
+if [ -z "$icon" ]; then
+    case "$os_id" in ubuntu) icon=ubuntu-linux ;; debian) icon=debian-linux ;; fedora) icon=fedora ;; *) icon=linux ;; esac
+fi
+on_futaba true || die "cannot SSH to futaba ($FUTABA)"
+echo "  $host: $os_name, drivecheck host label $drive_host, sudo: $sudo_ok"
+
+push_ready=1
+if [ $roaming = 1 ]; then
+    if ! prom /api/v1/status/flags | grep -q '"web.enable-remote-write-receiver":"true"'; then
+        push_ready=0
+        echo "  WARNING: futaba's Prometheus is not accepting pushes yet: add --web.enable-remote-write-receiver to its"
+        echo "  command (monitoring/README.md). The host is set up anyway and starts reporting once that is done."
+    fi
+    if ! prom /api/v1/status/config | grep -qE 'out_of_order_time_window: [1-9]'; then
+        echo "  note: futaba's Prometheus has no out_of_order_time_window, so samples buffered while away are refused"
+    fi
+elif [ -z "$ip" ]; then
+    ip=$(on_futaba "getent ahostsv4 $name.home.arpa | awk 'NR==1 {print \$1}'")
+    [ -n "$ip" ] || die "$name.home.arpa does not resolve on futaba; give its fixed address with --ip"
+    echo "  address: $ip ($name.home.arpa; it must be a DHCP reservation or static)"
+fi
+
+echo "== $name: host side"
+stage=$(mktemp -d)
+rstage=""
+cleanup(){ rm -rf "$stage"; [ -z "$rstage" ] || "${SSH[@]}" "$host" "rm -rf '$rstage'" 2>/dev/null || true; }
+trap cleanup EXIT
+cp "${host_files[@]}" "$stage/"
+mkdir "$stage/roaming" && cp "${roaming_files[@]}" "$stage/roaming/"
+rstage=$("${SSH[@]}" "$host" 'mktemp -d /tmp/deploy-monitoring.XXXXXX')
+tar -C "$stage" -cf - . | "${SSH[@]}" "$host" "tar -xf - -C '$rstage'"
+args=(--name "$name")
+if [ $roaming = 1 ]; then args+=(--roaming --push-url "$PROM_URL/api/v1/write")
+elif [ $cockpit = 1 ]; then args+=(--cockpit); fi
+[ $dry = 0 ] || args+=(--dry-run)
+cmd="bash $rstage/install-host $(printf '%q ' "${args[@]}")"
+if [ "$sudo_ok" = sudo ]; then
+    "${SSH[@]}" "$host" "sudo -n $cmd"
+elif [ $dry = 1 ]; then
+    "${SSH[@]}" "$host" "$cmd"   # a dry run only reads
+elif [ -t 0 ]; then
+    ssh -t "$host" "sudo $cmd"
+else
+    die "no passwordless sudo on $host and no terminal to ask for a password: run sudo-grant $host first"
+fi
+
+echo "== $name: futaba side"
+fargs=(--name "$name" --drive-host "$drive_host" --icon "$icon")
+if [ $roaming = 1 ]; then fargs+=(--roaming); else fargs+=(--ip "$ip"); fi
+[ $cockpit = 1 ] || fargs+=(--no-cockpit)
+[ $dry = 0 ] || fargs+=(--dry-run)
+on_futaba "python3 - $(printf '%q ' "${fargs[@]}")" < "$here/futaba-register"
+
+[ $dry = 0 ] || exit 0
+echo "== $name: checking Prometheus"
+if [ $roaming = 1 ]; then sel="up{job=\"node\",instance=\"$name\"}"; else sel="up{job=\"node\",instance=\"$ip\"}"; fi
+if [ $push_ready = 0 ]; then
+    echo "  skipped: futaba is not accepting pushes yet (see the warning above)"
+    exit 0
+fi
+v=""
+for _ in $(seq 1 24); do
+    v=$(prom_value "$sel")
+    [ "$v" = 1 ] && break
+    sleep 5
+done
+if [ "$v" = 1 ]; then echo "  $sel = 1"; else echo "  $sel is '${v:-absent}' after 2 min; look at the host's journal (prometheus-node-exporter$([ $roaming = 1 ] && echo ', prometheus'))"; fi
+age=$(prom_value "round(time() - drivecheck_last_run_timestamp_seconds{host=\"$drive_host\"})")
+echo "  drivecheck: $([ -n "$age" ] && echo "last run ${age}s ago" || echo 'no metrics yet')"
+echo "deploy-monitoring: $name done"

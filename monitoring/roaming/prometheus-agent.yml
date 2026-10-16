@@ -1,0 +1,19 @@
+# Prometheus in agent mode on a roaming host (installed by deploy-monitoring as /etc/prometheus/prometheus.yml).
+# It scrapes this machine's node_exporter on localhost and pushes the samples to futaba's Prometheus, at home or over
+# the VPN, so the host's changing address never matters. While futaba is out of reach it keeps up to 24 h of samples
+# on disk (--storage.agent.retention.max-time) and sends them when it is back; futaba accepts samples up to a day old.
+# Asleep, off or away means no samples arrive: up never reads 0, so no alert fires, and Glance shows the host as away.
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets: ['127.0.0.1:9100']
+        labels:
+          instance: '@NAME@'
+remote_write:
+  - url: '@PUSH_URL@'
+    queue_config:
+      # Retry every minute at most while futaba is unreachable, instead of every 5 s
+      min_backoff: 1s
+      max_backoff: 1m
