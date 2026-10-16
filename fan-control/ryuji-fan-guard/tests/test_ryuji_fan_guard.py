@@ -1,4 +1,4 @@
-# Closed-loop harness for ryuji-fan-guard (v2, 2026-10-06; v2.3 2026-10-10; v2.4-v2.6 2026-10-13; v2.7 2026-10-14): fake clock + a ryuji
+# Closed-loop harness for ryuji-fan-guard (v2, 2026-10-06; v2.3 2026-10-10; v2.4-v2.6 2026-10-13; v2.7-v2.8 2026-10-14): fake clock + a ryuji
 # model. SIO Temp 1 and the hottest CPU settle (tau 3.5 min / 1 min) toward values that depend on the guard level, the
 # load (busy threads) and the room. usage: python3 tests/test_ryuji_fan_guard.py ryuji-fan-guard
 # v2.4: the model is for the 2x Xeon E5-2696 v4 fitted 2026-10-12 (44 cores / 88 threads, 150 W PL1 each). Idle and 4
@@ -18,6 +18,11 @@ CPU = {-80: {0: 45, 2: 63, 4: 67, 22: 69, 33: 73, 44: 77}, -60: {0: 44, 2: 58, 4
        0: {0: 41, 4: 56, 22: 62, 44: 72}, 127: {0: 40, 4: 55, 22: 61, 44: 71}}
 PKG = {0: 18, 2: 90, 4: 110, 11: 148, 22: 188, 33: 245, 44: 296}   # W, both packages (PL1 150 W each from ~30 workers)
 SIO_TAU = {-80: 600, -60: 600, -40: 600}   # SIO1 rises slowly with the system fans at their floor; ~210 s elsewhere
+# v2.8: hottest MG04 drive at a 24C room, idle disks / a sustained random-read job, by offset (2026-10-14 soaks: -80 idle
+# 45C, job +1C/min; 0: flat at 50C under the job; -8: 50 -> 51C in 6 min). tau 11 min. CPU load lifts the system fans
+# (BMC curve), worth ~2C at 11-22 workers and ~4C at 44 (estimate).
+DRV = {-80: (45, 56), -60: (45, 56), -40: (45, 55), -16: (44, 54), -8: (43, 52), 0: (42, 50), 127: (39, 45)}
+DRV_TAU = 660
 def at(table, lvl, load):
     pts = sorted(table[lvl].items())
     for (l0, v0), (l1, v1) in zip(pts, pts[1:]):
@@ -27,7 +32,7 @@ def at(table, lvl, load):
 plant = {}
 def reset(room, sio, cpu):
     plant.update(room=room, sio=sio, cpu=cpu, t=clock[0], load=0, cpu_extra=0.0, sio_force=None, cpu_force=None,
-                 dead=False, cpu_max=cpu, bmc_down=0, pkg_force=None)
+                 dead=False, cpu_max=cpu, bmc_down=0, pkg_force=None, io=0, drive=None, drive_force=None, drive_max=0)
 state = {'off': -80}
 def advance():
     dt = clock[0] - plant['t']; plant['t'] = clock[0]
@@ -38,6 +43,10 @@ def advance():
     plant['sio'] = s_inf + (plant['sio'] - s_inf) * math.exp(-dt / tau)
     plant['cpu'] = c_inf + (plant['cpu'] - c_inf) * math.exp(-dt / 60)
     plant['cpu_max'] = max(plant['cpu_max'], plant['cpu'])
+    if plant['drive'] is not None:
+        d_inf = DRV.get(lvl, DRV[-80])[plant['io']] + (plant['room'] - 24) - (4 if plant['load'] >= 44 else 2 if plant['load'] >= 11 else 0)
+        plant['drive'] = d_inf + (plant['drive'] - d_inf) * math.exp(-dt / DRV_TAU)
+        plant['drive_max'] = max(plant['drive_max'], plant['drive'])
 def temps():
     advance()
     if plant['dead']:
@@ -60,15 +69,21 @@ def fake_bmc(action, offset=None):
     if action == 'set':
         state['off'] = offset; offsets.append((round((clock[0] - T0) / 60), offset))
     return state['off']
-def run(label, end_min, room=27, start=-80, evs=(), bmc_down_s=0):
+def drives():
+    advance()
+    if plant['drive_force'] is not None:
+        return plant['drive_force']
+    return None if plant['drive'] is None else round(plant['drive'])
+def run(label, end_min, room=27, start=-80, evs=(), bmc_down_s=0, drive0=None):
     offsets.clear(); logs.clear(); clock[0] = T0; END[0] = end_min * 60; state['off'] = start
     lvl0 = start if start in SIO else -80
     reset(room, at(SIO, lvl0, 0) + room - 27, at(CPU, lvl0, 0) + room - 27)
     plant['bmc_down'] = bmc_down_s
+    plant['drive'] = drive0
     events[:] = sorted((m * 60, f) for m, f in evs)
     g = {'__name__': 'sim'}
     exec(src, g)
-    g['bmc'] = fake_bmc; g['temps'] = temps; g['STATE'] = '/dev/null'
+    g['bmc'] = fake_bmc; g['temps'] = temps; g['STATE'] = '/dev/null'; g['drives'] = drives
     g['busy_threads'] = lambda: 0.05 + plant['load']   # the guard's /proc/stat reading
     g['pkg_watts'] = lambda: (None if plant.get('pkg_force') == -1 else plant['pkg_force'] if plant.get('pkg_force') is not None
                               else round(at({'p': PKG}, 'p', plant['load']), 1))
@@ -76,7 +91,8 @@ def run(label, end_min, room=27, start=-80, evs=(), bmc_down_s=0):
     g['log'] = lambda m: logs.append((round((clock[0] - T0) / 60), m))
     try: g['main']()
     except Stop: pass
-    print(f'## {label}\n   offset changes (min, offset): {offsets}   [SIO1 end {plant["sio"]:.1f}, CPU max {plant["cpu_max"]:.1f}]')
+    print(f'## {label}\n   offset changes (min, offset): {offsets}   [SIO1 end {plant["sio"]:.1f}, CPU max {plant["cpu_max"]:.1f}'
+          + (f', drive max {plant["drive_max"]:.1f}, end {plant["drive"]:.1f}]' if plant['drive'] is not None else ']'))
     return offsets
 def L(n): return lambda: plant.update(load=n)
 ok = True
@@ -166,4 +182,28 @@ expect(o == [], f'v2.7: -80 (SIO1 ~71, CPU ~69) ({o})')
 o = run('30 2 threads for 2 h in a hot 31C room (SIO1 climbs past 77 at the -80 floor)', 200, room=31, evs=[(30, L(2)), (150, L(0))])
 expect(o[:1] and o[0][1] == -16, f'v2.7: -16 straight from -80 when SIO1 climbs ({o[:1]})')
 expect(all(v not in (0, 127, -60) for v in vals(o)), f'never -60, Performance or Full ({o})')
+# v2.8 (2026-10-14): drives
+def IO(n): return lambda: plant.update(io=n)
+o = run('31 a disk job (random reads) for 60 min at idle CPU, 24C room', 160, room=24, drive0=45, evs=[(30, IO(1)), (90, IO(0))])
+expect(o[:1] and o[0][1] == 0 and 34 <= o[0][0] <= 38, f'Performance ~5-7 min into the job ({o[:1]})')
+expect(plant['drive_max'] <= 51, f'hottest drive held at 51C or less ({plant["drive_max"]:.1f})')
+expect(vals(o) == [0, -80] and 100 <= o[1][0] <= 125, f'back to -80 once the drives are cool for 10 min ({o})')
+o = run('32 idle with the drives at their idle temperature, 24C room, 4 h', 240, room=24, drive0=45)
+expect(o == [], f'no change (45C) ({o})')
+o = run('33 one bogus drive reading of 60C', 60, room=24, drive0=45, evs=[(10, lambda: plant.update(drive_force=60)), (11, lambda: plant.update(drive_force=None))])
+expect(o == [], f'a single reading changes nothing ({o})')
+o = run('34 a disk job in a 30C room (drives past 52C even at Performance)', 120, room=30, drive0=51, evs=[(10, IO(1)), (100, IO(0))])
+expect(any(v == 127 for v in vals(o)), f'Full Speed when a drive reaches 52C ({o})')
+expect(plant['drive_max'] < 55, f'hottest drive stays under its 55C rating ({plant["drive_max"]:.1f})')
+o = run('35 a disk job with 22 workers of CPU load, 24C room', 120, room=24, drive0=45, evs=[(10, lambda: (plant.update(load=22), plant.update(io=1))), (70, lambda: (plant.update(load=0), plant.update(io=0)))])
+expect(o[:1] and o[0][1] == 0, f'Performance for the drives (the BMC curve alone does not hold them) ({o[:1]})')
+expect(o[-1][1] == -80 and plant['drive_max'] <= 51, f'back to -80 at the end, drives <= 51C ({o}, {plant["drive_max"]:.1f})')
+o = run('36 drives unreadable (None) under a disk job', 120, room=24, drive0=None, evs=[(10, IO(1)), (70, IO(0))])
+expect(o == [], f'no drive rule without readings ({o})')
+o = run('38 idle in a warm 27C room (warmest disk ~48C at -80), 4 h', 240, room=27, drive0=47)
+expect(o == [], f'v2.8: DRIVE_UP 49 keeps a warm room from cycling at idle ({o})')
+o = run('37 drive-triggered Performance while a 4-thread job also runs, 24C room', 160, room=24, drive0=45,
+        evs=[(10, lambda: (plant.update(load=4), plant.update(io=1))), (40, IO(0)), (100, L(0))])
+expect(o[:1] and o[0][1] == 0, f'Performance for the drives ({o[:1]})')
+expect(vals(o)[-1:] == [-80] and all(v not in (127,) for v in vals(o)), f'back to -80 once drives cool (CPU load alone keeps -80) ({o})')
 print('ALL PASS' if ok else 'SOME FAILED')

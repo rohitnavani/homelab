@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# ryuji-fan-guard v2.7: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under every load (v2.7: no light-load
+# ryuji-fan-guard v2.8: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under every load (v2.7: no light-load
 # step any more; v2.4-v2.6 used -60, v2.3 -40), go to a moderate -16 only when the board or the CPUs run hot, and use
-# Performance / Full only if -16 is not enough. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
+# Performance / Full only if -16 is not enough, or (v2.8) when the drives get hot. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
 # Measured 2026-10-06 (room ~27C; ryuji-profile sweeps, STATUS-LOG.md):
 #   offset  idle CPU/sys fans   SIO Temp 1 idle   4 busy threads: CPU/sys fans, SIO1  full load: CPU/sys fans, SIO1
 #   -80     ~2,300 / 1,050       77-78C            3,770 / 1,050, climbs past 79       4,890 / 3,175, 55C (CPU 70C)
@@ -102,6 +102,18 @@
 # workers went unnoticed. So the guard holds -80 under any load. Kept: -16 when SIO1 climbs past SIO_CLIMB under load
 # (v2.2's rule, now straight from -80) or reaches SIO_UP, or a CPU/VR/DIMM limit; Performance / Full above that. BUSY
 # stays a known level only so that a BMC left at -60 by v2.4-v2.6 is put back to -80 at once.
+# v2.8 (2026-10-14): drives. The guard never looked at the six MG04ACA400 data disks (rated 55C). At -80 with the CPUs
+# idle the system fans sit at ~1,050 rpm and the disks idle at 39-45C (sdf, the warmest bay, 44-45C). A random-read soak
+# (~55 MB/s over the six; disk-soak.py, 2026-10-14 14:30) took the hottest from 47 to 50C in 6 min, ~1C/min. Fixed offsets
+# with the same soak: Performance (0, system fans ~2,200 rpm) held it flat at 49-50C for 30 min; -8 (1,650 rpm) let it
+# reach 51C in 6 min. Below -16 the system fans do not leave their floor at idle, so Performance is the step that works.
+#   any level below PERF -> PERF:  hottest spinning disk >= DRIVE_UP (49C) on 2 readings (~5 min into a disk job; a 27C
+#                                  room idles the warmest disk at ~47-48C, so 48 could cycle at idle)
+#   any level -> FULL:             hottest spinning disk >= DRIVE_EMERG (52C) on 2 readings
+#   PERF (entered for the drives) -> QUIET: hottest disk <= DRIVE_BACK (46C) for DRIVE_HOLD (10 min) and the board,
+#                                  CPUs, VRs and DIMMs cool ('perf' rule); a heat reason keeps the usual path.
+# Disks: every rotational disk (lsblk ROTA=1) read with smartctl -n standby -A (attribute 194); a disk in standby or one
+# that cannot be read is skipped; no readable disk = no drive rule (the CPU/board rules as before).
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
@@ -122,6 +134,7 @@ RAPL = ('/sys/class/powercap/intel-rapl:0', '/sys/class/powercap/intel-rapl:1')
 CPU_UP, VR_UP, DIMM_UP = 78, 90, 75
 VR_COOL, DIMM_COOL = 80, 65
 SIO_EMERG, CPU_EMERG = 83, 83   # v2.4: CPU 86 -> 83 (E5-2696 v4: BMC critical 85)
+DRIVE_UP, DRIVE_EMERG, DRIVE_BACK, DRIVE_HOLD = 49, 52, 46, 600   # v2.8: hottest spinning disk (MG04ACA400 rated 55C); 49 so a 27C room idles under it
 HOLD = {'load': 600, 'hot': 1800, PERF: 1800, FULL: 300}   # seconds of cool readings before stepping down
 INTERVAL, VERIFY = 60, 1800
 
@@ -187,6 +200,29 @@ def temps():
             'vr': max([v for k, v in t.items() if k.startswith('VR_')] or [0]),
             'dimm': max([v for k, v in t.items() if k.startswith('DIMM')] or [0])}
 
+def find_hdds():
+    """v2.8: every rotational whole disk (lsblk ROTA=1)"""
+    out = subprocess.run(['lsblk', '-dno', 'NAME,ROTA,TYPE'], capture_output=True, text=True, timeout=20).stdout
+    return [l.split()[0] for l in out.splitlines() if l.split()[1:] == ['1', 'disk']]
+
+HDDS = None
+def drives():
+    """v2.8: the hottest spinning disk (smartctl attribute 194), None if no disk could be read"""
+    global HDDS
+    if HDDS is None:
+        HDDS = find_hdds()
+    best = None
+    for d in HDDS:
+        try:
+            o = subprocess.run(['smartctl', '-n', 'standby', '-A', f'/dev/{d}'], capture_output=True, text=True,
+                               timeout=20).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        m = re.search(r'^194 Temperature_Celsius(?:\s+\S+){7}\s+(\d+)', o, re.M)
+        if m:
+            best = max(best or 0, int(m.group(1)))
+    return best
+
 _stat = None
 def busy_threads():
     """logical CPUs busy since the last call (non-idle share of /proc/stat jiffies x CPU count); None on the first call"""
@@ -222,12 +258,14 @@ def pkg_watts():
 def wanted(level, t, hot, cool, now, why):
     """the level the current readings ask for; stepping down only after the HOLD time of cool readings.
     why = what put us at WARM ('load' or 'hot')."""
-    if t['sio'] >= SIO_EMERG or t['cpu'] >= CPU_EMERG:
+    if t['sio'] >= SIO_EMERG or t['cpu'] >= CPU_EMERG or hot.get('drive_emerg', 0) >= 2:
         return FULL
     if level == FULL:
         return PERF if now - cool.get('full', now) >= HOLD[FULL] else FULL
     if level >= WARM and (hot.get('perf_sio', 0) >= 6 or hot.get('perf_other', 0) >= 2):
         return max(level, PERF)     # SIO1 gets 6 min at WARM first: it settles with tau ~3.5 min
+    if level < PERF and hot.get('drive', 0) >= 2:
+        return PERF         # v2.8: hot drives (below -16 the system fans do not move at idle; PERF holds them)
     if level == QUIET:
         if hot.get('perf_other', 0) >= 2 or hot.get('load', 0) >= 2:
             return WARM     # v2.7: a CPU/VR/DIMM limit, or SIO1 climbing past SIO_CLIMB under load (v2.2's rule)
@@ -237,6 +275,8 @@ def wanted(level, t, hot, cool, now, why):
             return WARM
         return QUIET
     if level == PERF:
+        if why == 'drive':  # v2.8: there for the drives only: straight back to -80 once they and everything else are cool
+            return QUIET if now - cool.get('drive', now) >= DRIVE_HOLD and 'perf' in cool else PERF
         return WARM if now - cool.get('perf', now) >= HOLD[PERF] else PERF
     # WARM: back to QUIET only when idle and SIO1 is low enough that QUIET will not climb straight back
     if why == 'hot':
@@ -285,6 +325,12 @@ def main():
             pkg = pkg_watts()
         except (OSError, ValueError):
             pkg = None
+        try:
+            dr = drives()
+        except Exception:
+            dr = None
+        hot['drive'] = hot.get('drive', 0) + 1 if dr is not None and dr >= DRIVE_UP else 0
+        hot['drive_emerg'] = hot.get('drive_emerg', 0) + 1 if dr is not None and dr >= DRIVE_EMERG else 0
         sio_hist.append(t['sio']); del sio_hist[:-6]          # last 6 readings (5 min)
         climbing = t['sio'] >= SIO_CLIMB and len(sio_hist) == 6 and t['sio'] - sio_hist[0] >= 1 and t['cpu'] >= LOAD_UP
         hot['load'] = hot.get('load', 0) + 1 if climbing else 0
@@ -305,7 +351,8 @@ def main():
                         ('hot', idle and t['sio'] <= SIO_BACK_HOT),
                         ('perf', t['sio'] <= SIO_PERF_DOWN and t['cpu'] <= CPU_UP - 8 and t['vr'] <= VR_UP - 10
                          and t['dimm'] <= DIMM_UP - 10),
-                        ('full', t['sio'] < SIO_EMERG - 2 and t['cpu'] < CPU_EMERG - 4)):
+                        ('full', t['sio'] < SIO_EMERG - 2 and t['cpu'] < CPU_EMERG - 4 and (dr is None or dr < DRIVE_EMERG - 2)),
+                        ('drive', dr is None or dr <= DRIVE_BACK)):
             if ok:
                 cool.setdefault(key, now)
             else:
@@ -315,9 +362,11 @@ def main():
             try:
                 if level in (QUIET, BUSY) and want == WARM:
                     why = 'hot' if hot.get('sio', 0) >= 2 and hot.get('load', 0) < 2 else 'load'
+                if level < PERF and want == PERF and hot.get('drive', 0) >= 2:
+                    why = 'drive'   # v2.8
                 got = bmc('set', want)
                 log(f'offset {level} -> {got} (sio={t["sio"]} cpu={t["cpu"]} vr={t["vr"]} dimm={t["dimm"]}'
-                    f' threads={threads} pkg={pkg}{"; " + why if want == WARM and level in (QUIET, BUSY) else ""})')
+                    f' threads={threads} pkg={pkg} drive={dr}{"; " + why if (want == WARM and level in (QUIET, BUSY)) or why == "drive" else ""})')
                 level, last_verify = got, now
                 cool.clear(); hot.clear()   # every level starts its own counts
             except Exception as ex:
@@ -332,7 +381,7 @@ def main():
             except Exception as ex:
                 log(f'BMC check failed: {ex!r}')
         with open(STATE, 'w') as f:
-            json.dump({'time': time.strftime('%F %T'), 'offset': level, **t, 'threads': threads, 'pkg_w': pkg}, f)
+            json.dump({'time': time.strftime('%F %T'), 'offset': level, **t, 'threads': threads, 'pkg_w': pkg, 'drive': dr}, f)
         time.sleep(INTERVAL)
 
 if __name__ == '__main__':

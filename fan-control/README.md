@@ -141,7 +141,7 @@ thresholds from the hardware above. What carries over and what to change:
   their ~1,050 rpm floor at offset -80 while the CPUs are idle. Under load the BMC raises the system fans itself
   (on the E5-2696 v4s already at 4 busy threads), so SIO1 falls; with 150 W CPUs the CPUs are what to watch there.
 - Levels: -80 (quiet: idle and any load since v2.7; v2.4-v2.6 used -60 for a light load, v2.3 -40), -16 (system fans
-  follow load), 0 (Performance), 127 (Full Speed).
+  follow load), 0 (Performance; also for hot drives, v2.8), 127 (Full Speed).
 - -80 under any load (v2.7). With ryuji in the rack (2026-10-14, room 23-24C, mic about 4 ft from the rack front,
   20 min A/B/A holds with the load held through, last 10 min against the idle floor): 2 threads -80 +2.3 / -60
   +4.3 dB(A); 4 threads -80 +4.2 / -60 +4.1 to +4.9 / -40 +5.8; 11 workers -80 +3.9 / -60 +6.3 / -40 +9.1. More
@@ -157,6 +157,13 @@ thresholds from the hardware above. What carries over and what to change:
   reaches 78C, a VR 90C or a DIMM 75C. -16 to Performance if that is not enough. Full at SIO1 83C or CPU 83C
   (v2.4; 86C before, above the E5-2696 v4's 85C critical). Back to -80 from -16 after 10 idle minutes once SIO1 is
   72C or lower (30 min at 71C or lower after a hot room).
+- Drives (v2.8): the hottest spinning disk (smartctl attribute 194; a disk in standby or one that cannot be read is
+  skipped) at 49C on 2 readings -> Performance, at 52C on 2 readings -> Full; from a drive-triggered Performance
+  back to -80 after 10 min with the hottest disk at 46C or lower and the board and CPUs cool. At -80 with the CPUs
+  idle the system fans stay at ~1,050 rpm, and a random-read job (~55 MB/s over the six MG04ACA400s, rated 55C) took
+  the hottest from 47 to 50C in 6 min; Performance (~2,200 rpm) held it flat at 49-50C for 30 min, -8 let it reach
+  51C (2026-10-14). Below -16 the system fans do not leave their floor at idle, so Performance is the step that
+  works. 49C rather than 48: a 27C room idles the warmest disk at 47-48C at -80.
 - Idle means less than one logical CPU busy (`/proc/stat`) with VR and DIMMs cool (v2.3; before, the hottest CPU at
   50C or lower, which a light load at -40 in a cool room can undercut). The state file shows it as `threads`, and
   every level change logs it (v2.4).
@@ -166,7 +173,7 @@ thresholds from the hardware above. What carries over and what to change:
   wants network-online.target.
 - Needs the BMC password in `/root/.bmc-pass` (0600, root only); the BMC web API needs legacy TLS.
   `gbt-fan-offset.py <bmc ip> get|set N` reads or sets the offset by hand (stop the guard first).
-- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 since 2026-10-12 (v2.4 to v2.7
+- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 since 2026-10-12 (v2.4 to v2.8
   are tuned for them); see "Hardware".
 
 ## Install or update
@@ -189,7 +196,7 @@ TAU=2700 CYC=1 python3 -I md1200-fan/tests/test_md1200_lag_sweep.py md1200-fan/m
 python3 -I md1200-fan/tests/test_md1200_scenarios.py md1200-fan/md1200-fan             # 9 scenarios, 10-08 shelf model
 python3 -I md1200-fan/tests/sweep_md1200_scenarios.py <older md1200-fan> md1200-fan/md1200-fan  # 81 models, ~12 min
 fan-watchdog/tests/run-tests.sh                                                        # about 2 minutes
-python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 31 scenarios (v2.7)
+python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 39 scenarios (v2.8)
 python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)
 ```
 
