@@ -1,4 +1,4 @@
-# Closed-loop harness for ryuji-fan-guard (v2, 2026-10-06; v2.3 2026-10-10; v2.4-v2.6 2026-10-13): fake clock + a ryuji
+# Closed-loop harness for ryuji-fan-guard (v2, 2026-10-06; v2.3 2026-10-10; v2.4-v2.6 2026-10-13; v2.7 2026-10-14): fake clock + a ryuji
 # model. SIO Temp 1 and the hottest CPU settle (tau 3.5 min / 1 min) toward values that depend on the guard level, the
 # load (busy threads) and the room. usage: python3 tests/test_ryuji_fan_guard.py ryuji-fan-guard
 # v2.4: the model is for the 2x Xeon E5-2696 v4 fitted 2026-10-12 (44 cores / 88 threads, 150 W PL1 each). Idle and 4
@@ -86,8 +86,7 @@ vals = lambda o: [v for _, v in o]
 def P(w): return lambda: plant.update(pkg_force=w)
 o = run('1 idle, 27C room, 4 h', 240); expect(o == [], 'stays at -80 (SIO1 ~75 is under 79)')
 o = run('2 4 busy threads for 60 min at 30 min, 27C room', 180, evs=[(30, L(4)), (90, L(0))])
-expect(o[:1] and o[0][1] == -60 and 30 <= o[0][0] <= 33, f'-60 within 3 min of the load ({o[:1]})')
-expect(vals(o) == [-60, -80] and o[-1][0] >= 100, f'back to -80 >= 10 idle min after, never -16/Performance ({o})')
+expect(o == [], f'v2.7: stays at -80 under a light load (no -60 step) ({o})')
 o = run('3 full load (44 workers, 296 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(44)), (90, L(0))])
 expect(o == [], f'v2.5: stays at -80 (past the PSU band; the BMC drives the fans; CPU ~74C) ({o})')
 expect(plant['cpu_max'] < 78, f'hottest CPU under CPU_UP ({plant["cpu_max"]:.1f})')
@@ -108,27 +107,26 @@ expect(o[:1] and o[0][1] == 0, f'safe Performance after 5 min unreadable ({o[:1]
 o = run('9 restart while the BMC is at -61 (left by a test)', 30, start=-61)
 expect(o[:1] == [(0, -80)], f'puts -80 back on its first check ({o[:1]})')
 o = run('10 cool room 22C (AC working): 4 threads for 20 min', 120, room=22, evs=[(30, L(4)), (50, L(0))])
-expect(vals(o) == [-60, -80] and o[0][0] <= 33 and o[1][0] >= 60, f'-60 held to the end of the job and back ({o})')
+expect(o == [], f'v2.7: stays at -80 ({o})')
 o = run('11 4 threads for 3 h, 27C room', 240, evs=[(30, L(4)), (210, L(0))])
-expect(vals(o) == [-60, -80] and o[1][0] >= 220, f'holds -60 steadily through a long light load ({o})')
+expect(o == [], f'v2.7: -80 steadily through a long light load (SIO1 ~69 at 4 threads) ({o})')
 o = run('12 hot room 31C for 2 h, then the room cools to 25C', 300, room=31, evs=[(120, lambda: plant.update(room=25))])
 expect(o[:1] and o[0][1] == -16, f'-16 in the hot room ({o[:1]})')
 expect(len(o) == 2 and o[1][1] == -80 and o[1][0] <= 200, f'back to -80 within ~80 min of the room cooling, and stays ({o})')
 o = run('13 10-12 conditions: 24.5C room, 4 threads for 30 min', 120, room=24.5, evs=[(30, L(4)), (60, L(0))])
-expect(vals(o) == [-60, -80] and 30 <= o[0][0] <= 33 and o[1][0] >= 70, f'-60 within 3 min (v2.3 never left -80), back ({o})')
-o = run('14 -60 not enough: SIO1 forced to 80 for 6 min under the load, 24C room', 200, room=24,
+expect(o == [], f'v2.7: stays at -80 ({o})')
+o = run('14 SIO1 forced to 80 for 6 min under a light load, 24C room', 200, room=24,
         evs=[(30, L(4)), (50, lambda: plant.update(sio_force=80)), (56, lambda: plant.update(sio_force=None)), (120, L(0))])
-expect(o[:1] and o[0][1] == -60, f'-60 first ({o[:1]})')
-expect(len(o) >= 2 and o[1][1] == -16 and 50 <= o[1][0] <= 53, f'then -16 once SIO1 >= 79 at -60 ({o[1:2]})')
+expect(o[:1] and o[0][1] == -16 and 50 <= o[0][0] <= 53, f'v2.7: -16 straight from -80 once SIO1 >= 79 ({o[:1]})')
 expect(o and o[-1][1] == -80, f'back to -80 in the end ({o[-1:]})')
 o = run('15 restart while the BMC is at -60 (guard restarted under load), idle', 40, start=-60)
-expect(vals(o) == [-80] and o[0][0] >= 10, f'treats -60 as BUSY, back to -80 after 10 idle min ({o})')
+expect(vals(o) == [-80] and o[0][0] <= 1, f'v2.7: a BMC left at -60 goes back to -80 at once ({o})')
 o = run('16 restart while the BMC is at -40 (v2.3 BUSY, not a level now), idle', 30, start=-40)
 expect(o[:1] == [(0, -80)], f'puts -80 back on its first check ({o[:1]})')
 o = run('17 one busy thread for 2 h, 27C room', 180, evs=[(30, L(1)), (150, L(0))])
 expect(o == [], f'stays at -80 under BUSY_THREADS ({o})')
 o = run('18 two busy threads for 60 min, 27C room', 150, evs=[(30, L(2)), (90, L(0))])
-expect(vals(o) == [-60, -80] and o[0][0] <= 33, f'-60 at 2 busy threads, back afterwards ({o})')
+expect(o == [], f'v2.7: stays at -80 at 2 busy threads ({o})')
 o = run('19 a one-minute job (4 threads), 27C room', 60, evs=[(30, L(4)), (31, L(0))])
 expect(o == [], f'a single busy reading changes nothing ({o})')
 o = run('20 a CPU reads 84C for 3 min at idle (sensor glitch or a stuck fan)', 120,
@@ -142,24 +140,30 @@ expect(o == [] and any('assuming -80' in m for _, m in logs) and any('BMC check 
 o = run('22 half load (22 workers, 188 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(22)), (90, L(0))])
 expect(o == [], f'v2.6: stays at -80 (20 min holds: -60 is 0.4 dB louder there, tone in the band at both) ({o})')
 o = run('22b 11 workers (148 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(11)), (90, L(0))])
-expect(vals(o) == [-60, -80] and o[0][0] <= 33 and o[1][0] >= 100, f'-60 under a light-to-medium load, back ({o})')
+expect(o == [], f'v2.7: stays at -80 at 11 workers (-80 3 dB quieter than -60 in the rack) ({o})')
 o = run('23 a job that grows: 11 workers for 20 min, then 44 for 30 min, 24C room', 160, room=24,
         evs=[(30, L(11)), (50, L(44)), (80, L(0))])
-expect(vals(o) == [-60, -80] and 50 <= o[1][0] <= 57, f'-60, then back to -80 within ~6 min of the full load, and stays ({o})')
+expect(o == [], f'v2.7: -80 throughout ({o})')
 o = run('24 package power in the dead band (170 W, ~16 workers) for 60 min from idle, 24C room', 140, room=24,
         evs=[(30, lambda: (plant.update(load=16), plant.update(pkg_force=170))), (90, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
 expect(o == [], f'from -80: stays at -80 (not under BUSY_PKG_MAX) ({o})')
 o = run('25 the same dead-band load starting at -60 (guard restarted in it), 24C room', 100, room=24, start=-60,
         evs=[(0, lambda: (plant.update(load=16), plant.update(pkg_force=170))), (60, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
-expect(vals(o) == [-80] and o[0][0] >= 70, f'stays at -60 through it (not at HEAVY_PKG), back after 10 idle min ({o})')
+expect(vals(o) == [-80] and o[0][0] <= 1, f'v2.7: back to -80 at once, stays ({o})')
 o = run('26 power swinging 140 / 200 W every 3 min (a job across the line), 24C room', 150, room=24,
         evs=[(m, (lambda w: lambda: (plant.update(load=12), plant.update(pkg_force=w)))(140 if (m // 3) % 2 == 0 else 200)) for m in range(30, 120, 3)]
             + [(120, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
-expect(len(o) <= 4, f'no flip-flop: at most a couple of changes ({o})')
+expect(o == [], f'v2.7: no change at all ({o})')
 o = run('27 RAPL unreadable (pkg None) under a full load, 24C room', 120, room=24,
         evs=[(30, lambda: (plant.update(load=44), plant.update(pkg_force=-1))), (80, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
-expect(o[:1] and o[0][1] == -60, f'falls back to v2.4: -60 under any sustained load ({o})')
+expect(o == [], f'v2.7: -80 (power no longer decides anything) ({o})')
 o = run('28 a light 44-thread job (120 W, e.g. mostly waiting on I/O), 24C room', 120, room=24,
         evs=[(30, lambda: (plant.update(load=44), plant.update(pkg_force=120))), (80, lambda: (plant.update(load=0), plant.update(pkg_force=None)))])
-expect(vals(o) == [-60, -80], f'-60: it is the power, not the thread count, that decides ({o})')
+expect(o == [], f'v2.7: -80 ({o})')
+# v2.7 (2026-10-14)
+o = run('29 4 threads for 2 h in a warm 29C room', 200, room=29, evs=[(30, L(4)), (150, L(0))])
+expect(o == [], f'v2.7: -80 (SIO1 ~71, CPU ~69) ({o})')
+o = run('30 2 threads for 2 h in a hot 31C room (SIO1 climbs past 77 at the -80 floor)', 200, room=31, evs=[(30, L(2)), (150, L(0))])
+expect(o[:1] and o[0][1] == -16, f'v2.7: -16 straight from -80 when SIO1 climbs ({o[:1]})')
+expect(all(v not in (0, 127, -60) for v in vals(o)), f'never -60, Performance or Full ({o})')
 print('ALL PASS' if ok else 'SOME FAILED')

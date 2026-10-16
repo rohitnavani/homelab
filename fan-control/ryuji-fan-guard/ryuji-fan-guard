@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# ryuji-fan-guard v2.6: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under a medium or heavy load (v2.5,
-# v2.6), step to -60 under a sustained light load (v2.4; v2.3: -40), to a moderate -16 when the board or the CPUs run hot (or -60 is not enough), and use Performance / Full
-# only if -16 is not enough. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
+# ryuji-fan-guard v2.7: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under every load (v2.7: no light-load
+# step any more; v2.4-v2.6 used -60, v2.3 -40), go to a moderate -16 only when the board or the CPUs run hot, and use
+# Performance / Full only if -16 is not enough. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
 # Measured 2026-10-06 (room ~27C; ryuji-profile sweeps, STATUS-LOG.md):
 #   offset  idle CPU/sys fans   SIO Temp 1 idle   4 busy threads: CPU/sys fans, SIO1  full load: CPU/sys fans, SIO1
 #   -80     ~2,300 / 1,050       77-78C            3,770 / 1,050, climbs past 79       4,890 / 3,175, 55C (CPU 70C)
@@ -92,6 +92,16 @@
 # at both, 500 Hz octave 1.5 dB higher at -60. So -60 helps only for a light load (2-4 threads, 90-110 W: same dB(A) or
 # 0.75 dB less, ~2 dB less whine at 4 threads); from 22 workers (188 W) up, -80 is as quiet or quieter. 11 workers
 # (148 W) measured only at -60 (tone 665 Hz after 8 min), so it stays on the -60 side of the line.
+# v2.7 (2026-10-14): ryuji is back in the rack (on rails) and the mic sits ~4 ft out on the mattress. 20 min
+# holds, A/B/A, load held through (ryuji-floor.py plan fin_light, last 10 min, room 23-24C, idle floor -69.7 dB(A)):
+#   2 threads:  -80 +2.3 / -60 +4.3 / -80 +2.3 dB(A); strongest tone 750 Hz at -80 dBFS (-80) vs 636 Hz at -73 (-60)
+#   4 threads:  -60 +4.9 / -80 +4.2 / -40 +5.8 / -60 +4.1 dB(A)
+#   11 workers: -60 +6.3 / -80 +3.9 (last 10 min) / -40 +9.1 (first 3 min; cut short)
+# In the rack the extra system-fan speed costs more than the PSU whine it moves out of the band, and Rohit, listening
+# from the living room, called the -40 step "very noticable ... could not call this white noise" while -80 at 11
+# workers went unnoticed. So the guard holds -80 under any load. Kept: -16 when SIO1 climbs past SIO_CLIMB under load
+# (v2.2's rule, now straight from -80) or reaches SIO_UP, or a CPU/VR/DIMM limit; Performance / Full above that. BUSY
+# stays a known level only so that a BMC left at -60 by v2.4-v2.6 is put back to -80 at once.
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
@@ -219,17 +229,13 @@ def wanted(level, t, hot, cool, now, why):
     if level >= WARM and (hot.get('perf_sio', 0) >= 6 or hot.get('perf_other', 0) >= 2):
         return max(level, PERF)     # SIO1 gets 6 min at WARM first: it settles with tau ~3.5 min
     if level == QUIET:
-        if hot.get('perf_other', 0) >= 2:
-            return WARM
-        if hot.get('busy', 0) >= 2 or hot.get('load', 0) >= 2:
-            return BUSY     # a sustained load (v2.4: busy threads; v2.3: SIO1 climbing under load): -60 under load
+        if hot.get('perf_other', 0) >= 2 or hot.get('load', 0) >= 2:
+            return WARM     # v2.7: a CPU/VR/DIMM limit, or SIO1 climbing past SIO_CLIMB under load (v2.2's rule)
         return WARM if hot.get('sio', 0) >= 2 else QUIET
-    if level == BUSY:
+    if level == BUSY:       # v2.7: only when the guard finds the BMC at -60 (left by v2.4-v2.6): back to -80 at once
         if hot.get('load', 0) >= 2 or hot.get('sio', 0) >= 2 or hot.get('perf_other', 0) >= 2:
             return WARM
-        if hot.get('heavy', 0) >= HEAVY_READINGS:
-            return QUIET    # v2.5: past the PSU's band and the BMC already drives the fans hard; -60 only adds noise
-        return QUIET if now - cool.get('busy', now) >= HOLD['load'] else BUSY
+        return QUIET
     if level == PERF:
         return WARM if now - cool.get('perf', now) >= HOLD[PERF] else PERF
     # WARM: back to QUIET only when idle and SIO1 is low enough that QUIET will not climb straight back
