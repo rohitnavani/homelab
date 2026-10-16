@@ -7,7 +7,7 @@
 # --- Configuration ---
 # Datasets to manage retention for (all under homePool/, excluding homePool/download)
 # This should match or be a superset of what your snapshot script targets.
-SNAPSHOT_TARGETS=$(zfs list -H -o name | grep '^homePool/' | grep -v 'homePool/download')
+SNAPSHOT_TARGETS=$(zfs list -H -o name | grep -E '^homePool/|^nvmePool/' | grep -v 'homePool/download' | grep -v '^homePool/backups')
 
 # Retention Policy (GFS)
 # Keep the latest N daily snapshots.

@@ -1,4 +1,6 @@
 #!/bin/bash
+# Root filesystem usage for homepage's "Root Disk Used" widget, which queries custom_root_disk_used_gb
+# in Prometheus. Written as a node_exporter textfile (root_disk.prom); the old custom_data txt target is gone.
 
 # Get used and total blocks for the root filesystem
 # Using df -P to ensure POSIX output for consistent parsing
@@ -12,14 +14,21 @@ used_bytes=$((used_blocks * block_size_bytes))
 # Convert to Gigabytes (float) for display, rounding to 2 decimal places
 total_gb=$(echo "scale=2; $total_bytes / (1024*1024*1024)" | bc)
 used_gb=$(echo "scale=2; $used_bytes / (1024*1024*1024)" | bc)
+free_gb=$(echo "scale=2; ($total_bytes - $used_bytes) / (1024*1024*1024)" | bc)
 
-# Define the output file that Homepage will read
-# Create a new, dedicated directory for Homepage's custom data on the host
-HOMEPAGE_DATA_DIR="/pool/docker/docker-compose/homepage/custom_data/"
-OUTPUT_FILE="$HOMEPAGE_DATA_DIR/root_disk_usage.txt"
-
-# Write "used_gb total_gb" to the file, separated by a space
-echo "$used_gb / $total_gb" > "$OUTPUT_FILE"
-
-# Ensure the file has read permissions for the Homepage container
-chmod 644 "$OUTPUT_FILE"
+# Write the metrics atomically where node_exporter reads them
+METRICS_DIR="/var/lib/node_exporter/textfile_collector"
+TEMP_FILE=$(mktemp "$METRICS_DIR/.root_disk.prom.XXXXXX") || exit 1
+cat > "$TEMP_FILE" <<EOF
+# HELP custom_root_disk_total_gb Total size of the root filesystem in Gigabytes.
+# TYPE custom_root_disk_total_gb gauge
+custom_root_disk_total_gb $total_gb
+# HELP custom_root_disk_used_gb Used space on the root filesystem in Gigabytes.
+# TYPE custom_root_disk_used_gb gauge
+custom_root_disk_used_gb $used_gb
+# HELP custom_root_disk_free_gb Free space on the root filesystem in Gigabytes.
+# TYPE custom_root_disk_free_gb gauge
+custom_root_disk_free_gb $free_gb
+EOF
+chmod 644 "$TEMP_FILE"
+mv "$TEMP_FILE" "$METRICS_DIR/root_disk.prom"
