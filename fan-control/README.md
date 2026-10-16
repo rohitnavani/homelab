@@ -140,8 +140,9 @@ thresholds from the hardware above. What carries over and what to change:
 - ryuji's limiting sensor at idle is SIO Temp 1 (the BMC warns at 80C). It follows the system fans, which stay at
   their ~1,050 rpm floor at offset -80 while the CPUs are idle. Under load the BMC raises the system fans itself
   (on the E5-2696 v4s already at 4 busy threads), so SIO1 falls; with 150 W CPUs the CPUs are what to watch there.
-- Levels: -80 (quiet: idle and any load since v2.7; v2.4-v2.6 used -60 for a light load, v2.3 -40), -16 (system fans
-  follow load), 0 (Performance; also for hot drives, v2.8), 127 (Full Speed).
+- Levels: -127 (heavy: a heavy job while the CPUs allow, v2.10), -80 (quiet: idle, light loads and full load since
+  v2.7; v2.4-v2.6 used -60 for a light load, v2.3 -40), -16 (system fans follow load), 0 (Performance; also for hot
+  drives, v2.8), 127 (Full Speed).
 - -80 under any load (v2.7). With ryuji in the rack (2026-10-14, room 23-24C, mic about 4 ft from the rack front,
   20 min A/B/A holds with the load held through, last 10 min against the idle floor): 2 threads -80 +2.3 / -60
   +4.3 dB(A); 4 threads -80 +4.2 / -60 +4.1 to +4.9 / -40 +5.8; 11 workers -80 +3.9 / -60 +6.3 / -40 +9.1. More
@@ -150,6 +151,15 @@ thresholds from the hardware above. What carries over and what to change:
   -78..-81 at -80). Out of the rack (2026-10-12/13) -60 had matched -80 with the whine out of the band, so v2.4-v2.6
   used it for a light load (2 or more busy threads under 160 W of package power); v2.3 used -40 for the E5-2650
   v3s. A BMC left at -60 goes back to -80 at once.
+- -127 for a heavy job (v2.10): at least 2 busy threads and 180 W or more of package power (RAPL, both CPUs) for 5
+  readings in a row, with the hottest CPU at 72C or lower; back to -80 when the hottest CPU reaches 77C on 2 readings
+  (or on the SIO1 / VR / DIMM rules; then 15 min before -127 again) or when the package power stays under 160 W for
+  5 readings (the job ended). Under a heavy job the BMC's own curves drive the fans hard and the offset still
+  shifts them. Measured 2026-10-15 in the rack (room 24C, 20 min A/B/A holds at -80 / -127 / -80, last 8 min):
+  22 workers -62.4 / -64.1 dB(A), 1.6 dB quieter, hottest CPU 67 / 71C; 33 workers -56.4 / -60.1, 3.7 dB quieter,
+  70 / 75C; 44 workers -49.6 / -57.0, 7.4 dB quieter, 73-74 / 77-78C (VR 84C). At idle -127 equals -80. A full
+  load would sit at 77-78C at -127, 4-5C under the BMC's warning, so it stays at -80 (74-75C): the 72C entry line
+  keeps it there.
 - Full load (44 workers, room 24C, no thermal throttling at any offset): hottest CPU 74C at -80, 72C at -60, 69C at
   -16 and at Performance, 65C at Full Speed; 534-617 W at the wall; 2,761-2,797 MHz on every core. So v2.5 holds a
   full load at -80, 8C under the BMC's warning, and goes to -16 only in a warm room (CPU 78C).
@@ -176,8 +186,8 @@ thresholds from the hardware above. What carries over and what to change:
   wants network-online.target.
 - Needs the BMC password in `/root/.bmc-pass` (0600, root only); the BMC web API needs legacy TLS.
   `gbt-fan-offset.py <bmc ip> get|set N` reads or sets the offset by hand (stop the guard first).
-- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 since 2026-10-12 (v2.4 to v2.9
-  are tuned for them); see "Hardware".
+- Hardware: Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 since 2026-10-12 (v2.4 to v2.10
+  are tuned for them); see "Hardware". The package-power lines (180 / 160 W) depend on this CPU pair.
 
 ## Install or update
 
@@ -199,7 +209,7 @@ TAU=2700 CYC=1 python3 -I md1200-fan/tests/test_md1200_lag_sweep.py md1200-fan/m
 python3 -I md1200-fan/tests/test_md1200_scenarios.py md1200-fan/md1200-fan             # 9 scenarios, 10-08 shelf model
 python3 -I md1200-fan/tests/sweep_md1200_scenarios.py <older md1200-fan> md1200-fan/md1200-fan  # 81 models, ~12 min
 fan-watchdog/tests/run-tests.sh                                                        # about 2 minutes
-python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 39 scenarios (v2.9)
+python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 47 scenarios (v2.10)
 python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)
 ```
 

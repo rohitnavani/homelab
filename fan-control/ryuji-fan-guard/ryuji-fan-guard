@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# ryuji-fan-guard v2.9: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under every load (v2.7: no light-load
+# ryuji-fan-guard v2.10: keep ryuji's BMC fan offset at Rohit's quiet -80 at idle and under light loads, -127 under heavy
+# ones while the CPUs allow (v2.10) (v2.7: no light-load
 # step any more; v2.4-v2.6 used -60, v2.3 -40), go to a moderate -16 only when the board or the CPUs run hot, and use
 # Performance / Full only if -16 is not enough, or (v2.8) when the drives get hot. The BMC's own curves keep running underneath (the offset shifts both the CPU and the system fan curves).
 # Measured 2026-10-06 (room ~27C; ryuji-profile sweeps, STATUS-LOG.md):
@@ -119,12 +120,25 @@
 # exhaust: under 11 busy workers the MG04s fell 44 -> 38C while sdb rose 42 -> 49C, so v2.8 went to Performance at 18:13
 # with no disk load at all (the rack measured -54.6 dB(A), +15 over idle, until 18:29). If no disk reports a form
 # factor, every rotational disk counts, as in v2.8.
+# v2.10 (2026-10-15): -127 (HEAVY) for heavy jobs. At heavy loads the BMC's curve drives the fans hard and the offset still
+# shifts it: 20 min A/B/A holds at -80 / -127 / -80 (ryuji-floor.py plan fin_heavy, room 24C, both PSUs, last 8 min):
+#   22 workers: -62.4 / -64.1 dB(A) (1.6 dB quieter), hottest CPU 67-69 / 71C, VR 71 / 75C, system fans 3,175 / 2,475
+#   33 workers: -56.4 / -60.1 (3.7 dB quieter), CPU 71-72 / 75C, VR 74 / 80C, system fans 4,275-4,750 / 3,875
+#   44 workers: -49.6 / -57.0 (7.4 dB quieter), CPU 74-75 / 77-78C, VR 79-81 / 84C, system fans 5,650-6,125 / 4,525
+# At idle -127 equals -80 (fin_idleoff), so light loads stay at -80 (more fan was louder there, less is untested).
+# Rohit's margin rule (about 10C under each limit; TjMax 85C): -127 only while the hottest CPU stays under 77C, i.e. for
+# 22-33 workers; a full load lifts the CPUs to 77-78C at -127, so it goes back to -80 (74-75C) and stays there.
+#   QUIET -> HEAVY: >= 2 busy threads and package power >= H127_IN_W (180 W) for H127_READINGS (5) readings in a row,
+#                   the hottest CPU <= H127_CPU_IN (72C), nothing else warm, and not within H127_LOCK after a CPU exit
+#   HEAVY -> QUIET: hottest CPU >= H127_CPU_OUT (77C) on 2 readings, or SIO1 / VR / DIMM / climbing rules (then a 15 min
+#                   lockout), or package power under H127_OUT_W (160 W) for 5 readings (the job ended: no lockout)
+#   HEAVY -> PERF / FULL: hot drives / emergencies, as from any level.
 import json, re, ssl, subprocess, sys, time, urllib.parse, urllib.request, http.cookiejar
 
 BMC, USER, PWFILE = 'https://10.0.0.118', 'root', '/root/.bmc-pass'
 STATE = '/run/ryuji-fan-guard.state'
-QUIET, BUSY, WARM, PERF, FULL = -80, -60, -16, 0, 127
-LEVELS = (QUIET, BUSY, WARM, PERF, FULL)
+HEAVY, QUIET, BUSY, WARM, PERF, FULL = -127, -80, -60, -16, 0, 127
+LEVELS = (HEAVY, QUIET, BUSY, WARM, PERF, FULL)
 SIO_UP = 79                      # SIO Temp 1: BMC warns at 80, critical at 85
 SIO_BACK_LOAD, SIO_BACK_HOT = 72, 71   # v2.1: 71 (was 68): -80 idles ~6C above -16, so 71 at -16 = ~77 at -80, under SIO_UP
 SIO_PERF_DOWN = 73
@@ -139,6 +153,9 @@ RAPL = ('/sys/class/powercap/intel-rapl:0', '/sys/class/powercap/intel-rapl:1')
 CPU_UP, VR_UP, DIMM_UP = 78, 90, 75
 VR_COOL, DIMM_COOL = 80, 65
 SIO_EMERG, CPU_EMERG = 83, 83   # v2.4: CPU 86 -> 83 (E5-2696 v4: BMC critical 85)
+H127_IN_W, H127_OUT_W, H127_READINGS = 180, 160, 5   # v2.10: package W (both CPUs) to enter / leave -127, readings
+H127_CPU_IN, H127_CPU_OUT, H127_LOCK = 72, 77, 900    # v2.10: hottest CPU to enter / leave, lockout s after a CPU exit
+LOCK = {'until': 0}
 DRIVE_UP, DRIVE_EMERG, DRIVE_BACK, DRIVE_HOLD = 49, 52, 46, 600   # v2.8: hottest spinning disk (MG04ACA400 rated 55C); 49 so a 27C room idles under it
 HOLD = {'load': 600, 'hot': 1800, PERF: 1800, FULL: 300}   # seconds of cool readings before stepping down
 INTERVAL, VERIFY = 60, 1800
@@ -281,10 +298,20 @@ def wanted(level, t, hot, cool, now, why):
         return max(level, PERF)     # SIO1 gets 6 min at WARM first: it settles with tau ~3.5 min
     if level < PERF and hot.get('drive', 0) >= 2:
         return PERF         # v2.8: hot drives (below -16 the system fans do not move at idle; PERF holds them)
+    if level == HEAVY:      # v2.10
+        if (hot.get('h_cpu', 0) >= 2 or hot.get('perf_other', 0) >= 2 or hot.get('sio', 0) >= 2
+                or hot.get('load', 0) >= 2):
+            LOCK['until'] = now + H127_LOCK
+            return QUIET    # more fan first; QUIET's own rules take it further if that is not enough
+        return QUIET if hot.get('h_light', 0) >= H127_READINGS else HEAVY
     if level == QUIET:
         if hot.get('perf_other', 0) >= 2 or hot.get('load', 0) >= 2:
             return WARM     # v2.7: a CPU/VR/DIMM limit, or SIO1 climbing past SIO_CLIMB under load (v2.2's rule)
-        return WARM if hot.get('sio', 0) >= 2 else QUIET
+        if hot.get('sio', 0) >= 2:
+            return WARM
+        if hot.get('heavy', 0) >= H127_READINGS and t['cpu'] <= H127_CPU_IN and now >= LOCK['until']:
+            return HEAVY    # v2.10: a heavy job, CPUs with room: the quieter -127
+        return QUIET
     if level == BUSY:       # v2.7: only when the guard finds the BMC at -60 (left by v2.4-v2.6): back to -80 at once
         if hot.get('load', 0) >= 2 or hot.get('sio', 0) >= 2 or hot.get('perf_other', 0) >= 2:
             return WARM
@@ -351,10 +378,13 @@ def main():
         hot['load'] = hot.get('load', 0) + 1 if climbing else 0
         if threads is not None:      # v2.4: a sustained load by busy threads (SIO1 no longer climbs under load)
             busy = threads >= BUSY_THREADS and (pkg is None or pkg < BUSY_PKG_MAX)     # v2.5: not a heavy load
-            hot['heavy'] = hot.get('heavy', 0) + 1 if threads >= BUSY_THREADS and pkg is not None and pkg >= HEAVY_PKG else 0
+            hot['heavy'] = hot.get('heavy', 0) + 1 if threads >= BUSY_THREADS and pkg is not None and pkg >= H127_IN_W else 0
         else:                        # v2.3 rule as the fallback when /proc/stat cannot be read
             busy = t['sio'] >= SIO_BUSY and len(sio_hist) == 6 and t['sio'] - sio_hist[0] >= 1 and t['cpu'] >= LOAD_UP
         hot['busy'] = hot.get('busy', 0) + 1 if busy else 0
+        light = threads is not None and (threads < BUSY_THREADS or (pkg is not None and pkg < H127_OUT_W))
+        hot['h_light'] = hot.get('h_light', 0) + 1 if light or threads is None else 0   # v2.10
+        hot['h_cpu'] = hot.get('h_cpu', 0) + 1 if t['cpu'] >= H127_CPU_OUT else 0       # v2.10
         hot['sio'] = hot.get('sio', 0) + 1 if t['sio'] >= SIO_UP else 0
         hot['perf_sio'] = hot.get('perf_sio', 0) + 1 if t['sio'] >= SIO_UP else 0
         hot['perf_other'] = hot.get('perf_other', 0) + 1 if (t['cpu'] >= CPU_UP or t['vr'] >= VR_UP
@@ -379,9 +409,11 @@ def main():
                     why = 'hot' if hot.get('sio', 0) >= 2 and hot.get('load', 0) < 2 else 'load'
                 if level < PERF and want == PERF and hot.get('drive', 0) >= 2:
                     why = 'drive'   # v2.8
+                if want == HEAVY:
+                    why = 'heavy'   # v2.10
                 got = bmc('set', want)
                 log(f'offset {level} -> {got} (sio={t["sio"]} cpu={t["cpu"]} vr={t["vr"]} dimm={t["dimm"]}'
-                    f' threads={threads} pkg={pkg} drive={dr}{"; " + why if (want == WARM and level in (QUIET, BUSY)) or why == "drive" else ""})')
+                    f' threads={threads} pkg={pkg} drive={dr}{"; " + why if (want == WARM and level in (QUIET, BUSY)) or why in ("drive", "heavy") else ""})')
                 level, last_verify = got, now
                 cool.clear(); hot.clear()   # every level starts its own counts
             except Exception as ex:

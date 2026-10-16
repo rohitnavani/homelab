@@ -10,18 +10,20 @@ SRC = sys.argv[1]
 src = open(SRC).read().replace("if __name__ == '__main__':\n    main()", '')
 clock = [1_000_000.0]; T0 = clock[0]
 # equilibria at a 27C room: {offset: {busy threads: value}}
-SIO = {-80: {0: 75.0, 2: 76.0, 4: 69.0, 22: 54.0, 44: 42.0}, -60: {0: 74.5, 2: 76.0, 4: 58.0, 22: 50.5, 44: 41.0},
+SIO = {-127: {0: 75.0, 2: 76.0, 4: 70.0, 22: 57.0, 33: 47.0, 44: 43.0},   # v2.10: fin_heavy 10-15 (+3C to 27C)
+       -80: {0: 75.0, 2: 76.0, 4: 69.0, 22: 54.0, 44: 42.0}, -60: {0: 74.5, 2: 76.0, 4: 58.0, 22: 50.5, 44: 41.0},
        -40: {0: 74.5, 4: 51.0, 22: 48.0, 44: 40.0}, -16: {0: 71.5, 4: 49.0, 22: 45.0, 44: 39.0},
        0: {0: 59.5, 4: 47.0, 22: 44.0, 44: 39.0}, 127: {0: 45.0, 4: 42.0, 22: 40.0, 44: 37.0}}
-CPU = {-80: {0: 45, 2: 63, 4: 67, 22: 69, 33: 73, 44: 77}, -60: {0: 44, 2: 58, 4: 64, 22: 67, 33: 72, 44: 75},
+CPU = {-127: {0: 45, 2: 64, 4: 68, 22: 72, 33: 77, 44: 80.5},   # v2.10: -80 + 3 / 4 / 3.5C at 22 / 33 / 44 workers
+       -80: {0: 45, 2: 63, 4: 67, 22: 69, 33: 73, 44: 77}, -60: {0: 44, 2: 58, 4: 64, 22: 67, 33: 72, 44: 75},
        -40: {0: 44, 4: 59, 22: 66, 44: 74}, -16: {0: 43, 4: 58, 22: 62, 44: 72},
        0: {0: 41, 4: 56, 22: 62, 44: 72}, 127: {0: 40, 4: 55, 22: 61, 44: 71}}
 PKG = {0: 18, 2: 90, 4: 110, 11: 148, 22: 188, 33: 245, 44: 296}   # W, both packages (PL1 150 W each from ~30 workers)
-SIO_TAU = {-80: 600, -60: 600, -40: 600}   # SIO1 rises slowly with the system fans at their floor; ~210 s elsewhere
+SIO_TAU = {-127: 600, -80: 600, -60: 600, -40: 600}   # SIO1 rises slowly with the system fans at their floor; ~210 s elsewhere
 # v2.8: hottest MG04 drive at a 24C room, idle disks / a sustained random-read job, by offset (2026-10-14 soaks: -80 idle
 # 45C, job +1C/min; 0: flat at 50C under the job; -8: 50 -> 51C in 6 min). tau 11 min. CPU load lifts the system fans
 # (BMC curve), worth ~2C at 11-22 workers and ~4C at 44 (estimate).
-DRV = {-80: (45, 56), -60: (45, 56), -40: (45, 55), -16: (44, 54), -8: (43, 52), 0: (42, 50), 127: (39, 45)}
+DRV = {-127: (45, 56), -80: (45, 56), -60: (45, 56), -40: (45, 55), -16: (44, 54), -8: (43, 52), 0: (42, 50), 127: (39, 45)}
 DRV_TAU = 660
 def at(table, lvl, load):
     pts = sorted(table[lvl].items())
@@ -154,7 +156,7 @@ expect(o == [] and any('assuming -80' in m for _, m in logs) and any('BMC check 
        f'assumes -80, retries the check until the BMC answers, no change ({o})')
 # v2.5 (2026-10-13 afternoon)
 o = run('22 half load (22 workers, 188 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(22)), (90, L(0))])
-expect(o == [], f'v2.6: stays at -80 (20 min holds: -60 is 0.4 dB louder there, tone in the band at both) ({o})')
+expect(vals(o) == [-127, -80] and 34 <= o[0][0] <= 38 and o[1][0] >= 94, f'v2.10: -127 ~5 min into the half load, back after it ({o})')
 o = run('22b 11 workers (148 W) for 60 min, 24C room', 160, room=24, evs=[(30, L(11)), (90, L(0))])
 expect(o == [], f'v2.7: stays at -80 at 11 workers (-80 3 dB quieter than -60 in the rack) ({o})')
 o = run('23 a job that grows: 11 workers for 20 min, then 44 for 30 min, 24C room', 160, room=24,
@@ -196,7 +198,7 @@ o = run('34 a disk job in a 30C room (drives past 52C even at Performance)', 120
 expect(any(v == 127 for v in vals(o)), f'Full Speed when a drive reaches 52C ({o})')
 expect(plant['drive_max'] < 55, f'hottest drive stays under its 55C rating ({plant["drive_max"]:.1f})')
 o = run('35 a disk job with 22 workers of CPU load, 24C room', 120, room=24, drive0=45, evs=[(10, lambda: (plant.update(load=22), plant.update(io=1))), (70, lambda: (plant.update(load=0), plant.update(io=0)))])
-expect(o[:1] and o[0][1] == 0, f'Performance for the drives (the BMC curve alone does not hold them) ({o[:1]})')
+expect(0 in vals(o) and vals(o)[0] in (0, -127), f'Performance for the drives (via -127 first is fine) ({o})')
 expect(o[-1][1] == -80 and plant['drive_max'] <= 51, f'back to -80 at the end, drives <= 51C ({o}, {plant["drive_max"]:.1f})')
 o = run('36 drives unreadable (None) under a disk job', 120, room=24, drive0=None, evs=[(10, IO(1)), (70, IO(0))])
 expect(o == [], f'no drive rule without readings ({o})')
@@ -206,4 +208,24 @@ o = run('37 drive-triggered Performance while a 4-thread job also runs, 24C room
         evs=[(10, lambda: (plant.update(load=4), plant.update(io=1))), (40, IO(0)), (100, L(0))])
 expect(o[:1] and o[0][1] == 0, f'Performance for the drives ({o[:1]})')
 expect(vals(o)[-1:] == [-80] and all(v not in (127,) for v in vals(o)), f'back to -80 once drives cool (CPU load alone keeps -80) ({o})')
+# v2.10 (2026-10-15): -127 for heavy loads
+o = run('40 22 workers for 60 min, 24C room', 160, room=24, evs=[(30, L(22)), (90, L(0))])
+expect(vals(o) == [-127, -80] and o[0][0] <= 37 and plant['cpu_max'] < 77, f'-127 ~5 min in, CPU under 77C, back after ({o}, {plant["cpu_max"]:.1f})')
+o = run('41 33 workers for 60 min, 24C room', 160, room=24, evs=[(30, L(33)), (90, L(0))])
+expect(vals(o) == [-127, -80] and plant['cpu_max'] < 77, f'-127 held, CPU under 77C ({o}, {plant["cpu_max"]:.1f})')
+o = run('42 full load (44 workers) for 60 min, 24C room', 160, room=24, evs=[(30, L(44)), (90, L(0))])
+expect(o == [], f'full load stays at -80 (CPU 74C > the 72C entry line) ({o})')
+o = run('43 a job growing from 22 to 44 workers, 24C room', 180, room=24, evs=[(30, L(22)), (60, L(44)), (120, L(0))])
+expect(vals(o)[:2] == [-127, -80] and len(o) == 2, f'-127 at 22 workers, back to -80 once the CPUs reach 77C at full load, no cycling ({o})')
+expect(plant['cpu_max'] < 79, f'hottest CPU under 79C ({plant["cpu_max"]:.1f})')
+o = run('44 33 workers in a warm 28C room', 160, room=28, evs=[(30, L(33)), (90, L(0))])
+expect(-127 not in vals(o) and all(v not in (0, 127) for v in vals(o)), f'no -127 in a warm room (CPU over 72C at -80) ({o})')
+o = run('45 bursts: 2 min of 44 workers every 10 min, 24C room', 200, room=24,
+        evs=[(m, L(44)) for m in range(30, 150, 10)] + [(m + 2, L(0)) for m in range(30, 150, 10)])
+expect(-127 not in vals(o), f'short bursts never reach -127 (needs 5 heavy readings in a row) ({o})')
+o = run('46 restart while the BMC is at -127 (left by a test), idle', 30, start=-127)
+expect(vals(o) == [-80] and o[0][0] <= 7, f'treats -127 as HEAVY, back to -80 after 5 light readings ({o})')
+o = run('47 33 workers 60 min with a disk job from minute 50, 24C room', 160, room=24, drive0=45,
+        evs=[(30, L(33)), (50, IO(1)), (90, lambda: (plant.update(load=0), plant.update(io=0)))])
+expect(-127 in vals(o) and 0 in vals(o) and vals(o)[-1] == -80, f'-127, then Performance for the drives, then back ({o})')
 print('ALL PASS' if ok else 'SOME FAILED')
