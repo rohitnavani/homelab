@@ -1,0 +1,30 @@
+# deploy.list - which file in this repo is installed where. `lab-scripts status` compares every installed copy with
+# its source; `lab-scripts install NAME HOST` copies a source into place. Tools run by hand are not listed: they run
+# straight from bin/ on the share, except where root runs them or a sudo rule names them (autorar on tinynas).
+# private/deploy.list (not public) lists the private scripts the same way.
+#
+#   SOURCE                                      INSTALLED AS                          HOSTS ...  [check-only]
+#
+# HOST:PATH means that host keeps it at another path. check-only: compared, never copied by lab-scripts; the fan
+# controllers go in with a service restart and a live check (fan-control/README.md).
+
+scripts/drivecheck                              /usr/local/bin/drivecheck             akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
+scripts/drive-selftest                          /usr/local/bin/drive-selftest         akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
+scripts/drivecheck.cron                         /etc/cron.d/drivecheck                futaba makoto mementos morgana ryuji sojiro tinypc yusuke
+fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
+fan-control/monitoring/lab-thermal-textfile     /usr/local/bin/lab-thermal-textfile   mementos ryuji
+scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            mementos ryuji tinynas
+scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          makoto mementos ryuji sojiro
+scripts/zfs-retention                           /usr/local/sbin/zfs-retention         makoto mementos ryuji sojiro
+scripts/snapshot                                /usr/local/bin/snapshot               tinynas
+scripts/retention                               /usr/local/bin/retention              tinynas
+scripts/root_disk_metrics                       /usr/local/bin/root_disk_metrics      tinynas
+scripts/backup-mementos                         /usr/local/sbin/backup-mementos       tinynas
+scripts/replicate                               /usr/local/bin/replicate              sojiro
+scripts/prune-replica                           /usr/local/bin/prune-replica          sojiro tinynas:/usr/local/sbin/prune-replica
+scripts/autorar                                 /usr/local/bin/autorar                tinynas
+scripts/futaba-backup                           /usr/local/bin/futaba-backup          futaba
+scripts/resume-uptime                           /usr/local/bin/resume-uptime          futaba
+fan-control/fan-watchdog/fan-watchdog           /usr/local/sbin/fan-watchdog          mementos check-only
+fan-control/md1200-fan/md1200-fan               /usr/local/bin/md1200-fan             mementos check-only
+fan-control/ryuji-fan-guard/ryuji-fan-guard     /usr/local/sbin/ryuji-fan-guard       ryuji check-only

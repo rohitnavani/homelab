@@ -71,12 +71,60 @@ every log line lands in a snapshot.
 To reuse these elsewhere: list your datasets in `/etc/zfs-snapshot-targets`; `replicate`'s `SOURCES` and `DEST` are
 specific to this lab.
 
+## Lab scripts on dataPool
+
+Since 2026-10-16 the lab keeps one copy of its scripts: a clone of this repo at `/dataPool/homelab`, the same path on
+every host that mounts mementos's `dataPool/labShare` NFS share (NFS 4.2, hard mounts; on mementos itself the path
+is a symlink to `/dataPool/labShare/homelab`). That is makoto, tinypc, futaba, tinynas, morgana, ryuji, yusuke and
+mementos. sojiro (the backup box, going offsite) and akechi (a laptop) do not mount the share.
+
+- **Tools you run as yourself: straight from the share.** `/etc/profile.d/lab-scripts.sh` appends `bin/` to PATH on
+  those hosts, last, so a host's own commands win: `newvm` with its profile names, `autorar`, `deploy-monitoring`
+  and `lab-scripts`. An edit there is live on every host at once. On mementos and ryuji `/usr/local/bin/newvm` is a
+  symlink to the share. sudo's own PATH is left alone; `newvm` asks for sudo itself where it needs it.
+- **What root runs, from cron, systemd or boot: installed on each host.** The share is a hard mount that hangs while
+  mementos is down, and nothing unattended (least of all a fan controller) may wait on it; the share is also
+  writable from every client, so root never runs it unattended. `deploy.list` says which repo file is installed
+  where; `lab-scripts status` compares every copy with its source, `lab-scripts install NAME HOST` copies one into
+  place (the old one kept as `.bak-DATE`, the new one swapped in with a rename). The same goes for `autorar` on
+  tinynas, which a passwordless sudo rule names.
+- **Not public yet: `private/`.** Its own git repo inside the share copy, ignored by this one and never pushed: the
+  other hosts' service scripts, the local AI tools, `rename-host` (its `bin/` is on PATH too) and `sudo-grant` and
+  `sudo-revoke`, which read your sudo password and so stay installed on makoto and akechi rather than run from the
+  share.
+
+```sh
+lab-scripts                        # run on makoto: what is uncommitted, unpushed or out of line
+lab-scripts diff zfs-snapshot mementos
+lab-scripts install drivecheck sojiro ryuji
+lab-scripts setup yusuke           # writes the PATH snippet (once per host that mounts the share)
+lab-scripts timer                  # on mementos: pull GitHub's main into the share every 15 minutes
+lab-scripts push                   # checks the new commits for secrets and vendor names, then pushes via tinynas
+```
+
+Edit in `/dataPool/homelab`, commit one version per change that ran (only your own files: `git add <paths>`), and
+push with `lab-scripts push`: tinynas holds the GitHub credential. `lab-scripts timer` keeps the share in step with
+commits pushed from other clones; it only fast-forwards, so it never touches uncommitted or unpushed work. The fan
+controllers are `check-only` in `deploy.list`: a new version goes in with a service restart and a live check (see
+`fan-control/README.md`), never by `lab-scripts install`.
+
+While mementos is down, a shell on a client can hang on Tab completion or a mistyped command, because the shell
+searches the share last. In that shell, `export PATH=${PATH%%:/dataPool/homelab/*}` drops the share from PATH.
+
+To reuse this elsewhere: any path every host mounts will do. Change `SHARE` at the top of `scripts/lab-scripts`
+and the hosts in `deploy.list`. With root squashing, keep the files world-readable, because root reads the share as
+nobody.
+
 ## Repository structure
 
 ```text
 .
 ├── README.md                   # This file: the machines and what they do
 ├── .gitignore                  # Keeps .env secrets, databases and service data out of git
+├── bin/                        # On every lab host's PATH from /dataPool/homelab: the tools you run as yourself
+│                               #   (links into scripts/ and monitoring/)
+├── deploy.list                 # Which file here is installed where (lab-scripts status / install)
+├── private/                    # Not in git here: the share copy's own local repo of scripts that are not public
 ├── docker-compose/             # Container services (paths come from ${COMPOSE_BASE_PATH} in a gitignored .env)
 │   ├── AdGuardHome/            # DNS ad-blocking (runs on futaba)
 │   ├── adguardhome-fallback/   # AdGuard Home replica of futaba's, kept in sync by adguardhome-sync (tinynas)
@@ -89,16 +137,17 @@ specific to this lab.
 │                               #   (see fan-control/README.md for the exact hardware)
 ├── monitoring/                 # deploy-monitoring: adds a host to the lab's monitoring in one command; servers are
 │                               #   scraped, roaming hosts such as akechi push from a Prometheus agent
-└── scripts/                    # Installed to /usr/local/bin and run from root's cron
-    ├── autorar                 # Compresses finished downloads (tinynas)
+└── scripts/                    # Installed to /usr/local/bin and run from root's cron, or run by hand from bin/
+    ├── autorar                 # Compresses finished downloads (tinynas; from bin/)
     ├── backup-mementos         # Nightly syncoid pull of mementos's Nextcloud datasets, the onsite copy (tinynas; sbin)
     ├── drive-selftest          # Starts SMART self-tests on every SATA, SAS and NVMe drive (weekly short, monthly long)
     ├── drivecheck              # Daily SMART check of SATA, SAS and NVMe drives, Prometheus textfile output (all hosts)
     ├── drivecheck.cron         # /etc/cron.d/drivecheck: check 00:00, short self-tests Sat 22:00, long the 1st 12:00
     │                           #   (tinynas runs the same jobs from root's crontab)
     ├── futaba-backup           # Nightly copy of futaba's service configs to labShare, secrets redacted (futaba)
+    ├── lab-scripts             # Compares and installs the hosts' copies, sets hosts up, pushes to GitHub (from bin/)
     ├── nextcloud-update        # Nextcloud AIO file permissions and rescan; skips if the data mount is missing (mementos)
-    ├── newvm                   # Interactive: creates a KVM guest in its own ZFS dataset (mementos, ryuji; not cron)
+    ├── newvm                   # Interactive: creates a KVM guest in its own ZFS dataset (mementos, ryuji; from bin/)
     ├── prune-replica           # GFS pruning of received replicas, run by replicate (sojiro)
     ├── replicate               # Nightly syncoid pull of tinynas and mementos datasets (sojiro)
     ├── resume-uptime           # Writes tinynas's uptime for the resume site from Prometheus (futaba, every minute)
@@ -116,12 +165,14 @@ specific to this lab.
 qcow2 and a copy of its XML), from ISOs in `<pool>/kvm/img`, bridged onto the LAN through `br0`, with VNC on
 the next free port from 5900. Profiles: `win11`, `2k22`, `2k25` (Secure Boot with Microsoft keys, TPM 2.0, the virtio-win
 CD), `ubuntu`, `rocky` (plain UEFI; Rocky 10 needs AVX2, which mementos's Ivy Bridge Xeons lack) and `iso` (any ISO).
-Install it to `/usr/local/bin` with the symlinks `newwin11`, `new2k22`, `new2k25`, `newubuntu` and `newrocky`, which pick
-the profile. It replaced tinynas's `~/newwin11`, `~/new2k22` and `~/new2k25` on 2026-10-06.
+It runs from `bin/` on the share (see "Lab scripts on dataPool"), where the symlinks `newwin11`, `new2k22`, `new2k25`,
+`newubuntu` and `newrocky` pick the profile; elsewhere, install it to `/usr/local/bin` with the same symlinks. It
+replaced tinynas's `~/newwin11`, `~/new2k22` and `~/new2k25` on 2026-10-06.
 
 It uses the first of `vmPool/kvm` (mementos), `computePool/kvm` (ryuji) and `homePool/kvm` (tinynas) that exists, and
-stops early if the `img` folder or `br0` is missing. Installed on mementos and ryuji since 2026-10-14; ryuji still
-needs its `computePool/kvm` dataset, the ISOs and a `br0` bridge before it can build VMs. VMs that need many cores
+stops early if the `img` folder or `br0` is missing. On mementos and ryuji since 2026-10-14 (since 10-16 their
+`/usr/local/bin/newvm` is a symlink to the share); ryuji still needs its `computePool/kvm` dataset, the ISOs and a
+`br0` bridge before it can build VMs. VMs that need many cores
 or AVX2 (Rocky 10, Kubernetes nodes) belong on ryuji (2x E5-2696 v4, 88 threads); small always-on VMs such as
 2k25-test stay on mementos, next to their storage.
 

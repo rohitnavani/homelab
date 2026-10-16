@@ -1,0 +1,308 @@
+#!/bin/bash
+# lab-scripts - keeps the lab's scripts in one place: this repo, on mementos's dataPool (2026-10-16).
+#
+#   lab-scripts [status] [-v] [HOST...]  what is out of line: work in this repo (and private/) that is not committed
+#                                         or not on GitHub, and installed copies that differ from their source
+#   lab-scripts diff NAME [HOST]          the source against the copy installed on HOST (default: this machine)
+#   lab-scripts install NAME [HOST...]    copy the source over the installed copy on HOST (default: this machine)
+#   lab-scripts setup [HOST...]           put the shared bin/ on PATH (new logins) on a host that mounts dataPool
+#   lab-scripts timer                     on mementos: pull GitHub's main into the share every 15 min (fast-forward only)
+#   lab-scripts push                      check the new commits for secrets, then push them to GitHub via tinynas
+#
+# The repo is /dataPool/homelab on every host that mounts the share (on mementos, where the share is local, that path
+# is a symlink to /dataPool/labShare/homelab). bin/ and private/bin/ are on those hosts' PATH: tools you run by hand
+# live only there. Scripts that cron, systemd or boot run stay installed on each host, because the share is a hard
+# NFS mount that hangs while mementos is down; deploy.list (and private/deploy.list) say which source is installed
+# where, and this command compares and copies them. NAME is a script's file name, installed or in the repo.
+set -uo pipefail
+
+ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+SHARE=/dataPool/homelab          # the same path on every host
+PUSH_HOST=tinynas                # holds the GitHub credential
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=5)
+TODAY=$(date +%F)
+SELF=$(hostname -s | tr '[:upper:]' '[:lower:]')
+
+die(){ echo "lab-scripts: $*" >&2; exit 1; }
+usage(){ sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+is_self(){ [ "$1" = "$SELF" ] || [ "$1" = local ]; }
+tty_flag(){ [ -t 0 ] && [ -t 1 ] && echo -t; }
+
+quote_args(){ [ $# -gt 0 ] && printf '%q ' "$@"; }
+# on [-i] HOST SCRIPT [ARGS...]: run a bash snippet as rohit on HOST (here when HOST is this machine).
+# Its stdin is /dev/null unless -i passes ours through (ssh would otherwise eat a caller's loop input).
+on(){
+    local in=/dev/null; [ "$1" = -i ] && { in=/dev/stdin; shift; }
+    local h=$1 s=$2; shift 2
+    if is_self "$h"; then bash -c "$s" lab-scripts "$@" < "$in"
+    else "${SSH[@]}" "$h" "bash -c $(printf %q "$s") lab-scripts $(quote_args "$@")" < "$in"; fi
+}
+# as_root HOST SCRIPT [ARGS...]: the same as root; sudo asks for a password on a terminal unless sudo-grant is active
+as_root(){
+    local h=$1 s=$2; shift 2
+    if is_self "$h"; then sudo bash -c "$s" lab-scripts "$@"
+    else "${SSH[@]}" $(tty_flag) "$h" "sudo bash -c $(printf %q "$s") lab-scripts $(quote_args "$@")"; fi
+}
+
+# deploy.list lines -> "SOURCE<TAB>HOST<TAB>PATH<TAB>MODE", one per host (MODE: install or check-only)
+entries(){
+    local list src path rest mode h
+    for list in "$ROOT/deploy.list" "$ROOT/private/deploy.list"; do
+        [ -f "$list" ] || continue
+        while read -r src path rest; do
+            [[ -z "$src" || "$src" == \#* ]] && continue
+            mode=install
+            [[ " $rest " == *" check-only "* ]] && { mode=check-only; rest=${rest/check-only/}; }
+            for h in $rest; do
+                if [[ "$h" == *:* ]]; then printf '%s\t%s\t%s\t%s\n' "$src" "${h%%:*}" "${h#*:}" "$mode"
+                else printf '%s\t%s\t%s\t%s\n' "$src" "$h" "$path" "$mode"; fi
+            done
+        done < "$list"
+    done
+}
+
+# when SOURCE last changed: its commit time, or the file's mtime while it has uncommitted edits
+source_time(){
+    local f=$1 repo=$ROOT rel=$1 t=""
+    [[ "$f" == private/* ]] && { repo=$ROOT/private; rel=${f#private/}; }
+    [ -z "$(git -C "$repo" status --porcelain -- "$rel" 2>/dev/null)" ] && t=$(git -C "$repo" log -1 --format=%ct -- "$rel" 2>/dev/null)
+    echo "${t:-$(stat -c %Y "$ROOT/$f")}"
+}
+
+# md5 and mtime of each path on HOST, following symlinks (tinynas links /usr/local/bin into /pool/scripts)
+REMOTE_SUMS='for p in "$@"; do
+  if [ ! -e "$p" ]; then echo "MISSING 0 $p"
+  elif s=$(md5sum < "$p" 2>/dev/null || sudo -n md5sum "$p" 2>/dev/null); then echo "${s%% *} $(stat -L -c %Y "$p" 2>/dev/null || sudo -n stat -L -c %Y "$p") $p"
+  else echo "UNREADABLE 0 $p"; fi
+done'
+
+repo_state(){  # repo_state DIR LABEL REMOTE(0/1)
+    local dir=$1 label=$2 remote=$3 dirty ahead behind
+    [ -d "$dir/.git" ] || { echo "  $label: not a git repo"; return; }
+    dirty=$(git -C "$dir" status --porcelain 2>/dev/null)
+    if [ -n "$dirty" ]; then
+        echo "  $label: $(wc -l <<<"$dirty") file(s) changed and not committed:"
+        sed 's/^/      /' <<<"$dirty"
+    fi
+    if [ "$remote" = 1 ]; then
+        timeout 20 git -C "$dir" fetch -q origin 2>/dev/null || echo "  $label: could not reach GitHub, comparing with the last fetch"
+        ahead=$(git -C "$dir" rev-list --count origin/main..HEAD 2>/dev/null || echo "?")
+        behind=$(git -C "$dir" rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
+        [ "$ahead" != 0 ] && echo "  $label: $ahead commit(s) not on GitHub yet (lab-scripts push)"
+        [ "$behind" != 0 ] && echo "  $label: GitHub has $behind newer commit(s) (git -C $SHARE pull --ff-only)"
+        [ -z "$dirty" ] && [ "$ahead" = 0 ] && [ "$behind" = 0 ] && echo "  $label: committed and in step with GitHub"
+    else
+        [ -z "$dirty" ] && echo "  $label: everything committed (local repo, never pushed)"
+    fi
+}
+
+cmd_status(){
+    local verbose=0 hosts=() h
+    while [ $# -gt 0 ]; do case "$1" in -v) verbose=1 ;; *) hosts+=("$1") ;; esac; shift; done
+    echo "== repo ($ROOT)"
+    repo_state "$ROOT" "homelab" 1
+    repo_state "$ROOT/private" "private" 0
+
+    local all; all=$(entries)
+    [ ${#hosts[@]} -eq 0 ] && mapfile -t hosts < <(cut -f2 <<<"$all" | sort -u)
+    echo "== installed copies (deploy.list)"
+    declare -A sum=() stime=()
+    local src
+    for src in $(cut -f1 <<<"$all" | sort -u); do
+        [ -f "$ROOT/$src" ] || { echo "  deploy.list names a missing source: $src"; continue; }
+        sum[$src]=$(md5sum < "$ROOT/$src" | cut -d' ' -f1)
+        stime[$src]=$(source_time "$src")
+    done
+    local bad=0 ok=0
+    for h in "${hosts[@]}"; do
+        is_self "$h" && h=$SELF
+        local rows paths out
+        rows=$(awk -F'\t' -v h="$h" '$2 == h' <<<"$all")
+        [ -n "$rows" ] || { echo "  $h: nothing in deploy.list for this host"; continue; }
+        mapfile -t paths < <(cut -f3 <<<"$rows")
+        if ! out=$(on "$h" "$REMOTE_SUMS" "${paths[@]}" 2>/dev/null); then
+            echo "  $h: unreachable from $SELF (run this on makoto, which reaches every host)"; bad=$((bad+1)); continue
+        fi
+        local s p m mode got gt gp state
+        while IFS=$'\t' read -r s _ p mode; do
+            read -r got gt gp < <(awk -v p="$p" '$3 == p' <<<"$out")
+            if [ "$got" = "${sum[$s]:-}" ]; then
+                ok=$((ok+1)); [ $verbose = 1 ] && printf '  %-9s %-30s ok\n' "$h" "$p"; continue
+            fi
+            case "$got" in
+                MISSING) state="missing (source $s)" ;;
+                UNREADABLE) state="not readable as $(id -un); try with sudo-grant active" ;;
+                *) if [ "${gt:-0}" -gt "${stime[$s]:-0}" ]; then m="installed copy is newer: commit it to $s?"
+                   else m="source is newer: lab-scripts install $(basename "$p") $h"; fi
+                   state="differs from $s ($m)" ;;
+            esac
+            [ "$mode" = check-only ] && state="$state [check-only: see fan-control/README.md]"
+            printf '  %-9s %-30s %s\n' "$h" "$p" "$state"; bad=$((bad+1))
+        done <<<"$rows"
+    done
+    echo "  $ok in line, $bad to look at"
+}
+
+# pick ENTRY lines for NAME (and HOST, if given) from deploy.list: by the source's file name, or else by the
+# installed file name (so "drivecheck" is the script, not /etc/cron.d/drivecheck, which is "drivecheck.cron")
+match(){
+    local name=$1 host=${2:-}
+    entries | awk -F'\t' -v n="$name" -v h="$host" '
+        h != "" && $2 != h { next }
+        { s = $1; sub(".*/", "", s); b = $3; sub(".*/", "", b) }
+        s == n { bysrc = bysrc $0 "\n" } b == n { byinst = byinst $0 "\n" }
+        END { printf "%s", (bysrc != "" ? bysrc : byinst) }'
+}
+
+cmd_diff(){
+    local name=${1:-} host=${2:-$SELF} rows src p
+    [ -n "$name" ] || usage 2
+    is_self "$host" && host=$SELF
+    rows=$(match "$name" "$host"); [ -n "$rows" ] || die "no deploy.list entry for $name on $host"
+    while IFS=$'\t' read -r src _ p _; do
+        echo "== $host:$p  vs  $src"
+        diff -u --label "$host:$p" --label "$src" <(on "$host" 'cat "$1" 2>/dev/null || sudo -n cat "$1"' "$p") "$ROOT/$src" \
+            && echo "(the same)"
+    done <<<"$rows"
+}
+
+# runs as root on the target: TMP DEST DATE. Follows a symlinked DEST to its real file, keeps its owner and mode,
+# keeps the old copy as .bak-DATE, and swaps the new one in with a rename so a cron job never reads half a file.
+INSTALL='set -eu
+tmp=$1 dest=$2 day=$3 bak=""
+real=$(readlink -f "$dest" || echo "$dest")
+if [ -e "$real" ] && cmp -s "$tmp" "$real"; then rm -f "$tmp"; echo "already up to date: $real"; exit 0; fi
+mode=755 uid=0 gid=0
+if [ -e "$real" ]; then
+  mode=$(stat -c %a "$real"); uid=$(stat -c %u "$real"); gid=$(stat -c %g "$real")
+  bak=$real.bak-$day; [ -e "$bak" ] && bak=$bak-$(date +%H%M%S)
+  cp -p "$real" "$bak"
+fi
+new=$(dirname "$real")/.$(basename "$real").lab-scripts-new
+install -D -m "$mode" -o "$uid" -g "$gid" "$tmp" "$new"
+mv -f "$new" "$real"; rm -f "$tmp"
+echo "installed $real${bak:+ (old copy kept as $bak)}"'
+
+cmd_install(){
+    local name=${1:-}; [ -n "$name" ] || usage 2; shift
+    local hosts=("$@") h rows src p mode tmp
+    [ ${#hosts[@]} -eq 0 ] && hosts=("$SELF")
+    for h in "${hosts[@]}"; do
+        is_self "$h" && h=$SELF
+        rows=$(match "$name" "$h")
+        [ -n "$rows" ] || { echo "lab-scripts: no deploy.list entry for $name on $h" >&2; continue; }
+        [ "$(wc -l <<<"$rows")" = 1 ] || { echo "lab-scripts: $name on $h matches more than one entry:" >&2; cut -f1,3 <<<"$rows" >&2; continue; }
+        IFS=$'\t' read -r src _ p mode <<<"$rows"
+        if [ "$mode" = check-only ]; then
+            echo "lab-scripts: $p on $h is check-only; fan controllers go in with a restart and a live check (fan-control/README.md)" >&2
+            continue
+        fi
+        echo "== $h: $src -> $p"
+        tmp=$(on -i "$h" 'f=$(mktemp /tmp/lab-scripts.XXXXXX) && cat > "$f" && echo "$f"' < "$ROOT/$src") || { echo "  could not reach $h" >&2; continue; }
+        if as_root "$h" "$INSTALL" "$tmp" "$p" "$TODAY"; then did=1
+        else echo "  install failed on $h (sudo password, or run sudo-grant $h first)" >&2; fi
+    done
+    [ -n "${did:-}" ] && echo "A running service keeps the old version until it restarts; cron uses the new one at its next run."
+    return 0
+}
+
+# runs as root on the target: the profile.d PATH snippet, and on mementos the /dataPool/homelab symlink. sudo keeps
+# its own secure_path: run a shared tool as root with its full path, or through a /usr/local/bin symlink to the share.
+SETUP='set -eu
+share=$1 profile=/etc/profile.d/lab-scripts.sh
+if grep -qs "labShare[[:space:]]\+/dataPool[[:space:]]" /etc/fstab; then
+  :  # an NFS client: fstab is all it checks, so a host whose mount hangs can still be set up
+elif zfs list -H -o name dataPool/labShare >/dev/null 2>&1; then
+  # mementos: the share is local; give it the same path as the NFS clients
+  [ -e /dataPool/homelab ] || { ln -s labShare/homelab /dataPool/homelab; echo "linked /dataPool/homelab -> labShare/homelab"; }
+else
+  echo "$(hostname -s): no dataPool NFS mount in /etc/fstab; it keeps installed copies only (lab-scripts install)"; exit 0
+fi
+want=$(cat <<EOF
+# Lab scripts: the homelab repo on mementos (dataPool/labShare), the same path on every lab host. Written by
+# lab-scripts setup. Appended last, so this host'"'"'s own commands always win. Nothing here reads the share: it is a
+# hard NFS mount, and a login must never wait on mementos.
+case ":\$PATH:" in
+    *":$share/bin:"*) ;;
+    *) PATH="\$PATH:$share/bin:$share/private/bin" ;;
+esac
+EOF
+)
+if [ "$(cat $profile 2>/dev/null)" != "$want" ]; then printf "%s\n" "$want" > $profile.new && chmod 644 $profile.new && mv $profile.new $profile && echo "wrote $profile"; fi
+echo "$(hostname -s): set up"'
+
+# runs as root on mementos: a timer that pulls GitHub's main into the share, fast-forward only, so uncommitted or
+# unpushed work there is never touched (a pull that cannot fast-forward just logs; lab-scripts status says why)
+TIMER='set -eu
+repo=/dataPool/labShare/homelab unit=/etc/systemd/system/lab-scripts-pull
+[ -d $repo/.git ] || { echo "$(hostname -s): no $repo here; the timer belongs on mementos" >&2; exit 1; }
+svc="[Unit]
+Description=Pull GitHub main into the lab scripts share (fast-forward only)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=$(stat -c %U $repo)
+Nice=10
+TimeoutStartSec=120
+ExecStart=/bin/sh -c \"git -C $repo pull -q --ff-only || echo lab-scripts-pull: no fast-forward, see lab-scripts status\""
+tmr="[Unit]
+Description=Pull the lab scripts share from GitHub every 15 minutes
+
+[Timer]
+OnCalendar=*:07/15
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target"
+if [ "$(cat $unit.service 2>/dev/null)" != "$svc" ] || [ "$(cat $unit.timer 2>/dev/null)" != "$tmr" ]; then
+  printf "%s\n" "$svc" > $unit.service; printf "%s\n" "$tmr" > $unit.timer; systemctl daemon-reload
+fi
+systemctl enable --now lab-scripts-pull.timer >/dev/null 2>&1
+systemctl list-timers lab-scripts-pull.timer --no-pager | head -2'
+
+cmd_setup(){
+    local hosts=("$@") h
+    [ ${#hosts[@]} -eq 0 ] && hosts=("$SELF")
+    for h in "${hosts[@]}"; do
+        is_self "$h" && h=$SELF
+        as_root "$h" "$SETUP" "$SHARE" || echo "lab-scripts: setup failed on $h" >&2
+    done
+}
+
+# what the public repo must never carry: keys, tokens and literal passwords; plus the names in private/push-deny
+# (one extended regex per line), which stay out of this public file for the same reason
+LEAK_RE='-----BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{20}|github_pa[t]_|gh[ousr]_[A-Za-z0-9]{20}|xox[abprs]-|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|sk-[A-Za-z0-9]{20}|(password|passwd|secret|token|api[_-]?key)[A-Za-z_]*[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9+/!@#%^&*._-]{8,}'
+
+cmd_push(){
+    cd "$ROOT" || die "no repo at $ROOT"
+    [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || die "not on main"
+    timeout 30 git fetch -q origin || die "could not reach GitHub"
+    local behind ahead hits
+    behind=$(git rev-list --count HEAD..origin/main); ahead=$(git rev-list --count origin/main..HEAD)
+    [ "$behind" = 0 ] || die "GitHub has $behind newer commit(s): git pull --rebase first"
+    [ "$ahead" != 0 ] || { echo "nothing to push"; return; }
+    local re=$LEAK_RE deny
+    deny=$(grep -v -e '^#' -e '^$' "$ROOT/private/push-deny" 2>/dev/null | paste -sd'|')
+    [ -n "$deny" ] && re="$re|$deny"
+    hits=$(git diff origin/main..HEAD | grep -a '^+' | grep -v '^+++' | grep -a -n -i -E -e "$re" || true)
+    if [ -n "$hits" ]; then
+        echo "lab-scripts: not pushed; these added lines look like a secret or a name that must stay out of the public repo:" >&2
+        echo "$hits" >&2; exit 1
+    fi
+    git log --oneline origin/main..HEAD
+    if [ "$SELF" = "$PUSH_HOST" ]; then git push -q origin HEAD:main
+    else "${SSH[@]}" "$PUSH_HOST" "git -C $SHARE push -q origin HEAD:main"; fi && echo "pushed $ahead commit(s) to GitHub"
+}
+
+case "${1:-status}" in
+    status) shift || true; cmd_status "$@" ;;
+    diff) shift; cmd_diff "$@" ;;
+    install) shift; cmd_install "$@" ;;
+    setup) shift; cmd_setup "$@" ;;
+    timer) as_root mementos "$TIMER" ;;
+    push) cmd_push ;;
+    -h|--help|help) usage ;;
+    *) cmd_status "$@" ;;
+esac

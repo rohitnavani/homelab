@@ -10,3 +10,6 @@ docker-compose/AdGuardHome/conf/
 *.old
 *.save
 docker/
+
+# lab scripts that are not public: its own local git repo inside the share copy (see README, "Lab scripts")
+/private/

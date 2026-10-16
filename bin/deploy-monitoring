@@ -1,0 +1,3 @@
+#!/bin/sh
+# deploy-monitoring finds its helper files next to itself, so call it in its own folder rather than through a symlink.
+exec "$(dirname "$(readlink -f "$0")")/../monitoring/deploy-monitoring" "$@"
