@@ -1,9 +1,12 @@
-# Fleet drive health monitoring + SMART self-tests (deployed 2026-10-06)
-# Daily health check (logs + node_exporter textfile), weekly short + monthly long self-tests.
+# Fleet drive health monitoring + SMART self-tests (deployed 2026-10-06; schedule updated 2026-10-16 with drivecheck v2)
+# Daily health check (logs + node_exporter textfile), weekly short and monthly long self-tests.
+# The long test runs on the first Monday of the month at 08:00, while the house is empty: the 8 TB SAS drives take
+# about 13 h and every drive warms a few degrees (the MD1200 shelf's fan controller then holds about 16-18% for some
+# hours, roughly +0.5-1 dB). Cron ORs a day-of-month and a day-of-week field, so the weekday is tested in the command.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 DRIVECHECK_LOG_DIR=/var/log/drive_logs
 DRIVECHECK_NO_MAIL=1
 0 0 * * * root /bin/bash -c '/usr/local/bin/drivecheck >> /var/log/drive_logs/drive_check_$(date +\%Y-\%m-\%d).log 2>&1'
 0 22 * * 6 root /usr/local/bin/drive-selftest short
-0 12 1 * * root /usr/local/bin/drive-selftest long
+0 8 1-7 * * root [ "$(date +\%u)" = 1 ] && /usr/local/bin/drive-selftest long

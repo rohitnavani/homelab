@@ -141,8 +141,9 @@ nobody.
     ├── autorar                 # Compresses finished downloads (tinynas; from bin/)
     ├── backup-mementos         # Nightly syncoid pull of mementos's Nextcloud datasets, the onsite copy (tinynas; sbin)
     ├── drive-selftest          # Starts SMART self-tests on every SATA, SAS and NVMe drive (weekly short, monthly long)
-    ├── drivecheck              # Daily SMART check of SATA, SAS and NVMe drives, Prometheus textfile output (all hosts)
-    ├── drivecheck.cron         # /etc/cron.d/drivecheck: check 00:00, short self-tests Sat 22:00, long the 1st 12:00
+    ├── drivecheck              # Daily SMART check of SATA, SAS and NVMe drives (v2: Python, smartctl JSON), Prometheus
+    │                           #   textfile output (all hosts)
+    ├── drivecheck.cron         # /etc/cron.d/drivecheck: check 00:00, short self-tests Sat 22:00, long first Mon 08:00
     │                           #   (tinynas runs the same jobs from root's crontab)
     ├── futaba-backup           # Nightly copy of futaba's service configs to labShare, secrets redacted (futaba)
     ├── lab-scripts             # Compares and installs the hosts' copies, sets hosts up, pushes to GitHub (from bin/)

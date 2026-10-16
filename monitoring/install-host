@@ -3,12 +3,13 @@
 # staging copy of the files it installs, and is safe to run again: it only changes what is missing or different.
 #
 #   server   (default) node_exporter on :9100 for futaba's Prometheus to scrape; drivecheck from /etc/cron.d (daily
-#            check at 00:00, short SMART self-tests Saturday 22:00, long ones on the 1st at 12:00); thermal-log;
+#            check at 00:00, short SMART self-tests Saturday 22:00, long ones the first Monday at 08:00); thermal-log;
 #            with --cockpit, Cockpit's bridge so futaba's Cockpit can manage the host.
 #   roaming  a machine that is often away, asleep or off (a laptop): node_exporter on localhost only, a Prometheus
 #            agent that pushes to futaba from wherever the host is and buffers up to 24 h while futaba is out of
 #            reach, drivecheck from a systemd timer that catches up after suspend or power-off, no scheduled
-#            self-tests (a suspend aborts them, which drivecheck reports as a failure), thermal-log.
+#            self-tests (a laptop is often asleep or away at any fixed time, so results would be patchy),
+#            thermal-log.
 #
 # Usage: install-host --name NAME [--roaming --push-url URL] [--cockpit] [--dry-run]
 # Ubuntu and Debian (apt) only.

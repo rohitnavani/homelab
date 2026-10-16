@@ -25,7 +25,7 @@ to bring an older host up to date.
 | node_exporter | port 9100 on all interfaces | localhost only |
 | How metrics reach futaba | futaba's Prometheus scrapes the host's fixed address every 15 s | a Prometheus agent on the host scrapes it every 15 s and pushes to futaba (remote write), at home or over the VPN, keeping up to 24 h on disk while futaba is out of reach |
 | drivecheck | `/etc/cron.d/drivecheck`, daily at 00:00 | systemd timer, daily, plus on resume or boot after a missed day |
-| SMART self-tests | short on Saturday 22:00, long on the 1st at 12:00 | none scheduled (see below) |
+| SMART self-tests | short on Saturday 22:00, long on the first Monday at 08:00 | none scheduled (see below) |
 | thermal-log | yes | yes |
 | Cockpit | bridge, system and storaged on the host, and an entry in futaba's Cockpit list | none: futaba's Cockpit reaches hosts over SSH at a fixed address |
 | Prometheus target on futaba | the host's address in the `node` job | none |
@@ -61,8 +61,9 @@ What "offline is normal" means in practice:
   would for a server.
 - **No stale-drive alert after a long sleep.** DriveCheckStale fires after 2 days without a drivecheck run. Cron skips
   runs the machine slept through, so roaming hosts use a timer that runs drivecheck on resume or boot instead.
-- **No self-test false alarms.** A suspend aborts a running SMART self-test, and drivecheck reports an aborted test as a
-  failure, so none are scheduled. Run `sudo drive-selftest short` by hand on AC power if you want one.
+- **No scheduled self-tests.** A laptop is often asleep or away at any fixed time, so the results would be patchy.
+  Since drivecheck v2 an aborted test no longer raises an alarm, so a weekly timer that runs only on AC power could
+  be added later. Run `sudo drive-selftest short` by hand on AC power if you want one.
 - **Glance shows it calmly.** The card says "away" in grey with when it last reported, instead of a red "offline". The
   Fleet tile counts it only while it reports, and its drive rows disappear while it is away.
 - **Gaps fill in.** If the laptop runs for a while without reaching futaba (no VPN), the agent keeps up to 24 h of
@@ -86,6 +87,47 @@ Needed once:
 
 The script checks both before it sets up a roaming host and says what is missing. The receiver accepts writes from
 anything that can reach Prometheus's port, the same exposure as the rest of its unauthenticated API on the LAN.
+
+## Drive checks (drivecheck)
+
+`../scripts/drivecheck` (v2 since 2026-10-16: Python 3, standard library only) reads every drive once a day with
+`smartctl -x --json=o -n standby`, one drive at a time with a 1 s pause, because fan controllers on some hosts read
+the same drives. It prints a report that cron (or the roaming timer) appends to `/var/log/drive_logs/drive_check_DATE.log`
+(tinynas: `/pool/drive_logs`) and writes `drivecheck.prom` for node_exporter's textfile collector.
+
+- **What it reads.** SATA: attributes 5, 10, 183, 184, 187, 188 and 196-199, every normalized value against its
+  threshold, the ATA error log, device statistics (SSD wear). SAS: grown defects, uncorrected, delayed-ECC and reread
+  counters, the non-medium count, background-scan results and the drive's view of its PHY link. NVMe: the health log,
+  including critical warning, unsafe shutdowns, minutes over the warning and critical temperature and thermal
+  throttling. For every drive: its temperature against its own limit, the newest self-test and the newest long one.
+- **State.** `/var/lib/drivecheck/state.json` keeps each drive's last counters by serial. A drive seen for the first
+  time is a baseline, so a fresh install raises no "0 -> N" alerts (v1 did).
+- **What it alerts on itself** (`drivecheck_alerts_total`, ALERT lines in the log, email when `DRIVECHECK_NO_MAIL` is
+  not 1 and a mailer exists): failed SMART health; ATA 5, 10, 187, 196, 197, 198 or 199 rising; pending or offline
+  uncorrectable sectors on a hard drive; SAS grown defects rising or uncorrected errors; an NVMe critical warning,
+  rising media errors or spare under 70%; a self-test that failed; kernel I/O errors in the last 24 h. An interrupted
+  or aborted self-test (a reboot or suspend) is not a failure. Everything else is a metric for the rules below.
+- **Skipped.** Network LUNs (iSCSI, vendor LIO-ORG) and drives asleep in standby (`drivecheck_standby 1`, never woken).
+- **Offline test.** `drivecheck --fixtures DIR --out OUTDIR [--host NAME]` reads saved `smartctl -x --json=o` files
+  (`DIR/smart-*.json`) instead of the drives and writes only under `OUTDIR`.
+
+Checked on 2026-10-16 against all 70 drives in the lab (smartmontools 7.4 on Ubuntu 24.04, 7.5 on Fedora 44 and
+Kubuntu 26.04; Python 3.12 and 3.14):
+
+| Interface | Drives (firmware) | Controller |
+|---|---|---|
+| SAS HDD | 24x Seagate ST1200MM0007 10K (IS06); 11x Seagate ST8000NM0075 (PS26) and 1x ST8000NM0185 (PT54) in a Dell PowerVault MD1200 | two LSI SAS2308 in IT mode (firmware 20.00.07.00, mpt2sas) |
+| SAS SSD | 2x HGST HUSMM8080ASS20 800 GB (J4B6) | LSI SAS2308 |
+| SATA HDD | 8x HGST HUS724040ALA640 (MFAOAA70); 6x Toshiba MG04ACA400N and 2x MG04ACA200N (FJ3A) | AMD 600-series and ASMedia ASM1061 AHCI; Toshibas also behind an onboard LSI SAS3008 (mpt3sas), read through SCSI-to-ATA translation |
+| SATA SSD | Crucial MX500 1 TB (M3CR032, M3CR043); Kingston SUV400 120 GB, SKC600 256 GB, OM8P0S3256Q-A0 256 GB | Intel and Xeon D AHCI |
+| NVMe | Crucial P310 500 GB, P3 Plus 1 TB, P1 1 TB; Samsung 970 EVO Plus 2 TB; WD PC SN530 256 GB, WD_BLACK SN850X 1 TB; SK hynix BC901 512 GB | PCIe 3.0 and 4.0 x4 |
+
+Using it elsewhere: it needs smartmontools 7.0 or newer for JSON output. Pass smartctl only the device path (never
+`smartctl --scan`'s `-d scsi`), or SATA drives behind a SAS HBA lose their ATA attributes. Some values exist only in
+smartctl's text, which `--json=o` embeds and drivecheck parses: the SAS non-medium count, background-scan entries,
+and on 7.4 the NVMe throttle counters and warning temperature. The five attributes v1 reported keep v1's fixed names
+in the `name` label, so their series continue. Set `DRIVECHECK_PAUSE` (seconds between drives) to 0 where nothing
+else polls the drives.
 
 ## Storage alert rules
 
@@ -183,5 +225,5 @@ thermal-log unit.
 
 ## Known limitation
 
-drivecheck counts any kernel "I/O error" since boot as a drive alert. On a laptop, a USB stick pulled out mid-write
-can raise DriveCheckAlert until the next reboot.
+drivecheck counts kernel "I/O error" lines from the last 24 h, across reboots, as a host alert. On a laptop, a USB
+stick pulled out mid-write raises DriveCheckAlert and DriveKernelIOErrors for about a day.
