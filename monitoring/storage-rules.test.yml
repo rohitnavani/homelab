@@ -1,0 +1,148 @@
+# promtool unit tests for storage-rules.yml: promtool test rules storage-rules.test.yml
+rule_files:
+  - storage-rules.yml
+evaluation_interval: 1m
+tests:
+  - name: ZpoolNotOnline fires 5 min after a pool turns DEGRADED, named by node_uname_info
+    interval: 1m
+    input_series:
+      - series: 'node_zfs_zpool_state{instance="mementos",job="node",state="online",zpool="vmPool"}'
+        values: '1x10 0x30'
+      - series: 'node_zfs_zpool_state{instance="mementos",job="node",state="degraded",zpool="vmPool"}'
+        values: '0x10 1x30'
+      - series: 'node_uname_info{instance="mementos",job="node",nodename="mementos"}'
+        values: '1x40'
+    alert_rule_test:
+      - {eval_time: 9m, alertname: ZpoolNotOnline, exp_alerts: []}
+      - {eval_time: 14m, alertname: ZpoolNotOnline, exp_alerts: []}
+      - eval_time: 20m
+        alertname: ZpoolNotOnline
+        exp_alerts:
+          - exp_labels: {severity: critical, instance: mementos, job: node, state: degraded, zpool: vmPool}
+            exp_annotations:
+              summary: 'ZFS pool vmPool is DEGRADED on mementos (mementos)'
+              description: 'Run "zpool status -v vmPool" on the host to see which vdev is faulted or missing, then check that drive in the drivecheck log and the kernel log. Replace or reseat it and let it resilver. Read the status before any zpool clear, export or import.'
+
+  - name: ZpoolErrors fires on nonzero READ/WRITE/CKSUM counters
+    interval: 1m
+    input_series:
+      - series: 'node_zfs_zpool_errors_total{instance="tinynas",job="node",zpool="homePool"}'
+        values: '0x10 3x30'
+    alert_rule_test:
+      - {eval_time: 9m, alertname: ZpoolErrors, exp_alerts: []}
+      - eval_time: 30m
+        alertname: ZpoolErrors
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: tinynas, job: node, zpool: homePool}
+            exp_annotations:
+              summary: 'ZFS pool homePool on tinynas counts 3 read/write/checksum errors'
+              description: 'ZFS saw I/O or checksum errors while the pool stayed ONLINE. Run "zpool status -v homePool" to find the disk, check its SMART data and the kernel log, and run a scrub. Clear the counters only once the cause is understood.'
+
+  - name: DrivePendingSectors fires on pending sectors
+    interval: 1m
+    input_series:
+      - series: 'drivecheck_ata_attr_raw{host="TinyNAS",device="/dev/sda",serial="TEST0001",id="197",name="Current_Pending_Sector",instance="tinynas",job="node"}'
+        values: '0x10 2x30'
+      - series: 'drivecheck_ata_attr_raw{host="TinyNAS",device="/dev/sda",serial="TEST0001",id="5",name="Reallocated_Sector_Ct",instance="tinynas",job="node"}'
+        values: '0x40'
+    alert_rule_test:
+      - {eval_time: 9m, alertname: DrivePendingSectors, exp_alerts: []}
+      - eval_time: 30m
+        alertname: DrivePendingSectors
+        exp_alerts:
+          - exp_labels: {severity: critical, host: TinyNAS, device: /dev/sda, serial: TEST0001, id: "197", name: Current_Pending_Sector, instance: tinynas, job: node}
+            exp_annotations:
+              summary: 'TinyNAS /dev/sda (TEST0001): 2 pending (unreadable) sectors'
+              description: 'The drive found sectors it cannot read. Check the pool on that host (zpool status), run a SMART long test and replace the drive if the count stays or grows. A Crucial MX500 can flip attribute 197 to 1 and back on its own: if the next daily drivecheck reads 0, it was that firmware quirk.'
+
+  - name: DriveSASNonMediumSurge fires above 500 a day, not on a normal day
+    interval: 1h
+    input_series:
+      - series: 'drivecheck_sas_nonmedium_errors{host="mementos",device="/dev/sdae",serial="TEST0002",instance="mementos",job="node"}'
+        values: '113000x24 113700x24'
+      - series: 'drivecheck_sas_nonmedium_errors{host="mementos",device="/dev/sdaf",serial="TEST0003",instance="mementos",job="node"}'
+        values: '80000x24 80140x24'
+    alert_rule_test:
+      - {eval_time: 20h, alertname: DriveSASNonMediumSurge, exp_alerts: []}
+      - eval_time: 30h
+        alertname: DriveSASNonMediumSurge
+        exp_alerts:
+          - exp_labels: {severity: warning, host: mementos, device: /dev/sdae, serial: TEST0002, instance: mementos, job: node}
+            exp_annotations:
+              summary: 'mementos /dev/sdae (TEST0002): 730 non-medium errors in a day'
+              description: 'Check the kernel log for resets, the drive''s SAS link counters and whether a scrub or heavy job ran. If it rises at idle too, run a SMART long test on the fastest climber.'
+
+  - name: DriveLongSelftestFailed fires on a failed long test, not an interrupted one
+    interval: 1m
+    input_series:
+      - series: 'drivecheck_selftest_last_long_ok{host="ryuji",device="/dev/sdb",serial="TEST0004",instance="ryuji",job="node"}'
+        values: '1x10 0x30'
+      - series: 'drivecheck_selftest_last_long_ok{host="ryuji",device="/dev/sdc",serial="TEST0005",instance="ryuji",job="node"}'
+        values: '1x10 -1x30'
+    alert_rule_test:
+      - {eval_time: 9m, alertname: DriveLongSelftestFailed, exp_alerts: []}
+      - eval_time: 30m
+        alertname: DriveLongSelftestFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, host: ryuji, device: /dev/sdb, serial: TEST0004, instance: ryuji, job: node}
+            exp_annotations:
+              summary: 'ryuji /dev/sdb (TEST0004): the last extended self-test failed'
+              description: 'Check "smartctl -l selftest" for the drive and the pool it belongs to, then replace the drive.'
+
+  - name: akechi away for a day (gap, or backfilled on return) never fires an increase() rule; a real rise still does
+    interval: 1m
+    input_series:
+      - series: 'drivecheck_ata_attr_raw{host="akechi",device="/dev/nvme0",serial="AKECHI-GAP",id="187",name="Reported_Uncorrect",instance="akechi",job="node"}'
+        values: '3x60 _x1440 3x60'
+      - series: 'drivecheck_ata_attr_raw{host="akechi",device="/dev/nvme0",serial="AKECHI-BACKFILL",id="187",name="Reported_Uncorrect",instance="akechi",job="node"}'
+        values: '3x1561'
+      - series: 'drivecheck_ata_attr_raw{host="akechi",device="/dev/nvme0",serial="AKECHI-RISE",id="187",name="Reported_Uncorrect",instance="akechi",job="node"}'
+        values: '3x60 _x1440 4x60'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: DriveSectorsReallocated, exp_alerts: []}
+      - {eval_time: 12h, alertname: DriveSectorsReallocated, exp_alerts: []}
+      - {eval_time: 1500m, alertname: DriveSectorsReallocated, exp_alerts: []}
+      - eval_time: 1530m
+        alertname: DriveSectorsReallocated
+        exp_alerts:
+          - exp_labels: {severity: warning, host: akechi, device: /dev/nvme0, serial: AKECHI-RISE, id: "187", name: Reported_Uncorrect, instance: akechi, job: node}
+            exp_annotations:
+              summary: 'akechi /dev/nvme0 (AKECHI-RISE): Reported_Uncorrect rose by 1 in the last 7 days'
+              description: 'Remapped or uncorrectable sectors are growing. Compare with the daily drive log on the host, run a SMART long test, and plan a replacement if it keeps rising. ZFS redundancy covers it meanwhile; a drive in a single-disk or striped pool needs action sooner.'
+
+  - name: akechi away for a day never fires DriveTempNearLimit; a drive near its limit after the gap does
+    interval: 1m
+    input_series:
+      - series: 'drivecheck_temperature_margin_celsius{host="akechi",device="/dev/nvme0",serial="AKECHI-GAP",instance="akechi",job="node"}'
+        values: '20x60 _x1440 20x60'
+      - series: 'drivecheck_temperature_margin_celsius{host="akechi",device="/dev/nvme0",serial="AKECHI-BACKFILL",instance="akechi",job="node"}'
+        values: '20x1561'
+      - series: 'drivecheck_temperature_margin_celsius{host="akechi",device="/dev/nvme0",serial="AKECHI-HOT",instance="akechi",job="node"}'
+        values: '20x60 _x1440 2x60'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: DriveTempNearLimit, exp_alerts: []}
+      - {eval_time: 12h, alertname: DriveTempNearLimit, exp_alerts: []}
+      - eval_time: 1530m
+        alertname: DriveTempNearLimit
+        exp_alerts:
+          - exp_labels: {severity: warning, host: akechi, device: /dev/nvme0, serial: AKECHI-HOT, instance: akechi, job: node}
+            exp_annotations:
+              summary: 'akechi /dev/nvme0 (AKECHI-HOT) is 2C under its temperature limit'
+              description: 'Read at the daily drivecheck run, so the drive was that close to its rated limit then. Check airflow and fans; the lab aims for about 10C of margin.'
+
+  - name: DriveSASLinkErrors ignores a counter restart at a power cycle but fires on real growth
+    interval: 1m
+    input_series:
+      - series: 'drivecheck_sas_phy_errors{host="mementos",device="/dev/sdc",serial="TEST0006",port="0",kind="invalid_dword",instance="mementos",job="node"}'
+        values: '40x1440 0 40x100'
+      - series: 'drivecheck_sas_phy_errors{host="mementos",device="/dev/sdb",serial="TEST0007",port="0",kind="loss_sync",instance="mementos",job="node"}'
+        values: '4x1440 24x100'
+    alert_rule_test:
+      - {eval_time: 1000m, alertname: DriveSASLinkErrors, exp_alerts: []}
+      - eval_time: 1490m
+        alertname: DriveSASLinkErrors
+        exp_alerts:
+          - exp_labels: {severity: warning, host: mementos, device: /dev/sdb, serial: TEST0007, port: "0", kind: loss_sync, instance: mementos, job: node}
+            exp_annotations:
+              summary: 'mementos /dev/sdb (TEST0007): loss_sync errors on SAS port 0 rose by 20 in a day'
+              description: 'SAS link errors point at the cable, backplane or connector rather than the drive. Reseat the drive and its backplane cable at the next downtime.'

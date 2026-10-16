@@ -87,6 +87,65 @@ Needed once:
 The script checks both before it sets up a roaming host and says what is missing. The receiver accepts writes from
 anything that can reach Prometheus's port, the same exposure as the rest of its unauthenticated API on the LAN.
 
+## Storage alert rules
+
+`storage-rules.yml` holds 15 Prometheus alert rules for ZFS pools and drive health; `storage-rules.test.yml` holds
+promtool unit tests for them. On futaba the rules live at `prometheus/rules/storage.yml` beside `alerts.yml`, and
+Prometheus loads every `rules/*.yml`. The tests sit outside that directory (in `prometheus/tests/`), so Prometheus never
+tries to load them as rules.
+
+```sh
+promtool check rules storage-rules.yml
+promtool test rules storage-rules.test.yml
+curl -X POST http://localhost:9090/-/reload     # on the monitoring host, after copying the rules file into rules/
+```
+
+futaba has no promtool on the host; run it from the Prometheus image:
+`docker run --rm --network none -v "$PWD":/w:ro --entrypoint promtool prom/prometheus:latest test rules /w/storage-rules.test.yml`.
+
+Where the numbers come from:
+
+- `node_zfs_zpool_state`: node_exporter's zfs collector, on every host with ZFS (one series per state, 1 for the
+  current one).
+- `node_zfs_zpool_errors_total`: `../scripts/zfs_metrics` (root cron, every minute, on tinynas and mementos), the READ,
+  WRITE and CKSUM counters of `zpool status` summed over the pool, its vdevs and disks.
+- `drivecheck_*`: `../scripts/drivecheck`, once a day on every host (on resume for a roaming host).
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| ZpoolNotOnline | a pool is DEGRADED, FAULTED, UNAVAIL, SUSPENDED, OFFLINE or REMOVED for 5 min | critical |
+| ZpoolErrors | a pool counts read, write or checksum errors | warning |
+| DrivePendingSectors | ATA attribute 197 or 198 (unreadable sectors) is above 0 | critical |
+| DriveSectorsReallocated | ATA attribute 5, 187 or 196 rose within 7 days | warning |
+| DriveAttrNearThreshold | a normalized SMART attribute is within 10 of its failure threshold | warning |
+| DriveNVMeCriticalWarning | an NVMe drive sets any critical-warning bit | critical |
+| DriveNVMeMediaErrors | an NVMe drive counts media and data-integrity errors | warning |
+| DriveWearHigh | an SSD has used 80% of its rated endurance | warning |
+| DriveSASDefectsGrowing | a SAS drive's grown defect list rose within 7 days | warning |
+| DriveSASNonMediumSurge | a SAS drive adds more than 500 non-medium errors in a day | warning |
+| DriveSASRecoveredReads | a SAS drive's background scan recovered more than 10 reads in its last 168 power-on hours | warning |
+| DriveSASLinkErrors | a SAS link error counter is more than 10 above the same reading a day earlier | warning |
+| DriveTempNearLimit | a drive is within 3C of its own temperature limit at the daily read | warning |
+| DriveKernelIOErrors | the kernel logged I/O errors on the host in the last 24 h | warning |
+| DriveLongSelftestFailed | the newest extended self-test failed (interrupted or aborted ones don't count) | warning |
+
+Nothing here fires on absence: no `absent()`, no "host up but metric missing" joins and no age checks. A roaming host
+that is away for days just stops sending, and when it comes back with up to 24 h of buffered samples nothing fires
+either; the tests cover both cases. Alertmanager on futaba sends every alert to one email receiver, warning and
+critical alike.
+
+Tuned to this lab's drives, so change these first elsewhere:
+
+- DriveSASNonMediumSurge: 500 a day sits well above what the eleven Seagate ST8000NM0075 (firmware PS26) in the
+  PowerVault MD1200 shelf add on busy days, 1 to 180 in October 2026, on lifetime counts of 50,000 to 113,000.
+- DriveSASRecoveredReads: 10 a week sits above the 0 to 2 a week of the 24 Seagate ST1200MM0007 10K drives (firmware
+  IS06, about 58,700 power-on hours), several of which log hundreds of older recovered reads.
+- DriveSASLinkErrors compares with the reading a day earlier instead of using `increase()`, because SAS PHY counters
+  restart at every power cycle and `increase()` would count each restart's fresh readings as new errors. One of the
+  R720xd's rear-bay HGST HUSMM8080 SSDs held 40 invalid dwords two days after a power cycle.
+- DriveTempNearLimit uses each drive's own limit: the SATA specified maximum, the SAS drive trip temperature or the
+  NVMe warning temperature, as drivecheck reads them.
+
 ## Hardware and software it has run on
 
 As of 2026-10-16:

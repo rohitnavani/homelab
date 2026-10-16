@@ -1,0 +1,146 @@
+# Storage alerts: ZFS pool state and drive health from drivecheck v2 (homelab repo scripts/drivecheck).
+# Added 2026-10-16 after the lab drive audit (monitoring/storage-rules.yml in the homelab repo).
+#
+# Every rule fires only on samples that are present. A host that is away (akechi pushes from a Prometheus agent and is
+# often asleep or off) simply stops sending; nothing here uses absent(), staleness checks or "host up but metric
+# missing" joins, so an away host never fires anything.
+# drivecheck runs once a day (00:00, or on resume for roaming hosts), so its values hold for 24 h: "for: 10m" only
+# rides out a scrape blip.
+groups:
+  - name: storage
+    rules:
+      # A ZFS pool not ONLINE: DEGRADED, FAULTED, UNAVAIL, SUSPENDED, OFFLINE or REMOVED. node_exporter's zfs collector
+      # exports one series per state with 1 on the current one, on every host with ZFS.
+      - alert: ZpoolNotOnline
+        expr: node_zfs_zpool_state{state!="online"} == 1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'ZFS pool {{ $labels.zpool }} is {{ $labels.state | toUpper }} on {{ $labels.instance }}{{ with printf "node_uname_info{instance=%q}" $labels.instance | query }} ({{ . | first | label "nodename" }}){{ end }}'
+          description: 'Run "zpool status -v {{ $labels.zpool }}" on the host to see which vdev is faulted or missing, then check that drive in the drivecheck log and the kernel log. Replace or reseat it and let it resilver. Read the status before any zpool clear, export or import.'
+
+      # READ, WRITE and CKSUM counters from zpool status, summed over the pool, its vdevs and disks (the zfs_metrics
+      # textfile on tinynas and mementos). They stay counted until "zpool clear" or a reboot.
+      - alert: ZpoolErrors
+        expr: node_zfs_zpool_errors_total > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'ZFS pool {{ $labels.zpool }} on {{ $labels.instance }} counts {{ $value }} read/write/checksum errors'
+          description: 'ZFS saw I/O or checksum errors while the pool stayed ONLINE. Run "zpool status -v {{ $labels.zpool }}" to find the disk, check its SMART data and the kernel log, and run a scrub. Clear the counters only once the cause is understood.'
+
+      # Sectors the drive cannot read (197 pending, 198 offline uncorrectable).
+      - alert: DrivePendingSectors
+        expr: drivecheck_ata_attr_raw{id=~"197|198"} > 0
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): {{ $value }} {{ if eq $labels.id "197" }}pending (unreadable){{ else }}offline-uncorrectable{{ end }} sectors'
+          description: 'The drive found sectors it cannot read. Check the pool on that host (zpool status), run a SMART long test and replace the drive if the count stays or grows. A Crucial MX500 can flip attribute 197 to 1 and back on its own: if the next daily drivecheck reads 0, it was that firmware quirk.'
+
+      # Reallocated sectors (5), reported uncorrectable reads (187) or reallocation events (196) rose within a week.
+      # These SMART counters never restart, so increase() is safe.
+      - alert: DriveSectorsReallocated
+        expr: increase(drivecheck_ata_attr_raw{id=~"5|187|196"}[7d]) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): {{ $labels.name }} rose by {{ $value | printf "%.0f" }} in the last 7 days'
+          description: 'Remapped or uncorrectable sectors are growing. Compare with the daily drive log on the host, run a SMART long test, and plan a replacement if it keeps rising. ZFS redundancy covers it meanwhile; a drive in a single-disk or striped pool needs action sooner.'
+
+      # A normalized SMART attribute within 10 of its failure threshold (attributes with a threshold above 0).
+      - alert: DriveAttrNearThreshold
+        expr: drivecheck_ata_attr_margin <= 10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): SMART attribute {{ $labels.id }} {{ $labels.name }} is {{ $value }} above its failure threshold'
+          description: 'The drive''s own failure prediction is close to tripping. Plan a replacement now and keep its data backed up.'
+
+      - alert: DriveNVMeCriticalWarning
+        expr: drivecheck_nvme_critical_warning > 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): NVMe critical warning {{ $value }}'
+          description: 'Bits: 1 spare below threshold, 2 temperature, 4 reliability degraded, 8 read-only, 16 volatile backup failed. Back up what is on it and plan a replacement; for 2, check its cooling first.'
+
+      - alert: DriveNVMeMediaErrors
+        expr: drivecheck_nvme_media_errors > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): {{ $value }} NVMe media and data-integrity errors'
+          description: 'The SSD returned data it could not recover. Back up what is on it, run an extended self-test, and replace it if the count grows.'
+
+      # SSD endurance used, from the drive itself (ATA device statistics, Crucial 202, Kingston 231, SAS SSD and NVMe).
+      - alert: DriveWearHigh
+        expr: drivecheck_ssd_percentage_used >= 80
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): SSD endurance {{ $value }}% used'
+          description: 'The SSD has used 80% or more of its rated write endurance. Plan a replacement.'
+
+      - alert: DriveSASDefectsGrowing
+        expr: increase(drivecheck_sas_grown_defects[7d]) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): grown defect list rose by {{ $value | printf "%.0f" }} in 7 days'
+          description: 'The drive remapped newly defective blocks. Run a SMART long test and watch the next daily runs; replace it if the list keeps growing.'
+
+      # Recoverable errors outside the media (link resets, aborted commands, vibration under load). The mementos shelf
+      # drives added 1 to 180 a day in October 2026; this threshold is test 2 of the audit's follow-up plan.
+      - alert: DriveSASNonMediumSurge
+        expr: increase(drivecheck_sas_nonmedium_errors[1d]) > 500
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): {{ $value | printf "%.0f" }} non-medium errors in a day'
+          description: 'Check the kernel log for resets, the drive''s SAS link counters and whether a scrub or heavy job ran. If it rises at idle too, run a SMART long test on the fastest climber.'
+
+      # Background media scan entries the drive recovered in its last 168 power-on hours (marginal sectors).
+      - alert: DriveSASRecoveredReads
+        expr: drivecheck_sas_bms_recent_entries > 10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): {{ $value }} recovered reads in its last week of background scans'
+          description: 'The drive keeps finding marginal sectors it can still recover. Run a SMART long test, make sure its mirror or raidz partners are healthy, and plan a replacement if this continues.'
+
+      # SAS PHY errors (invalid dwords, disparity, sync loss, reset problems). These counters restart at every power
+      # cycle and link training adds a few after a boot, so instead of increase() (which would count a restart as new
+      # errors) this compares with the same reading a day earlier.
+      - alert: DriveSASLinkErrors
+        expr: (drivecheck_sas_phy_errors - drivecheck_sas_phy_errors offset 1d) > 10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): {{ $labels.kind }} errors on SAS port {{ $labels.port }} rose by {{ $value }} in a day'
+          description: 'SAS link errors point at the cable, backplane or connector rather than the drive. Reseat the drive and its backplane cable at the next downtime.'
+
+      - alert: DriveTempNearLimit
+        expr: drivecheck_temperature_margin_celsius < 3
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}) is {{ $value }}C under its temperature limit'
+          description: 'Read at the daily drivecheck run, so the drive was that close to its rated limit then. Check airflow and fans; the lab aims for about 10C of margin.'
+
+      - alert: DriveKernelIOErrors
+        expr: drivecheck_kernel_io_errors > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }}: {{ $value }} kernel I/O error lines in the last 24 h'
+          description: 'Run journalctl -k --since -24h on {{ $labels.host }} and look for "I/O error" lines to find the device. Network LUNs (tinypc''s iSCSI disk) count too.'
+
+      # The newest extended self-test FAILED. Interrupted or aborted tests (-1) do not fire this.
+      - alert: DriveLongSelftestFailed
+        expr: drivecheck_selftest_last_long_ok == 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.host }} {{ $labels.device }} ({{ $labels.serial }}): the last extended self-test failed'
+          description: 'Check "smartctl -l selftest" for the drive and the pool it belongs to, then replace the drive.'
