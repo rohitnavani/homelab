@@ -16,6 +16,10 @@
 # address does not matter, and it keeps up to 24 h of samples while futaba is out of reach. Away time is normal: with
 # no samples, up never reads 0, so nothing alerts, and its Glance card says "away" and when it was last seen.
 #
+# A host keeps the mode it was set up in (a roaming host stays roaming without the flag). A host whose monitoring is
+# set up some other way is refused: port 9100 served by something else (tinynas's Docker node-exporter), and
+# symlinked scripts or a root crontab running drivecheck are left alone.
+#
 # Needs: key-based SSH to HOST and futaba; sudo on HOST (passwordless, e.g. after `sudo-grant HOST`, or it asks once
 # on a terminal); for --roaming, futaba's Prometheus started with --web.enable-remote-write-receiver. Safe to run
 # again: both halves change only what is missing or different. Ubuntu and Debian hosts. Details: monitoring/README.md.
@@ -74,19 +78,29 @@ except Exception:
     pass'
 }
 
-mode=$([ $roaming = 1 ] && echo roaming || echo server)
-echo "== $name ($mode)$([ $dry = 1 ] && echo ', dry run'): checking access"
+echo "== $name$([ $dry = 1 ] && echo ' (dry run)'): checking access"
 "${SSH[@]}" "$host" true 2>/dev/null || die "cannot SSH to $host with a key"
 facts=$("${SSH[@]}" "$host" '. /etc/os-release; hostname -s; echo "${ID:-unknown}"; echo "${PRETTY_NAME:-unknown}"
-    sudo -n true 2>/dev/null && echo sudo || echo nosudo; command -v apt-get >/dev/null && echo apt || echo noapt')
+    sudo -n true 2>/dev/null && echo sudo || echo nosudo; command -v apt-get >/dev/null && echo apt || echo noapt
+    if [ -e /etc/systemd/system/drivecheck.timer ]; then echo roaming
+    elif [ -e /etc/cron.d/drivecheck ]; then echo server; else echo new; fi')
 drive_host=$(sed -n 1p <<<"$facts"); os_id=$(sed -n 2p <<<"$facts"); os_name=$(sed -n 3p <<<"$facts")
-sudo_ok=$(sed -n 4p <<<"$facts"); has_apt=$(sed -n 5p <<<"$facts")
+sudo_ok=$(sed -n 4p <<<"$facts"); has_apt=$(sed -n 5p <<<"$facts"); setup=$(sed -n 6p <<<"$facts")
 [ "$has_apt" = apt ] || die "$host runs $os_name; install-host supports apt-based hosts (Ubuntu, Debian) only"
+# A host keeps the mode it was set up in. A roaming host run without --roaming stays roaming: as a server, futaba
+# would scrape its DHCP address and alert whenever it is away. A server is not turned into a roaming host either.
+if [ "$setup" = roaming ] && [ $roaming = 0 ]; then
+    roaming=1
+    echo "  note: $host is set up as a roaming host (drivecheck.timer), so it stays roaming"
+elif [ "$setup" = server ] && [ $roaming = 1 ]; then
+    die "$host is set up as a server (/etc/cron.d/drivecheck; futaba scrapes it); making a server roaming is not automated"
+fi
+mode=$([ $roaming = 1 ] && echo roaming || echo server)
 if [ -z "$icon" ]; then
     case "$os_id" in ubuntu) icon=ubuntu-linux ;; debian) icon=debian-linux ;; fedora) icon=fedora ;; *) icon=linux ;; esac
 fi
 on_futaba true || die "cannot SSH to futaba ($FUTABA)"
-echo "  $host: $os_name, drivecheck host label $drive_host, sudo: $sudo_ok"
+echo "  $host: $os_name, $mode mode, drivecheck host label $drive_host, sudo: $sudo_ok"
 
 push_ready=1
 if [ $roaming = 1 ]; then

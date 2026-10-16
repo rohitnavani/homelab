@@ -14,9 +14,17 @@ Other options: `--ip ADDR` (a server's scrape address, default `HOST.home.arpa` 
 from the host's OS by default) and `--no-cockpit`.
 
 Run it from a checkout of this repo on a machine that can SSH to the host and to futaba. In this lab that is makoto,
-tinypc or akechi; the servers hold no SSH logins. It needs sudo on the host, either passwordless (`sudo-grant HOST`
+tinypc or akechi; the servers hold no SSH logins. On hosts that mount the lab share, `lab-scripts` puts it on PATH as
+plain `deploy-monitoring` (from `/dataPool/homelab`). It needs sudo on the host, either passwordless (`sudo-grant HOST`
 here) or typed once on a terminal. Running it again changes only what is missing or different, so it is also the way
 to bring an older host up to date.
+
+A host keeps the mode it was set up in: run without `--roaming`, a roaming host (one with `drivecheck.timer`) stays
+roaming, because as a server futaba would scrape its DHCP address and alert whenever it is away. Turning a server into
+a roaming host is refused. So are hosts whose monitoring is set up some other way: tinynas serves port 9100 from a
+Docker node-exporter, links its scripts to `/pool/scripts` and runs drivecheck from root's crontab, so it is kept up
+by hand and with `lab-scripts`. Elsewhere a symlinked script or a root crontab that already runs drivecheck is left
+alone.
 
 ## What it sets up
 

@@ -41,6 +41,8 @@ installed(){ dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok
 
 # put SRC DEST MODE: install a file only when it is missing or different. Returns 0 when it changed (or would).
 put(){
+    # A symlinked destination is managed somewhere else (tinynas links its scripts to /pool/scripts): leave it alone
+    if [ -L "$2" ]; then echo "  $2 is a symlink to $(readlink "$2"), left alone"; return 1; fi
     if [ -f "$2" ] && cmp -s "$1" "$2"; then return 1; fi
     if [ $dry = 1 ]; then would "install $2"; else install -D -m "$3" "$1" "$2"; changed+=("$2"); fi
     return 0
@@ -82,6 +84,12 @@ apt_install(){  # apt_install [apt-get options] PKG...
 }
 
 echo "install-host on $(hostname -s): $mode mode$([ $dry = 1 ] && echo ', dry run')"
+
+# A host whose port 9100 is already served by something other than the apt node_exporter (tinynas runs node-exporter
+# in Docker) is set up differently: refuse, rather than install a second exporter next to it.
+if ss -ltnH 'sport = :9100' 2>/dev/null | grep -q . && ! systemctl is-active -q prometheus-node-exporter; then
+    die "port 9100 is served by something other than the prometheus-node-exporter package (tinynas runs it in Docker); this host's monitoring is kept up by hand and with lab-scripts, not by deploy-monitoring"
+fi
 
 # ---- packages ----
 missing=()
@@ -134,11 +142,16 @@ if set_args /etc/default/prometheus-node-exporter "$node_args"; then r=1; fi
 svc prometheus-node-exporter $r
 
 # ---- drivecheck ----
-put "$src/drivecheck" /usr/local/bin/drivecheck 755 || true
+dc=0
+if put "$src/drivecheck" /usr/local/bin/drivecheck 755; then dc=1; fi
 put "$src/drive-selftest" /usr/local/bin/drive-selftest 755 || true
 [ -d /var/log/drive_logs ] || { if [ $dry = 1 ]; then would "create /var/log/drive_logs"; else mkdir -p /var/log/drive_logs; fi; }
 if [ $mode = server ]; then
-    put "$src/drivecheck.cron" /etc/cron.d/drivecheck 644 || true
+    if crontab -l -u root 2>/dev/null | grep -q 'drivecheck'; then
+        echo "  root's crontab already runs drivecheck, so /etc/cron.d/drivecheck is not added"
+    else
+        put "$src/drivecheck.cron" /etc/cron.d/drivecheck 644 || true
+    fi
     if [ -e /etc/systemd/system/drivecheck.timer ]; then   # switched back from roaming
         if [ $dry = 1 ]; then would "remove drivecheck.timer and drivecheck.service"
         else
@@ -158,8 +171,9 @@ else
     if [ $t = 1 ] && [ $dry = 0 ]; then systemctl daemon-reload; fi
     svc drivecheck.timer 0
 fi
-# A first reading now, so the drive metrics exist right away instead of after midnight
-if [ ! -s "$TEXTFILE_DIR/drivecheck.prom" ]; then
+# A first reading now (or a fresh one when drivecheck itself changed), so the drive metrics are current right away
+# instead of after midnight
+if [ $dc = 1 ] || [ ! -s "$TEXTFILE_DIR/drivecheck.prom" ]; then
     if [ $dry = 1 ]; then would "run drivecheck once"
     elif [ $mode = roaming ]; then systemctl start drivecheck.service; changed+=("ran drivecheck")
     else
