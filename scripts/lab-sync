@@ -76,6 +76,9 @@ syntax_ok(){  # syntax_ok FILE DEST: what the file's interpreter can check witho
 }
 
 [ $DRY = 1 ] || mkdir -p "$STATE"
+# one run at a time (the timer and a hand-started run can meet)
+exec 9>/run/lock/lab-sync.lock
+flock -n 9 || { log "another lab-sync run is in progress; leaving it to that one"; exit 0; }
 if ! g "$REPO" rev-parse -q --verify HEAD >/dev/null 2>&1; then
     log "cannot read $REPO (share not mounted, or mementos down): nothing changed"
     readable=0; metrics; exit 1
@@ -127,7 +130,7 @@ while IFS=$'\t' read -r src dest chk unit; do
     if [ -f "$dest" ] && [ ! -L "$dest" ]; then
         m=$(stat -c %a "$dest"); uid=$(stat -c %u "$dest"); gid=$(stat -c %g "$dest"); backup "$dest"
     fi
-    new=$(dirname "$dest")/.$(basename "$dest").lab-sync-new
+    new=$(dirname "$dest")/.$(basename "$dest").lab-sync-new.$$
     mkdir -p "$(dirname "$dest")"
     if install -m "$m" -o "$uid" -g "$gid" "$tmp" "$new" && mv -Tf "$new" "$dest"; then
         command -v restorecon >/dev/null && restorecon -F "$dest" 2>/dev/null
