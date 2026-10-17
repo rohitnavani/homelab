@@ -19,15 +19,14 @@ plain `deploy-monitoring` (from `/dataPool/homelab`). It needs sudo on the host,
 here) or typed once on a terminal. Run on the host itself (makoto), it works locally instead of over SSH. Running it
 again changes only what is missing or different, so it is also the way to bring an older host up to date.
 
-Scripts that `lab-scripts` keeps as links into the lab share (`/dataPool/homelab`, the `[links]` rows of
-`deploy.list`) are left alone. On a new host install-host puts real copies in place; `lab-scripts link HOST` then
-turns the `[links]` rows into links.
+The scripts are real copies that lab-sync keeps on the version committed in the lab share (`/dataPool/homelab`,
+the `[copies]` rows of `deploy.list`). On a new host install-host puts them in place, then `lab-scripts enable-sync
+HOST` keeps them in step; install-host never replaces a symlink.
 
 A host keeps the mode it was set up in: run without `--roaming`, a roaming host (one with `drivecheck.timer`) stays
 roaming, because as a server futaba would scrape its DHCP address and alert whenever it is away. Turning a server into
 a roaming host is refused. So are hosts whose monitoring is set up some other way: tinynas serves port 9100 from a
-Docker node-exporter, links its scripts to `/pool/scripts` and runs drivecheck from root's crontab, so it is kept up
-by hand and with `lab-scripts`. Elsewhere a symlinked script or a root crontab that already runs drivecheck is left
+Docker node-exporter and runs drivecheck from root's crontab, so it is kept up by hand and with `lab-scripts`. Elsewhere a symlinked script or a root crontab that already runs drivecheck is left
 alone.
 
 ## What it sets up

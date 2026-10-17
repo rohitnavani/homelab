@@ -1,0 +1,22 @@
+# lab-sync: every host but sojiro keeps its unattended scripts on the version committed in /dataPool/homelab
+# (scripts/lab-sync, every 5 minutes), and writes lab_sync.prom. These alert when a host stops doing that.
+# akechi is a laptop that is often away, so only its failures count, not its silence.
+groups:
+  - name: lab-sync
+    rules:
+      - alert: LabSyncStale
+        expr: (time() - lab_sync_last_success_timestamp_seconds{host!="akechi"}) > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.host }}: lab-sync has not completed a clean run in over a day"
+          description: "Its scripts may be behind the share. On the host: systemctl status lab-sync.timer and journalctl -u lab-sync; or lab-scripts status on makoto."
+      - alert: LabSyncFailing
+        expr: lab_sync_files{state="failed"} > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.host }}: lab-sync could not install {{ $value }} committed file(s) for an hour"
+          description: "A committed script failed its syntax check or could not be written; journalctl -u lab-sync on the host names it."
