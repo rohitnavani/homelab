@@ -16,8 +16,12 @@ from the host's OS by default) and `--no-cockpit`.
 Run it from a checkout of this repo on a machine that can SSH to the host and to futaba. In this lab that is makoto,
 tinypc or akechi; the servers hold no SSH logins. On hosts that mount the lab share, `lab-scripts` puts it on PATH as
 plain `deploy-monitoring` (from `/dataPool/homelab`). It needs sudo on the host, either passwordless (`sudo-grant HOST`
-here) or typed once on a terminal. Running it again changes only what is missing or different, so it is also the way
-to bring an older host up to date.
+here) or typed once on a terminal. Run on the host itself (makoto), it works locally instead of over SSH. Running it
+again changes only what is missing or different, so it is also the way to bring an older host up to date.
+
+Scripts that `lab-scripts` keeps as links into the lab share (`/dataPool/homelab`, the `[links]` rows of
+`deploy.list`) are left alone. On a new host install-host puts real copies in place; `lab-scripts link HOST` then
+turns the `[links]` rows into links.
 
 A host keeps the mode it was set up in: run without `--roaming`, a roaming host (one with `drivecheck.timer`) stays
 roaming, because as a server futaba would scrape its DHCP address and alert whenever it is away. Turning a server into
@@ -35,6 +39,8 @@ alone.
 | drivecheck | `/etc/cron.d/drivecheck`, daily at 00:00 | systemd timer, daily, plus on resume or boot after a missed day |
 | SMART self-tests | short on Saturday 22:00, long on the first Monday at 08:00 | none scheduled (see below) |
 | thermal-log | yes | yes |
+| ZFS pools | `zfs_metrics` every minute from `/etc/cron.d/zfs-metrics` on a host with pools: capacity, health, error counts, scrub age, I/O | the same |
+| Collectors package | its outputs (apt updates and reboot-required, NVMe and SMART detail, BMC sensors) linked into the directory node_exporter reads | the same |
 | Cockpit | bridge, system and storaged on the host, and an entry in futaba's Cockpit list | none: futaba's Cockpit reaches hosts over SSH at a fixed address |
 | Prometheus target on futaba | the host's address in the `node` job | none |
 | Glance on futaba | a host card (red "offline" when down) and a row in "Drives healthy by system" and "Hottest drive by system" | a host card that says "away, last seen 3h ago" in grey when no data arrives, and the same drive rows |
@@ -43,8 +49,11 @@ The pieces:
 
 - `install-host` is the host half. It runs as root from a temporary copy on the host and installs the Ubuntu
   packages (prometheus-node-exporter, nvme-cli, smartmontools, and prometheus for roaming hosts), this repo's
-  `scripts/drivecheck`, `scripts/drive-selftest` and `scripts/drivecheck.cron`, and `fan-control/monitoring/thermal-log`
-  with its unit and logrotate file.
+  `scripts/drivecheck`, `scripts/drive-selftest` and `scripts/drivecheck.cron`, `scripts/zfs_metrics` and
+  `scripts/zfs_metrics.cron` on hosts with ZFS pools, and `fan-control/monitoring/thermal-log` with its unit and
+  logrotate file. prometheus-node-exporter-collectors (pulled in as a recommends) writes its outputs to
+  `/var/lib/prometheus/node-exporter`, but Ubuntu 24.04's node_exporter 1.7 reads one textfile directory, so each output
+  is linked into `/var/lib/node_exporter/textfile_collector`; before 2026-10-17 only the BMC one was, by hand.
 - `futaba-register` is the futaba half. It edits `prometheus.yml`, `glance.yml` and Cockpit's `51-lab.json` in place,
   keeping the inode that Docker's single-file bind mounts need, after a dated backup (`<file>.bak-YYYY-MM-DD-<host>`).
   A new card is copied from the last plain host card, so it matches the others. A Prometheus change is checked with

@@ -10,6 +10,8 @@
 #            reach, drivecheck from a systemd timer that catches up after suspend or power-off, no scheduled
 #            self-tests (a laptop is often asleep or away at any fixed time, so results would be patchy),
 #            thermal-log.
+#   both     zfs_metrics every minute on hosts with ZFS pools (pool capacity, health, errors, scrub age), and the
+#            collectors package's outputs (apt, nvme, smartmon, BMC sensors) linked where node_exporter reads them.
 #
 # Usage: install-host --name NAME [--roaming --push-url URL] [--cockpit] [--dry-run]
 # Ubuntu and Debian (apt) only.
@@ -41,8 +43,13 @@ installed(){ dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok
 
 # put SRC DEST MODE: install a file only when it is missing or different. Returns 0 when it changed (or would).
 put(){
-    # A symlinked destination is managed somewhere else (tinynas links its scripts to /pool/scripts): leave it alone
-    if [ -L "$2" ]; then echo "  $2 is a symlink to $(readlink "$2"), left alone"; return 1; fi
+    # A symlinked destination is managed somewhere else: hosts run the lab share's copy through links that lab-scripts
+    # keeps (/dataPool/homelab), and tinynas links some to /pool/scripts. Leave it alone; mention it unless it is a
+    # link into the share.
+    if [ -L "$2" ]; then
+        case "$(readlink "$2")" in /dataPool/homelab/*) ;; *) echo "  $2 is a symlink to $(readlink "$2"), left alone" ;; esac
+        return 1
+    fi
     if [ -f "$2" ] && cmp -s "$1" "$2"; then return 1; fi
     if [ $dry = 1 ]; then would "install $2"; else install -D -m "$3" "$1" "$2"; changed+=("$2"); fi
     return 0
@@ -100,6 +107,14 @@ if [ ${#missing[@]} -gt 0 ]; then
     # installed (ipmitool brings it) is left alone.
     if ! installed openipmi && ! dmidecode -t 38 2>/dev/null | grep -q 'IPMI Device Information'; then
         extra+=(openipmi-)
+    fi
+    # A host whose fans are driven over in-band IPMI (mementos's fan-watchdog) must not get a second IPMI reader: a
+    # clash can drop the R720 into loud iDRAC auto. The collectors' ipmitool-sensor timer is masked before the
+    # package could start it.
+    if [ -n "$(systemctl list-unit-files --no-legend fan-watchdog.service 2>/dev/null)" ]; then
+        if [ $dry = 1 ]; then would "mask prometheus-node-exporter-ipmitool-sensor (fan-watchdog reads the BMC here)"
+        else systemctl mask -q prometheus-node-exporter-ipmitool-sensor.timer prometheus-node-exporter-ipmitool-sensor.service
+            changed+=("masked the collectors' ipmitool-sensor (fan-watchdog host)"); fi
     fi
     if [ $dry = 1 ]; then would "apt-get install ${missing[*]} ${extra[*]}"
     else apt_install "${missing[@]}" "${extra[@]}"; changed+=("installed ${missing[*]}"); fi
@@ -183,6 +198,51 @@ if [ $dc = 1 ] || [ ! -s "$TEXTFILE_DIR/drivecheck.prom" ]; then
     fi
 fi
 
+# ---- ZFS pools (zfs_metrics) ----
+# Pool capacity, health, error counts, scrub age and I/O every minute, for hosts with ZFS pools. node_exporter's own
+# zfs collector only gives the pool state.
+pools=""
+if command -v zpool >/dev/null; then pools=$(zpool list -H -o name 2>/dev/null | tr '\n' ' '); fi
+if [ -n "$pools" ]; then
+    zm=0
+    if put "$src/zfs_metrics" /usr/local/bin/zfs_metrics 755; then zm=1; fi
+    if crontab -l -u root 2>/dev/null | grep -q 'zfs_metrics'; then
+        echo "  root's crontab already runs zfs_metrics, so /etc/cron.d/zfs-metrics is not added"
+    else
+        put "$src/zfs_metrics.cron" /etc/cron.d/zfs-metrics 644 || true
+    fi
+    if [ $zm = 1 ] || [ ! -s "$TEXTFILE_DIR/zfs.prom" ]; then
+        if [ $dry = 1 ]; then would "run zfs_metrics once (pools: $pools)"
+        else /usr/local/bin/zfs_metrics || true; changed+=("ran zfs_metrics (pools: $pools)"); fi
+    fi
+fi
+
+# ---- collectors package outputs ----
+# prometheus-node-exporter-collectors (apt, nvme, smartmon and, with a BMC, ipmitool-sensor) writes to the Debian
+# default textfile directory, which this node_exporter does not read: version 1.7 reads a single directory. Each
+# output is linked into the one it reads, as ipmitool_sensor.prom was by hand on 2026-10-07. A name already taken
+# there by a real file is left alone, and so is an output not updated for a week (a collector that stopped).
+CDIR=/var/lib/prometheus/node-exporter
+if [ -d "$CDIR" ] && [ "$CDIR" != "$TEXTFILE_DIR" ]; then
+    # On a new host, run once each active collector whose output does not exist yet, so it can be linked right away
+    if [ $dry = 0 ]; then
+        for t in $(systemctl list-units --state=active --no-legend --plain 'prometheus-node-exporter-*.timer' 2>/dev/null | awk '{print $1}'); do
+            out=$(systemctl cat "${t%.timer}.service" 2>/dev/null | grep -o "$CDIR/[A-Za-z0-9_.-]*\.prom" | head -1 || true)
+            if [ -n "$out" ] && [ ! -e "$out" ]; then timeout 300 systemctl start "${t%.timer}.service" || true; fi
+        done
+    fi
+    for f in "$CDIR"/*.prom; do
+        [ -f "$f" ] || continue
+        l="$TEXTFILE_DIR/${f##*/}"
+        if [ "$(readlink "$l" 2>/dev/null)" = "$f" ] || [ -e "$l" ] || [ -L "$l" ]; then continue; fi
+        if [ $(( $(date +%s) - $(stat -c %Y "$f") )) -gt 604800 ]; then
+            echo "  ${f##*/}: not updated for over a week, not linked"; continue
+        fi
+        if [ $dry = 1 ]; then would "link $l -> $f"
+        else ln -s "$f" "$l"; changed+=("linked ${f##*/} into the textfile directory"); fi
+    done
+fi
+
 # ---- thermal-log ----
 r=0
 if put "$src/thermal-log" /usr/local/sbin/thermal-log 755; then r=1; fi
@@ -237,6 +297,8 @@ m = get('http://127.0.0.1:9100/metrics')
 n = sum(1 for l in m.splitlines() if l and not l.startswith('#'))
 print('  node_exporter: %s' % ('%d samples' % n if not m.startswith('ERROR') else m))
 print('  drivecheck metrics: %s' % ('yes' if 'drivecheck_last_run_timestamp_seconds' in m else 'not yet'))
+err = [l.split()[-1] for l in m.splitlines() if l.startswith('node_textfile_scrape_error ')]
+print('  textfile collector errors: %s' % (err[0] if err else 'unknown'))
 if sys.argv[1] == 'roaming':
     print('  agent: %s' % get('http://127.0.0.1:9090/-/ready').strip())
 EOF

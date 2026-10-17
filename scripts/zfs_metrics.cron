@@ -1,0 +1,6 @@
+# /etc/cron.d/zfs-metrics: ZFS pool capacity, health, errors, scrub age and I/O for node_exporter's textfile collector,
+# every minute. deploy-monitoring installs it on hosts with ZFS pools (makoto, sojiro since 2026-10-17); mementos, ryuji
+# and tinynas run the same line from root's crontab.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+* * * * * root /usr/local/bin/zfs_metrics

@@ -50,6 +50,7 @@ name=$(tr '[:upper:]' '[:lower:]' <<<"${host%%.*}")
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(dirname "$here")
 host_files=("$here/install-host" "$repo/scripts/drivecheck" "$repo/scripts/drive-selftest" "$repo/scripts/drivecheck.cron"
+            "$repo/scripts/zfs_metrics" "$repo/scripts/zfs_metrics.cron"
             "$repo/fan-control/monitoring/thermal-log" "$repo/fan-control/monitoring/thermal-log.service"
             "$repo/fan-control/monitoring/thermal-log.logrotate")
 roaming_files=("$here/roaming/prometheus-agent.yml" "$here/roaming/drivecheck.service" "$here/roaming/drivecheck.timer")
@@ -58,6 +59,12 @@ for f in "${host_files[@]}" "${roaming_files[@]}" "$here/futaba-register"; do
 done
 
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10)
+# HOST may be this machine (makoto cannot SSH to itself): then everything for HOST runs right here
+is_local=0
+if [ "$name" = "$(hostname -s | tr '[:upper:]' '[:lower:]')" ]; then is_local=1; fi
+on_host(){  # on_host COMMAND-STRING (stdin passes through)
+    if [ $is_local = 1 ]; then bash -c "$1"; else "${SSH[@]}" "$host" "$1"; fi
+}
 on_futaba(){  # on_futaba COMMAND-STRING (stdin passes through)
     if [ "$(hostname -s)" = "$FUTABA" ]; then bash -c "$1"; else "${SSH[@]}" "$FUTABA" "$1"; fi
 }
@@ -79,8 +86,8 @@ except Exception:
 }
 
 echo "== $name$([ $dry = 1 ] && echo ' (dry run)'): checking access"
-"${SSH[@]}" "$host" true 2>/dev/null || die "cannot SSH to $host with a key"
-facts=$("${SSH[@]}" "$host" '. /etc/os-release; hostname -s; echo "${ID:-unknown}"; echo "${PRETTY_NAME:-unknown}"
+on_host true 2>/dev/null || die "cannot SSH to $host with a key"
+facts=$(on_host '. /etc/os-release; hostname -s; echo "${ID:-unknown}"; echo "${PRETTY_NAME:-unknown}"
     sudo -n true 2>/dev/null && echo sudo || echo nosudo; command -v apt-get >/dev/null && echo apt || echo noapt
     if [ -e /etc/systemd/system/drivecheck.timer ]; then echo roaming
     elif [ -e /etc/cron.d/drivecheck ]; then echo server; else echo new; fi')
@@ -121,23 +128,23 @@ fi
 echo "== $name: host side"
 stage=$(mktemp -d)
 rstage=""
-cleanup(){ rm -rf "$stage"; [ -z "$rstage" ] || "${SSH[@]}" "$host" "rm -rf '$rstage'" 2>/dev/null || true; }
+cleanup(){ rm -rf "$stage"; [ -z "$rstage" ] || on_host "rm -rf '$rstage'" 2>/dev/null || true; }
 trap cleanup EXIT
 cp "${host_files[@]}" "$stage/"
 mkdir "$stage/roaming" && cp "${roaming_files[@]}" "$stage/roaming/"
-rstage=$("${SSH[@]}" "$host" 'mktemp -d /tmp/deploy-monitoring.XXXXXX')
-tar -C "$stage" -cf - . | "${SSH[@]}" "$host" "tar -xf - -C '$rstage'"
+rstage=$(on_host 'mktemp -d /tmp/deploy-monitoring.XXXXXX')
+tar -C "$stage" -cf - . | on_host "tar -xf - -C '$rstage'"
 args=(--name "$name")
 if [ $roaming = 1 ]; then args+=(--roaming --push-url "$PROM_URL/api/v1/write")
 elif [ $cockpit = 1 ]; then args+=(--cockpit); fi
 [ $dry = 0 ] || args+=(--dry-run)
 cmd="bash $rstage/install-host $(printf '%q ' "${args[@]}")"
 if [ "$sudo_ok" = sudo ]; then
-    "${SSH[@]}" "$host" "sudo -n $cmd"
+    on_host "sudo -n $cmd"
 elif [ $dry = 1 ]; then
-    "${SSH[@]}" "$host" "$cmd"   # a dry run only reads
+    on_host "$cmd"   # a dry run only reads
 elif [ -t 0 ]; then
-    ssh -t "$host" "sudo $cmd"
+    if [ $is_local = 1 ]; then bash -c "sudo $cmd"; else ssh -t "$host" "sudo $cmd"; fi
 else
     die "no passwordless sudo on $host and no terminal to ask for a password: run sudo-grant $host first"
 fi

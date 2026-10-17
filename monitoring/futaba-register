@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -316,8 +317,11 @@ def main():
                     sys.exit(f'futaba-register: the new Glance card did not render ({detail}); put glance.yml back')
                 print(f'  Glance: card renders ({detail})')
 
-    # Cockpit (servers only: futaba's Cockpit reaches hosts over SSH at a fixed address)
-    if not a.roaming and not a.no_cockpit:
+    # Cockpit (servers only: futaba's Cockpit reaches hosts over SSH at a fixed address). The Cockpit host itself is
+    # its local machine, never an entry in its own list.
+    if not a.roaming and not a.no_cockpit and name == socket.gethostname().split('.')[0].lower():
+        print(f'  Cockpit: {name} runs Cockpit itself, so it is not listed')
+    elif not a.roaming and not a.no_cockpit:
         try:
             old = open(a.cockpit_json).read()
         except OSError as e:

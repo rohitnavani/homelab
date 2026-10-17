@@ -17,7 +17,7 @@
 [links]
 scripts/drivecheck                              /usr/local/bin/drivecheck             futaba makoto mementos morgana ryuji tinynas tinypc yusuke
 scripts/drive-selftest                          /usr/local/bin/drive-selftest         futaba makoto mementos morgana ryuji tinynas tinypc yusuke
-scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            ryuji tinynas
+scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            makoto ryuji tinynas
 scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          makoto mementos ryuji
 scripts/zfs-retention                           /usr/local/sbin/zfs-retention         makoto mementos ryuji
 scripts/snapshot                                /usr/local/bin/snapshot               tinynas
@@ -34,12 +34,13 @@ scripts/drivecheck                              /usr/local/bin/drivecheck       
 scripts/drive-selftest                          /usr/local/bin/drive-selftest         akechi sojiro
 fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
 fan-control/monitoring/lab-thermal-textfile     /usr/local/bin/lab-thermal-textfile   mementos ryuji
-scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            mementos
+scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            mementos sojiro
 scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          sojiro
 scripts/zfs-retention                           /usr/local/sbin/zfs-retention         sojiro
 scripts/replicate                               /usr/local/bin/replicate              sojiro
 scripts/prune-replica                           /usr/local/bin/prune-replica          sojiro
 scripts/drivecheck.cron                         /etc/cron.d/drivecheck                futaba makoto mementos morgana ryuji sojiro tinypc yusuke
+scripts/zfs_metrics.cron                        /etc/cron.d/zfs-metrics               makoto sojiro
 fan-control/fan-watchdog/fan-watchdog           /usr/local/sbin/fan-watchdog          mementos check-only
 fan-control/md1200-fan/md1200-fan               /usr/local/bin/md1200-fan             mementos check-only
 fan-control/ryuji-fan-guard/ryuji-fan-guard     /usr/local/sbin/ryuji-fan-guard       ryuji check-only

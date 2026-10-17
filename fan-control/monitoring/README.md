@@ -86,7 +86,9 @@ Every Linux host runs `prometheus-node-exporter` 1.7.0 from Ubuntu's archive wit
 `--collector.textfile.directory=/var/lib/node_exporter/textfile_collector`. On ryuji, sojiro and makoto, the
 `prometheus-node-exporter-collectors` package's `ipmitool-sensor` timer (every minute) writes
 `/var/lib/prometheus/node-exporter/ipmitool_sensor.prom`, a directory node_exporter is not pointed at; a symlink into
-the textfile directory exports it (`node_ipmi_*`).
+the textfile directory exports it (`node_ipmi_*`). Since 2026-10-17 `monitoring/deploy-monitoring` makes the same
+link for the package's other outputs (apt, nvme, smartmon). mementos has no collectors package on purpose: its
+ipmitool-sensor timer would be a second in-band IPMI reader next to `fan-watchdog`.
 
 ## Metrics
 
