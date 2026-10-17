@@ -190,14 +190,19 @@ cmd_diff(){
     done <<<"$rows"
 }
 
-# runs as root on the target: TMP DEST DATE. Follows a symlinked DEST to its real file, keeps its owner and mode,
-# keeps the old copy as .bak-DATE, and swaps the new one in with a rename so a cron job never reads half a file.
+# runs as root on the target: TMP DEST DATE. A DEST that links into the share becomes a real root-owned file again
+# (the link itself is replaced; nothing is written into the share). Any other symlinked DEST is followed to its real
+# file (tinynas kept /usr/local/bin links into /pool/scripts). The old copy is kept as .bak-DATE, its owner and mode
+# carry over, and the new file is swapped in with a rename so a cron job never reads half a file.
 INSTALL='set -eu
 tmp=$1 dest=$2 day=$3 bak=""
-real=$(readlink -f "$dest" || echo "$dest")
-if [ -e "$real" ] && cmp -s "$tmp" "$real"; then rm -f "$tmp"; echo "already up to date: $real"; exit 0; fi
+case "$(readlink "$dest" 2>/dev/null)" in
+  /dataPool/homelab/*) real=$dest ;;
+  *) real=$(readlink -f "$dest" || echo "$dest") ;;
+esac
+if [ ! -L "$real" ] && [ -e "$real" ] && cmp -s "$tmp" "$real"; then rm -f "$tmp"; echo "already up to date: $real"; exit 0; fi
 mode=755 uid=0 gid=0
-if [ -e "$real" ]; then
+if [ ! -L "$real" ] && [ -e "$real" ]; then
   mode=$(stat -c %a "$real"); uid=$(stat -c %u "$real"); gid=$(stat -c %g "$real")
   bak=$real.bak-$day; [ -e "$bak" ] && bak=$bak-$(date +%H%M%S)
   cp -p "$real" "$bak"
@@ -268,7 +273,14 @@ cmd_install(){
 SETUP='set -eu
 share=$1 profile=/etc/profile.d/lab-scripts.sh
 if grep -qs "labShare[[:space:]]\+/dataPool[[:space:]]" /etc/fstab; then
-  :  # an NFS client: fstab is all it checks, so a host whose mount hangs can still be set up
+  # an NFS client (fstab is all it checks, so a host whose mount hangs can still be set up). Keep retrying the
+  # mount: services and cron asking for the share before the network is up must never leave it unmounted for good.
+  d=/etc/systemd/system/dataPool.mount.d
+  if [ ! -e $d/lab-scripts.conf ]; then
+    mkdir -p $d
+    printf "%s\n" "[Unit]" "# The lab scripts run from this share (lab-scripts). Keep retrying the mount: early requests at boot, before the" "# network is up, must never leave /dataPool unmounted for good (ryuji, 2026-10-17)." "StartLimitIntervalSec=0" > $d/lab-scripts.conf
+    systemctl daemon-reload; echo "wrote $d/lab-scripts.conf"
+  fi
 elif zfs list -H -o name dataPool/labShare >/dev/null 2>&1; then
   # mementos: the share is local; give it the same path as the NFS clients
   [ -e /dataPool/homelab ] || { ln -s labShare/homelab /dataPool/homelab; echo "linked /dataPool/homelab -> labShare/homelab"; }

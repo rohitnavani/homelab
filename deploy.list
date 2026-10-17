@@ -6,19 +6,17 @@
 #
 # [links]  The host's path is a symlink to this repo at /dataPool/homelab, so every host runs the one copy and an edit
 #          is live everywhere.
-# [copies] A real file on the host, for what must never wait on the share: the fan controllers and fan scripts, the
-#          battery guards, mementos's check of the pool the share lives on, everything on sojiro (the backup box: nothing
+# [copies] A real file on the host, for what must never wait on the share: the fan controllers and fan scripts (with
+#          fan-control/monitoring's thermal-log and lab-thermal-textfile, services that start at boot), the battery
+#          guards, mementos's check of the pool the share lives on, everything on sojiro (the backup box: nothing
 #          on the rest of the lab may change what it runs as root), akechi's monitoring (a laptop, often away), and
-#          cron schedules
-#          (cron rereads them every minute and would stall on a stalled share). check-only: compared, never copied
-#          by lab-scripts; a fan controller goes in with a restart and a live check (fan-control/README.md).
+#          cron schedules (cron rereads them every minute and would stall on a stalled share). check-only: compared,
+#          never copied by lab-scripts; a fan controller goes in with a restart and a live check (fan-control/README.md).
 # HOST:PATH means that host keeps it at another path.
 
 [links]
 scripts/drivecheck                              /usr/local/bin/drivecheck             futaba makoto mementos morgana ryuji tinynas tinypc yusuke
 scripts/drive-selftest                          /usr/local/bin/drive-selftest         futaba makoto mementos morgana ryuji tinynas tinypc yusuke
-fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           futaba makoto mementos morgana ryuji tinynas tinypc yusuke
-fan-control/monitoring/lab-thermal-textfile     /usr/local/bin/lab-thermal-textfile   mementos ryuji
 scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            ryuji tinynas
 scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          makoto mementos ryuji
 scripts/zfs-retention                           /usr/local/sbin/zfs-retention         makoto mementos ryuji
@@ -34,7 +32,8 @@ scripts/resume-uptime                           /usr/local/bin/resume-uptime    
 [copies]
 scripts/drivecheck                              /usr/local/bin/drivecheck             akechi sojiro
 scripts/drive-selftest                          /usr/local/bin/drive-selftest         akechi sojiro
-fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           akechi sojiro
+fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
+fan-control/monitoring/lab-thermal-textfile     /usr/local/bin/lab-thermal-textfile   mementos ryuji
 scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            mementos
 scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          sojiro
 scripts/zfs-retention                           /usr/local/sbin/zfs-retention         sojiro

@@ -92,7 +92,8 @@ mementos. akechi (a laptop) is to mount it too once it has a fixed address; soji
   appended last by `/etc/profile.d/lab-scripts.sh` (`newvm` with its profile names, `autorar`, `deploy-monitoring`,
   `lab-scripts`), and so is `private/bin` (`rename-host`).
 - **A few stay real files**, the `[copies]` in `deploy.list`, because they must never wait on the share: the fan
-  controllers and fan scripts (md1200-fan, fan-watchdog, md1200-heatlog, ryuji-fan-guard, tinypc's GPU fan curve),
+  controllers and fan scripts (md1200-fan, fan-watchdog, md1200-heatlog, ryuji-fan-guard, tinypc's GPU fan curve,
+  and fan-control/monitoring's thermal-log and lab-thermal-textfile, which start at boot),
   the battery guards on yusuke and morgana, mementos's `zfs_metrics` (it reports the pool the share lives on), akechi's
   monitoring (a laptop, often away), the cron schedule files (cron rereads them every minute and would stall with the
   share), and everything on sojiro: it is the backup box, and nothing on the rest of the lab may change what it runs
@@ -100,6 +101,11 @@ mementos. akechi (a laptop) is to mount it too once it has a fixed address; soji
 - **The every-minute jobs run under `flock -n`** (zfs_metrics and root_disk_metrics on tinynas, zfs_metrics on ryuji,
   resume-uptime on futaba, mon-watchdog on tinynas every 5 minutes), so while mementos is down a stalled run makes
   the next one skip instead of stacking up behind it.
+- **At boot**, the share's mount never gives up (`StartLimitIntervalSec=0` in a `dataPool.mount` drop-in, written by
+  `lab-scripts setup`), and a service that runs a script from the share starts after `network-online.target` (a
+  `lab-scripts.conf` drop-in: yusuke's lid-backlight; tinypc's gpu-watch, lights-off, web-reader, owui-kb-refresh).
+  Found 2026-10-17 when ryuji rebooted: its thermal services asked for the share before the network was up, and five
+  quick failures made systemd stop mounting it.
 - **tinypc mounts the share with `context=system_u:object_r:bin_t:s0`.** Fedora's SELinux does not let a service
   run a file labelled `nfs_t`; the mount option labels the share's files like `/usr/local/bin`, and nothing else in
   the policy changes.
