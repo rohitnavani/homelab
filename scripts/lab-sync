@@ -42,6 +42,9 @@ lab_sync_last_success_timestamp_seconds{host="$HOST"} $last
 # HELP lab_sync_share_readable 1 when the last run could read the committed state on the share.
 # TYPE lab_sync_share_readable gauge
 lab_sync_share_readable{host="$HOST"} $readable
+# HELP lab_sync_commit_info The commit of /dataPool/homelab that the last run compared against.
+# TYPE lab_sync_commit_info gauge
+lab_sync_commit_info{host="$HOST",commit="${COMMIT:-unknown}"} 1
 # HELP lab_sync_files The files lab-sync manages on this host, by what the last run found.
 # TYPE lab_sync_files gauge
 lab_sync_files{host="$HOST",state="in_sync"} $in_sync
@@ -83,6 +86,7 @@ if ! g "$REPO" rev-parse -q --verify HEAD >/dev/null 2>&1; then
     log "cannot read $REPO (share not mounted, or mementos down): nothing changed"
     readable=0; metrics; exit 1
 fi
+COMMIT=$(g "$REPO" rev-parse --short HEAD 2>/dev/null)
 
 # this host's [copies] entries, from the committed lists: SOURCE PATH CHECK_ONLY UNIT
 entries=$({ g "$REPO" show HEAD:deploy.list; g "$REPO/private" show HEAD:deploy.list 2>/dev/null; } | awk -v h="$HOST" '
@@ -144,5 +148,5 @@ done <<< "$entries"
 
 [ $DRY = 0 ] && [ $failed = 0 ] && date +%s > "$STATE/last_success"
 metrics
-log "$HOST: $in_sync in step, $installed installed, $failed failed, $check_only check-only differ"
+log "$HOST: $in_sync in step, $installed installed, $failed failed, $check_only check-only differ (main $COMMIT)"
 [ $failed = 0 ]
