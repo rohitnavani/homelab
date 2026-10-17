@@ -11,8 +11,9 @@
 #            2026-10-14), compose dir vmPool/docker-compose/nextcloud-aio. futaba (no ZFS): monitoring, Glance,
 #            AdGuard, resume site in /home/rohit/<project>, data-root /var/lib/docker; its futaba-backup tars the
 #            configs, secrets redacted, to /dataPool/backups/futaba on labShare each night at 21:50.
-#   Scripts  one copy, the homelab repo clone /dataPool/homelab on labShare (2026-10-16). tinynas's homePool/scripts
-#            holds the copies its root cron runs (/usr/local/bin symlinks into it); the other hosts install theirs.
+#   Scripts  one copy, the homelab repo clone /dataPool/homelab on labShare (2026-10-16). The hosts run it through
+#            /usr/local symlinks (2026-10-17) except a few real copies, all of sojiro's among them (deploy.list);
+#            tinynas's homePool/scripts holds its old copies, unused since then.
 #   VMs      not backed up by choice: tinynas /pool/kvm, mementos vmPool/kvm (2k25-test, backed up by an agent
 #            inside the guest), futaba /var/lib/libvirt/images (haos).
 #   HA       Home Assistant's own encrypted backups go over NFS from HAOS (10.0.0.11, its only client) to the

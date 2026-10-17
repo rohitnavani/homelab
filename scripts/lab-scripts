@@ -10,8 +10,8 @@
 #   lab-scripts timer                     on mementos: pull GitHub's main into the share every 15 min (fast-forward only)
 #   lab-scripts push                      check the new commits for secrets, then push them to GitHub via tinynas
 #
-# The repo is /dataPool/homelab on every lab host: over NFS on the clients, a symlink to /dataPool/labShare/homelab on
-# mementos, and on sojiro /dataPool is a symlink to its replica of the share. bin/ and private/bin/ are on PATH.
+# The repo is /dataPool/homelab on every host that mounts the share (on mementos, where it is local, a symlink to
+# /dataPool/labShare/homelab). bin/ and private/bin/ are on PATH there.
 # deploy.list (and private/deploy.list) say how each host runs each script: [links] are symlinks into the share, so
 # every host runs the one copy; [copies] are real files for what must never wait on the share (see deploy.list).
 # NAME is a script's file name, on the host or in the repo.
@@ -136,7 +136,7 @@ cmd_status(){
             if [ "$mode" = link ]; then
                 if [ "$kind" = L ] && [ "$tgt" = "$SHARE/$s" ]; then
                     ok=$((ok+1))
-                    if [ "$got" != "${sum[$s]:-}" ]; then printf '  %-9s %-30s links to the share; its copy there is behind (sojiro: until the 03:00 pull)\n' "$h" "$p"
+                    if [ "$got" != "${sum[$s]:-}" ]; then printf '  %-9s %-30s links to the share, but its content there differs (check the mount there)\n' "$h" "$p"
                     elif [ $verbose = 1 ]; then printf '  %-9s %-30s ok (link)\n' "$h" "$p"; fi
                     continue
                 fi
@@ -272,11 +272,8 @@ if grep -qs "labShare[[:space:]]\+/dataPool[[:space:]]" /etc/fstab; then
 elif zfs list -H -o name dataPool/labShare >/dev/null 2>&1; then
   # mementos: the share is local; give it the same path as the NFS clients
   [ -e /dataPool/homelab ] || { ln -s labShare/homelab /dataPool/homelab; echo "linked /dataPool/homelab -> labShare/homelab"; }
-elif zfs list -H -o name backupPool/dataPool/labShare >/dev/null 2>&1; then
-  # sojiro: no NFS; its own replica of the share stands in for it (refreshed by the nightly pull)
-  [ -e /dataPool ] || { ln -s /backupPool/dataPool/labShare /dataPool; echo "linked /dataPool -> /backupPool/dataPool/labShare"; }
 else
-  echo "$(hostname -s): no share here (no NFS mount in /etc/fstab, no local or replica dataPool/labShare)"; exit 0
+  echo "$(hostname -s): no share here (no NFS mount in /etc/fstab, no local dataPool/labShare); it keeps [copies]"; exit 0
 fi
 want=$(cat <<EOF
 # Lab scripts: the homelab repo on mementos (dataPool/labShare), the same path on every lab host. Written by

@@ -81,48 +81,56 @@ specific to this lab.
 
 ## Lab scripts on dataPool
 
-Since 2026-10-16 the lab keeps one copy of its scripts: a clone of this repo at `/dataPool/homelab`, the same path on
-every host that mounts mementos's `dataPool/labShare` NFS share (NFS 4.2, hard mounts; on mementos itself the path
+The lab keeps one copy of its scripts: a clone of this repo at `/dataPool/homelab` (since 2026-10-16), the same path
+on every host that mounts mementos's `dataPool/labShare` NFS share (NFS 4.2, hard mounts; on mementos itself the path
 is a symlink to `/dataPool/labShare/homelab`). That is makoto, tinypc, futaba, tinynas, morgana, ryuji, yusuke and
-mementos. sojiro (the backup box, going offsite) and akechi (a laptop) do not mount the share.
+mementos. akechi (a laptop) is to mount it too once it has a fixed address; sojiro does not, on purpose (below).
 
-- **Tools you run as yourself: straight from the share.** `/etc/profile.d/lab-scripts.sh` appends `bin/` to PATH on
-  those hosts, last, so a host's own commands win: `newvm` with its profile names, `autorar`, `deploy-monitoring`
-  and `lab-scripts`. An edit there is live on every host at once. On mementos and ryuji `/usr/local/bin/newvm` is a
-  symlink to the share. `lab-scripts setup` also appends the two folders to sudo's `secure_path` in
-  `/etc/sudoers.d/lab-scripts`, after every entry the host had, so `sudo rename-host` works; `newvm` asks for sudo itself.
-- **What root runs, from cron, systemd or boot: installed on each host.** The share is a hard mount that hangs while
-  mementos is down, and nothing unattended (least of all a fan controller) may wait on it; the share is also
-  writable from every client, so root never runs it unattended. `deploy.list` says which repo file is installed
-  where; `lab-scripts status` compares every copy with its source, `lab-scripts install NAME HOST` copies one into
-  place (the old one kept as `.bak-DATE`, the new one swapped in with a rename). The same goes for `autorar` on
-  tinynas, which a passwordless sudo rule names.
+- **Hosts run the share's copy (since 2026-10-17).** The paths that cron, systemd and people use, such as
+  `/usr/local/bin/drivecheck` or `/usr/local/sbin/thermal-log`, are symlinks into `/dataPool/homelab`, so an edit
+  there is live on every host: cron uses it at the next run, a service at its next restart. `bin/` is on PATH too,
+  appended last by `/etc/profile.d/lab-scripts.sh` (`newvm` with its profile names, `autorar`, `deploy-monitoring`,
+  `lab-scripts`), and so is `private/bin` (`rename-host`).
+- **A few stay real files**, the `[copies]` in `deploy.list`, because they must never wait on the share: the fan
+  controllers and fan scripts (md1200-fan, fan-watchdog, md1200-heatlog, ryuji-fan-guard, tinypc's GPU fan curve),
+  the battery guards on yusuke and morgana, mementos's `zfs_metrics` (it reports the pool the share lives on), akechi's
+  monitoring (a laptop, often away), the cron schedule files (cron rereads them every minute and would stall with the
+  share), and everything on sojiro: it is the backup box, and nothing on the rest of the lab may change what it runs
+  as root, so its replication keeps working from a pull that the lab cannot push into.
+- **The every-minute jobs run under `flock -n`** (zfs_metrics and root_disk_metrics on tinynas, zfs_metrics on ryuji,
+  resume-uptime on futaba, mon-watchdog on tinynas every 5 minutes), so while mementos is down a stalled run makes
+  the next one skip instead of stacking up behind it.
+- **tinypc mounts the share with `context=system_u:object_r:bin_t:s0`.** Fedora's SELinux does not let a service
+  run a file labelled `nfs_t`; the mount option labels the share's files like `/usr/local/bin`, and nothing else in
+  the policy changes.
 - **Not public yet: `private/`.** Its own git repo inside the share copy, ignored by this one and never pushed: the
-  other hosts' service scripts, the local AI tools, `rename-host` (its `bin/` is on PATH too) and `sudo-grant` and
-  `sudo-revoke`, which read your sudo password and so stay installed on makoto and akechi rather than run from the
-  share.
+  hosts' service scripts, the local AI tools, `rename-host`, `sudo-grant` and `sudo-revoke`, migration templates and
+  retired scripts, with their own `deploy.list`.
 
 ```sh
-lab-scripts                        # run on makoto: what is uncommitted, unpushed or out of line
-lab-scripts diff zfs-snapshot mementos
-lab-scripts install drivecheck sojiro ryuji
+lab-scripts                        # run on makoto: what is uncommitted, unpushed, or not the way deploy.list says
+lab-scripts link yusuke            # make a host's [links] paths symlinks (only where the content already matches)
+lab-scripts diff zfs-snapshot sojiro
+lab-scripts install zfs-snapshot sojiro   # a [copies] entry: copy the source into place, old one kept as .bak-DATE
 lab-scripts setup yusuke           # the PATH snippet and sudo's secure_path (once per host that mounts the share)
 lab-scripts timer                  # on mementos: pull GitHub's main into the share every 15 minutes
 lab-scripts push                   # checks the new commits for secrets and vendor names, then pushes via tinynas
 ```
 
 Edit in `/dataPool/homelab`, commit one version per change that ran (only your own files: `git add <paths>`), and
-push with `lab-scripts push`: tinynas holds the GitHub credential. `lab-scripts timer` keeps the share in step with
-commits pushed from other clones; it only fast-forwards, so it never touches uncommitted or unpushed work. The fan
-controllers are `check-only` in `deploy.list`: a new version goes in with a service restart and a live check (see
-`fan-control/README.md`), never by `lab-scripts install`.
+push with `lab-scripts push`: tinynas holds the GitHub credential. `lab-scripts-pull.timer` on mementos fast-forwards
+the share from GitHub every 15 minutes, so a commit pushed from another clone reaches the hosts too; it never touches
+uncommitted or unpushed work. The fan controllers are `check-only`: a new version goes in with a service restart and
+a live check (see `fan-control/README.md`), never by `lab-scripts install`. sudo's `secure_path` includes the share
+only where `lab-scripts setup` has run since 2026-10-16 (makoto); elsewhere give sudo the full path.
 
-While mementos is down, a shell on a client can hang on Tab completion or a mistyped command, because the shell
-searches the share last. In that shell, `export PATH=${PATH%%:/dataPool/homelab/*}` drops the share from PATH.
+The trade-offs, accepted on purpose: while mementos is down, anything run from the share waits until it is back (a
+hard mount), and root on the linked hosts runs whatever rohit can edit on the share. A shell on a client can also
+hang on Tab completion then; in that shell, `export PATH=${PATH%%:/dataPool/homelab/*}` drops the share from PATH.
 
 To reuse this elsewhere: any path every host mounts will do. Change `SHARE` at the top of `scripts/lab-scripts`
 and the hosts in `deploy.list`. With root squashing, keep the files world-readable, because root reads the share as
-nobody.
+nobody; on an SELinux host, mount it with a `context=` label that services may execute.
 
 ## Repository structure
 
@@ -132,7 +140,7 @@ nobody.
 ├── .gitignore                  # Keeps .env secrets, databases and service data out of git
 ├── bin/                        # On every lab host's PATH from /dataPool/homelab: the tools you run as yourself
 │                               #   (links into scripts/ and monitoring/)
-├── deploy.list                 # Which file here is installed where (lab-scripts status / install)
+├── deploy.list                 # How each host runs each script: [links] into the share or [copies] on the host
 ├── private/                    # Not in git here: the share copy's own local repo of scripts that are not public
 ├── docker-compose/             # Container services (paths come from ${COMPOSE_BASE_PATH} in a gitignored .env)
 │   ├── AdGuardHome/            # DNS ad-blocking (runs on futaba)
@@ -146,7 +154,7 @@ nobody.
 │                               #   (see fan-control/README.md for the exact hardware)
 ├── monitoring/                 # deploy-monitoring: adds a host to the lab's monitoring in one command; servers are
 │                               #   scraped, roaming hosts such as akechi push from a Prometheus agent
-└── scripts/                    # Installed to /usr/local/bin and run from root's cron, or run by hand from bin/
+└── scripts/                    # Run from the share through /usr/local symlinks by cron, services or by hand
     ├── autorar                 # Compresses finished downloads (tinynas; from bin/)
     ├── backup-mementos         # Nightly syncoid pull of mementos's Nextcloud datasets, the onsite copy (tinynas; sbin)
     ├── drive-selftest          # Starts SMART self-tests on every SATA, SAS and NVMe drive (weekly short, monthly long)
