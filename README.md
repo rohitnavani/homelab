@@ -66,7 +66,10 @@ every log line lands in a snapshot.
   It pulls tinynas's compose folders, `/etc` copy, logs, installed scripts, game and Minecraft servers, mementos's
   Nextcloud datasets and logs, and all of `dataPool/labShare`. That share also carries what has no ZFS dataset of its
   own: this repo's clone (`/dataPool/homelab`, the lab's scripts) and `/dataPool/backups`, where futaba's nightly
-  `futaba-backup` puts its service configs (secrets redacted) and tinypc puts its Open WebUI backups. VMs, Docker
+  `futaba-backup` puts its service configs (secrets redacted) and tinypc puts its Open WebUI backups. Home
+  Assistant (the HAOS VM on futaba) writes its own encrypted automatic backups to the child dataset
+  `dataPool/labShare/homeassistant`, exported over NFS to the VM's address only and added in HA as the backup mount
+  `labshare` (Settings > System > Storage). To copy this, change the address in its `sharenfs`. VMs, Docker
   data-roots other than Nextcloud AIO's, Jellyfin, samba and the iSCSI zvol are not backed up, by choice.
 - tinynas's `scripts/backup-mementos` (02:00, from `/usr/local/sbin`) pulls mementos's Nextcloud datasets
   (`dataPool/nextcloud`, `vmPool/docker`, `vmPool/docker-compose/nextcloud-aio`) into

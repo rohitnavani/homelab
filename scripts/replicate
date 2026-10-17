@@ -15,6 +15,8 @@
 #            holds the copies its root cron runs (/usr/local/bin symlinks into it); the other hosts install theirs.
 #   VMs      not backed up by choice: tinynas /pool/kvm, mementos vmPool/kvm (2k25-test, backed up by an agent
 #            inside the guest), futaba /var/lib/libvirt/images (haos).
+#   HA       Home Assistant's own encrypted backups go over NFS from HAOS (10.0.0.11, its only client) to the
+#            "labshare" backup mount, dataset dataPool/labShare/homeassistant (2026-10-17).
 #   Other    /dataPool/backups on labShare also holds tinypc's Open WebUI and config backups.
 # Also not pulled, by choice: Docker data-roots except AIO's, vmPool/labShare, Jellyfin, the iSCSI zvol, samba,
 # downloads and the hosts' own logs datasets except tinynas's and mementos's. Stale replicas from before 2026-10-05
@@ -39,7 +41,7 @@ SOURCES=(
   "backuppull@10.0.0.10 vmPool/docker"
   "backuppull@10.0.0.10 vmPool/docker-compose/nextcloud-aio"
   "backuppull@10.0.0.10 vmPool/logs"
-  "backuppull@10.0.0.10 dataPool/labShare"   # lab NFS bulk share, all of it (Rohit 2026-10-14): homelab/ + backups/
+  "backuppull@10.0.0.10 dataPool/labShare"   # lab NFS bulk share, all of it (Rohit 2026-10-14): homelab/ + backups/ + homeassistant
 )
 
 mkdir -p "$LOGDIR"
