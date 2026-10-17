@@ -52,6 +52,8 @@ has them), GPUs, Wi-Fi, batteries, and iSCSI or USB disks (tinypc's iSCSI disk l
 | futaba | Lenovo ThinkCentre M700 Tiny, Core i5-6500T, Kingston 256 GB SATA SSD | Ubuntu 24.04.5 | CPU, NCT6683 (PECI, diodes), 1 disk |
 | morgana | Dell Latitude 5420, Core i5-1135G7, WD SN530 256 GB | Ubuntu 24.04.5 | CPU, EC sensors, 1 disk |
 | tinypc | ASUS ROG STRIX B660-I GAMING WIFI, Core i7-12700F, Samsung 970 EVO Plus 2 TB, Crucial P1 1 TB | Fedora 44 | CPU, 2 DDR5 SPD sensors, 2 disks |
+| yusuke | Lenovo ThinkPad T14s Gen 4 (21F9), AMD Ryzen 7 PRO 7840U, SK hynix HFS512GEJ9X164N 512 GB NVMe | Ubuntu 24.04.5 | Tctl, 1 disk (since 2026-10-15) |
+| akechi | Framework Laptop 13 Pro (Intel Core Ultra Series 3), Core Ultra 5 325, WD_BLACK SN850X 1 TB NVMe | Kubuntu 26.04.1 | CPU, 1 disk (since 2026-10-16) |
 
 Install (needs python3 and smartmontools 7.0 or later for `-j`; runs as root because of smartctl):
 
