@@ -63,6 +63,11 @@ every log line lands in a snapshot.
 - sojiro's `scripts/replicate` (03:00) pulls replicas into `backupPool/<source pool>/...` with syncoid and prunes them
   with `scripts/prune-replica` (72 hourly, 14 daily, 8 weekly, 6 monthly), independent of the source's retention.
   Its mountpoint reset and pruning run per replica tree, so they never touch sojiro's own `backupPool/logs`.
+  It pulls tinynas's compose folders, `/etc` copy, logs, installed scripts, game and Minecraft servers, mementos's
+  Nextcloud datasets and logs, and all of `dataPool/labShare`. That share also carries what has no ZFS dataset of its
+  own: this repo's clone (`/dataPool/homelab`, the lab's scripts) and `/dataPool/backups`, where futaba's nightly
+  `futaba-backup` puts its service configs (secrets redacted) and tinypc puts its Open WebUI backups. VMs, Docker
+  data-roots other than Nextcloud AIO's, Jellyfin, samba and the iSCSI zvol are not backed up, by choice.
 - tinynas's `scripts/backup-mementos` (02:00, from `/usr/local/sbin`) pulls mementos's Nextcloud datasets
   (`dataPool/nextcloud`, `vmPool/docker`, `vmPool/docker-compose/nextcloud-aio`) into
   `homePool/backups/mementos/<pool>/...` as the onsite copy and prunes them with `scripts/prune-replica`. The

@@ -4,15 +4,31 @@
 # (homePool/nvmePool = tinynas, dataPool/vmPool = mementos), so pool names must stay unique across machines.
 # tinynas accepts this box's root key (from="10.0.0.8", root). mementos accepts the same key only for the
 # unprivileged backuppull user, which may only `zfs send`/`hold` its datasets (hence --no-privilege-elevation).
+#
+# Where the lab's data lives (2026-10-17) and how it gets here:
+#   Docker   tinynas: compose dirs on homePool/docker-compose (AdGuard replica, DDNS, cloudflared, exporters),
+#            data-root /pool/docker. mementos: Nextcloud AIO only, data-root vmPool/docker (moved from dataPool
+#            2026-10-14), compose dir vmPool/docker-compose/nextcloud-aio. futaba (no ZFS): monitoring, Glance,
+#            AdGuard, resume site in /home/rohit/<project>, data-root /var/lib/docker; its futaba-backup tars the
+#            configs, secrets redacted, to /dataPool/backups/futaba on labShare each night at 21:50.
+#   Scripts  one copy, the homelab repo clone /dataPool/homelab on labShare (2026-10-16). tinynas's homePool/scripts
+#            holds the copies its root cron runs (/usr/local/bin symlinks into it); the other hosts install theirs.
+#   VMs      not backed up by choice: tinynas /pool/kvm, mementos vmPool/kvm (2k25-test, backed up by an agent
+#            inside the guest), futaba /var/lib/libvirt/images (haos).
+#   Other    /dataPool/backups on labShare also holds tinypc's Open WebUI and config backups.
+# Also not pulled, by choice: Docker data-roots except AIO's, vmPool/labShare, Jellyfin, the iSCSI zvol, samba,
+# downloads and the hosts' own logs datasets except tinynas's and mementos's. Stale replicas from before 2026-10-05
+# (backupPool/homePool/docker, kvm and the moved compose dirs) and the empty backupPool/dataPool/docker-compose
+# no longer receive; prune-replica keeps their last snapshots.
 set -uo pipefail
 DEST="backupPool"
 LOGDIR="/var/log/replication"
 SOURCES=(
-  # tinynas (homePool/docker and homePool/kvm dropped 2026-10-05: rebuildable / VMs not backed up; old copies stay in backupPool/homePool)
-  "root@10.0.0.5 homePool/docker-compose"
-  "root@10.0.0.5 homePool/etcBackup"
-  "root@10.0.0.5 homePool/logBackup"
-  "root@10.0.0.5 homePool/scripts"
+  # tinynas
+  "root@10.0.0.5 homePool/docker-compose"    # tinynas's own services only (web and monitoring moved to futaba 2026-10-14)
+  "root@10.0.0.5 homePool/etcBackup"         # hourly rsync of tinynas's /etc
+  "root@10.0.0.5 homePool/logBackup"         # tinynas's /var/log
+  "root@10.0.0.5 homePool/scripts"           # tinynas's installed root scripts (the source is /dataPool/homelab)
   "root@10.0.0.5 homePool/game-servers"
   "root@10.0.0.5 nvmePool/mcserver"
   "root@10.0.0.5 nvmePool/mcserver2"
@@ -23,7 +39,7 @@ SOURCES=(
   "backuppull@10.0.0.10 vmPool/docker"
   "backuppull@10.0.0.10 vmPool/docker-compose/nextcloud-aio"
   "backuppull@10.0.0.10 vmPool/logs"
-  "backuppull@10.0.0.10 dataPool/labShare"   # lab NFS bulk share, all of it (Rohit 2026-10-14)
+  "backuppull@10.0.0.10 dataPool/labShare"   # lab NFS bulk share, all of it (Rohit 2026-10-14): homelab/ + backups/
 )
 
 mkdir -p "$LOGDIR"
