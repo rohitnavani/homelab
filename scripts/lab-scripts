@@ -121,7 +121,9 @@ cmd_status(){
         [ -n "$rows" ] || { echo "  $h: nothing in deploy.list for this host"; continue; }
         mapfile -t paths < <(cut -f3 <<<"$rows")
         if ! out=$(on "$h" "$REMOTE_SUMS" "${paths[@]}" 2>/dev/null); then
-            echo "  $h: unreachable from $SELF (run this on makoto, which reaches every host)"; bad=$((bad+1)); continue
+            if [ "$SELF" = makoto ]; then echo "  $h: unreachable (asleep, away or off?); its copies were not checked"
+            else echo "  $h: unreachable from $SELF (run this on makoto, which reaches every host)"; fi
+            bad=$((bad+1)); continue
         fi
         local s p m mode got gt gp state
         while IFS=$'\t' read -r s _ p mode; do
