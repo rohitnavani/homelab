@@ -1,0 +1,145 @@
+#!/bin/bash
+# lab-sync - keeps this host's lab scripts in step with the share (2026-10-17).
+#
+# Runs as root from lab-sync.timer every 5 minutes on the lab hosts that mount the share, every host except sojiro:
+# the backup box keeps manual copies, so nothing on the rest of the lab can change what it runs as root. For each
+# [copies] entry in deploy.list and private/deploy.list that names this host, it compares the file here with the
+# version committed in /dataPool/homelab (never the working tree, so a half-edited file never goes out). When they
+# differ it checks the new version's syntax, keeps the old file in /var/lib/lab-sync/backup (the last 5 per file),
+# swaps the new one in with a rename so nothing ever reads half a file, and restarts the unit the entry names
+# (restart=UNIT) if that unit is running and the content changed. A path that is still a symlink becomes a real
+# file. check-only entries (the fan controllers) are never written, only counted. It writes lab_sync.prom for
+# node_exporter, so Prometheus sees a host that falls out of step. Nothing at boot waits for it.
+#
+#   lab-sync            do it
+#   lab-sync --dry-run  say what it would do, change nothing
+set -uo pipefail
+export LC_ALL=C
+REPO=/dataPool/homelab
+HOST=$(hostname -s | tr '[:upper:]' '[:lower:]')
+STATE=/var/lib/lab-sync
+PROM_DIR=/var/lib/node_exporter/textfile_collector
+DRY=0; [ "${1:-}" = --dry-run ] && DRY=1
+in_sync=0 installed=0 failed=0 check_only=0 readable=1
+
+log(){ echo "lab-sync: $*"; }
+# git on the share as root: the repo belongs to rohit, and a hung NFS mount must not hang the run for ever
+g(){ local r=$1; shift; timeout -k 5 60 git -c safe.directory='*' -C "$r" "$@"; }
+
+metrics(){
+    [ $DRY = 1 ] && return 0
+    [ -d "$PROM_DIR" ] || return 0
+    local t last
+    last=$(cat "$STATE/last_success" 2>/dev/null || echo 0)
+    t=$(mktemp "$PROM_DIR/.lab_sync.prom.XXXXXX") || return 0
+    cat > "$t" <<EOF
+# HELP lab_sync_last_run_timestamp_seconds When lab-sync last ran on this host.
+# TYPE lab_sync_last_run_timestamp_seconds gauge
+lab_sync_last_run_timestamp_seconds{host="$HOST"} $(date +%s)
+# HELP lab_sync_last_success_timestamp_seconds When lab-sync last read the share and left every file in step.
+# TYPE lab_sync_last_success_timestamp_seconds gauge
+lab_sync_last_success_timestamp_seconds{host="$HOST"} $last
+# HELP lab_sync_share_readable 1 when the last run could read the committed state on the share.
+# TYPE lab_sync_share_readable gauge
+lab_sync_share_readable{host="$HOST"} $readable
+# HELP lab_sync_files The files lab-sync manages on this host, by what the last run found.
+# TYPE lab_sync_files gauge
+lab_sync_files{host="$HOST",state="in_sync"} $in_sync
+lab_sync_files{host="$HOST",state="installed"} $installed
+lab_sync_files{host="$HOST",state="failed"} $failed
+lab_sync_files{host="$HOST",state="check_only_differs"} $check_only
+EOF
+    chmod 644 "$t" && mv -f "$t" "$PROM_DIR/lab_sync.prom"
+}
+
+backup(){  # backup FILE: keep a copy in $STATE/backup, the newest 5 per file
+    local f=$1 b
+    b=$STATE/backup/$(printf '%s' "$f" | sed 's|^/||; s|/|_|g')
+    mkdir -p "$STATE/backup"
+    cp -p "$f" "$b.$(date +%F-%H%M%S)"
+    ls -1t "$b".* 2>/dev/null | tail -n +6 | xargs -r rm -f
+}
+
+syntax_ok(){  # syntax_ok FILE DEST: what the file's interpreter can check without running it
+    local f=$1 dest=$2 first
+    first=$(head -n 1 "$f")
+    case "$first" in
+        '#!'*python*) python3 -c 'import ast, sys; ast.parse(open(sys.argv[1], "rb").read(), sys.argv[1])' "$f" ;;
+        '#!'*bash*) bash -n "$f" ;;
+        '#!'*/sh|'#!'*/sh' '*) sh -n "$f" ;;
+        *) case "$dest" in
+               *.py) python3 -c 'import ast, sys; ast.parse(open(sys.argv[1], "rb").read(), sys.argv[1])' "$f" ;;
+               *.sh) bash -n "$f" ;;
+               *) return 0 ;;
+           esac ;;
+    esac
+}
+
+[ $DRY = 1 ] || mkdir -p "$STATE"
+if ! g "$REPO" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    log "cannot read $REPO (share not mounted, or mementos down): nothing changed"
+    readable=0; metrics; exit 1
+fi
+
+# this host's [copies] entries, from the committed lists: SOURCE PATH CHECK_ONLY UNIT
+entries=$({ g "$REPO" show HEAD:deploy.list; g "$REPO/private" show HEAD:deploy.list 2>/dev/null; } | awk -v h="$HOST" '
+    /^\[links\]/ { sec = "links"; next }
+    /^\[copies\]/ { sec = "copies"; next }
+    /^[[:space:]]*(#|$)/ { next }
+    sec == "copies" && NF >= 3 {
+        chk = 0; unit = ""; hit = ""
+        for (i = 3; i <= NF; i++) {
+            if ($i == "check-only") chk = 1
+            else if ($i ~ /^restart=/) unit = substr($i, 9)
+            else { n = split($i, a, ":"); if (a[1] == h) hit = (n > 1 ? a[2] : $2) }
+        }
+        if (hit != "") printf "%s\t%s\t%s\t%s\n", $1, hit, chk, unit
+    }')
+
+while IFS=$'\t' read -r src dest chk unit; do
+    [ -n "$src" ] || continue
+    r=$REPO rel=$src
+    case "$src" in private/*) r=$REPO/private; rel=${src#private/} ;; esac
+    if ! want=$(g "$r" rev-parse -q --verify "HEAD:$rel" 2>/dev/null); then
+        log "$src is not committed in the share; $dest left as it is"; failed=$((failed+1)); continue
+    fi
+    have=""
+    [ -f "$dest" ] && [ ! -L "$dest" ] && have=$(git hash-object "$dest")
+    if [ "$have" = "$want" ]; then in_sync=$((in_sync+1)); continue; fi
+    if [ "$chk" = 1 ]; then
+        log "$dest differs from $src (${want:0:8}); check-only, left alone"; check_only=$((check_only+1)); continue
+    fi
+    tmp=$(mktemp)
+    if ! g "$r" cat-file blob "$want" > "$tmp"; then
+        log "could not read $src from the share"; failed=$((failed+1)); rm -f "$tmp"; continue
+    fi
+    if ! syntax_ok "$tmp" "$dest" 2>&1; then
+        log "$src (${want:0:8}) fails its syntax check; $dest left as it is"; failed=$((failed+1)); rm -f "$tmp"; continue
+    fi
+    same=0; [ -e "$dest" ] && cmp -s "$tmp" "$dest" && same=1     # a link into the share with the same content
+    note=""; [ -n "$unit" ] && [ $same = 0 ] && note=", restart $unit"
+    if [ $DRY = 1 ]; then
+        log "would install $dest from $src (${want:0:8})$note"; installed=$((installed+1)); rm -f "$tmp"; continue
+    fi
+    m=755; [ "$(g "$r" ls-tree HEAD -- "$rel" | cut -c1-6)" = 100644 ] && m=644
+    case "$dest" in /etc/cron.d/*) m=644 ;; esac
+    uid=0 gid=0
+    if [ -f "$dest" ] && [ ! -L "$dest" ]; then
+        m=$(stat -c %a "$dest"); uid=$(stat -c %u "$dest"); gid=$(stat -c %g "$dest"); backup "$dest"
+    fi
+    new=$(dirname "$dest")/.$(basename "$dest").lab-sync-new
+    mkdir -p "$(dirname "$dest")"
+    if install -m "$m" -o "$uid" -g "$gid" "$tmp" "$new" && mv -Tf "$new" "$dest"; then
+        command -v restorecon >/dev/null && restorecon -F "$dest" 2>/dev/null
+        installed=$((installed+1)); log "installed $dest from $src (${want:0:8})$note"
+        if [ -n "$unit" ] && [ $same = 0 ]; then systemctl try-restart "$unit" || log "restart of $unit failed"; fi
+    else
+        rm -f "$new"; failed=$((failed+1)); log "could not install $dest"
+    fi
+    rm -f "$tmp"
+done <<< "$entries"
+
+[ $DRY = 0 ] && [ $failed = 0 ] && date +%s > "$STATE/last_success"
+metrics
+log "$HOST: $in_sync in step, $installed installed, $failed failed, $check_only check-only differ"
+[ $failed = 0 ]

@@ -2,19 +2,21 @@
 # lab-scripts - keeps the lab's scripts in one place: this repo, on mementos's dataPool (2026-10-16).
 #
 #   lab-scripts [status] [-v] [HOST...]  what is out of line: work in this repo (and private/) that is not committed
-#                                         or not on GitHub, and hosts that do not run a script the way deploy.list says
+#                                         or not on GitHub, and hosts whose files differ from deploy.list and main
+#   lab-scripts sync [HOST...]            run lab-sync on HOST now instead of waiting for its 5-minute timer
+#   lab-scripts enable-sync [HOST...]     install lab-sync and its timer on HOST (once per host; never sojiro)
 #   lab-scripts link [HOST...]            make every [links] path on HOST a symlink into the share (default: this machine)
-#   lab-scripts diff NAME [HOST]          the source against the file on HOST (default: this machine)
-#   lab-scripts install NAME [HOST...]    put NAME in place on HOST: the link, or for a [copies] entry a fresh copy
+#   lab-scripts diff NAME [HOST]          the committed source against the file on HOST (default: this machine)
+#   lab-scripts install NAME [HOST...]    put NAME in place on HOST now: its link, or the committed copy (sojiro: always)
 #   lab-scripts setup [HOST...]           put the shared bin/ on PATH and on sudo's, on a host that mounts dataPool
 #   lab-scripts timer                     on mementos: pull GitHub's main into the share every 15 min (fast-forward only)
 #   lab-scripts push                      check the new commits for secrets, then push them to GitHub via tinynas
 #
 # The repo is /dataPool/homelab on every host that mounts the share (on mementos, where it is local, a symlink to
 # /dataPool/labShare/homelab). bin/ and private/bin/ are on PATH there.
-# deploy.list (and private/deploy.list) say how each host runs each script: [links] are symlinks into the share, so
-# every host runs the one copy; [copies] are real files for what must never wait on the share (see deploy.list).
-# NAME is a script's file name, on the host or in the repo.
+# deploy.list (and private/deploy.list) say how each host runs each script: [links] are symlinks into the share for
+# tools run by hand; [copies] are real files for everything unattended, which lab-sync on each host (every host but
+# sojiro) keeps in step with what is committed on main here. NAME is a script's file name, on the host or in the repo.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -25,7 +27,7 @@ TODAY=$(date +%F)
 SELF=$(hostname -s | tr '[:upper:]' '[:lower:]')
 
 die(){ echo "lab-scripts: $*" >&2; exit 1; }
-usage(){ sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage(){ sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 is_self(){ [ "$1" = "$SELF" ] || [ "$1" = local ]; }
 tty_flag(){ [ -t 0 ] && [ -t 1 ] && echo -t; }
 
@@ -56,6 +58,7 @@ entries(){
             case "$src" in "[links]") section=links; continue ;; "[copies]") section=copy; continue ;; esac
             mode=$section; [ "$mode" = links ] && mode=link
             [[ " $rest " == *" check-only "* ]] && { mode=check-only; rest=${rest/check-only/}; }
+            rest=$(sed 's/restart=[^[:space:]]*//g' <<<"$rest")
             for h in $rest; do
                 if [[ "$h" == *:* ]]; then printf '%s\t%s\t%s\t%s\n' "$src" "${h%%:*}" "${h#*:}" "$mode"
                 else printf '%s\t%s\t%s\t%s\n' "$src" "$h" "$path" "$mode"; fi
@@ -63,6 +66,11 @@ entries(){
         done < "$list"
     done
 }
+
+# SOURCE as committed on main (what lab-sync deploys): repo dir and path inside it
+src_repo(){ case "$1" in private/*) echo "$ROOT/private" ;; *) echo "$ROOT" ;; esac; }
+src_rel(){ echo "${1#private/}"; }
+committed(){ git -c safe.directory='*' -C "$(src_repo "$1")" show "HEAD:$(src_rel "$1")" 2>/dev/null; }
 
 # when SOURCE last changed: its commit time, or the file's mtime while it has uncommitted edits
 source_time(){
@@ -111,11 +119,12 @@ cmd_status(){
     local all; all=$(entries)
     [ ${#hosts[@]} -eq 0 ] && mapfile -t hosts < <(cut -f2 <<<"$all" | sort -u)
     echo "== how the hosts run them (deploy.list)"
-    declare -A sum=() stime=()
+    declare -A sum=() csum=() stime=()
     local src
     for src in $(cut -f1 <<<"$all" | sort -u); do
         [ -f "$ROOT/$src" ] || { echo "  deploy.list names a missing source: $src"; continue; }
         sum[$src]=$(md5sum < "$ROOT/$src" | cut -d' ' -f1)
+        csum[$src]=$(committed "$src" | md5sum | cut -d' ' -f1)
         stime[$src]=$(source_time "$src")
     done
     local bad=0 ok=0
@@ -150,17 +159,20 @@ cmd_status(){
                 esac
                 printf '  %-9s %-30s %s\n' "$h" "$p" "$state"; bad=$((bad+1)); continue
             fi
-            if [ "$got" = "${sum[$s]:-}" ]; then
+            if [ "$kind" = F ] && [ "$got" = "${csum[$s]:-}" ]; then
                 ok=$((ok+1)); [ $verbose = 1 ] && printf '  %-9s %-30s ok (copy)\n' "$h" "$p"; continue
             fi
+            local fix="lab-sync puts the committed version in place within 5 minutes (lab-scripts sync $h now)"
+            [ "$h" = sojiro ] && fix="lab-scripts install $(basename "$p") sojiro"
+            [ "$mode" = check-only ] && fix="check-only: see fan-control/README.md"
             case "$kind" in
-                MISSING|DANGLING) state="missing (source $s)" ;;
+                MISSING|DANGLING) state="missing; $fix" ;;
                 UNREADABLE) state="not readable as $(id -un); try with sudo-grant active" ;;
-                *) if [ "${gt:-0}" -gt "${stime[$s]:-0}" ]; then m="the host's copy is newer: commit it to $s?"
-                   else m="source is newer: lab-scripts install $(basename "$p") $h"; fi
-                   state="differs from $s ($m)" ;;
+                L) state="still a link to $tgt; $fix" ;;
+                *) if [ "${gt:-0}" -gt "${stime[$s]:-0}" ]; then m="changed on the host since $s was committed"
+                   else m="the committed $s is newer"; fi
+                   state="differs ($m); $fix" ;;
             esac
-            [ "$mode" = check-only ] && state="$state [check-only: see fan-control/README.md]"
             printf '  %-9s %-30s %s\n' "$h" "$p" "$state"; bad=$((bad+1))
         done <<<"$rows"
     done
@@ -185,7 +197,7 @@ cmd_diff(){
     rows=$(match "$name" "$host"); [ -n "$rows" ] || die "no deploy.list entry for $name on $host"
     while IFS=$'\t' read -r src _ p _; do
         echo "== $host:$p  vs  $src"
-        diff -u --label "$host:$p" --label "$src" <(on "$host" 'cat "$1" 2>/dev/null || sudo -n cat "$1"' "$p") "$ROOT/$src" \
+        diff -u --label "$host:$p" --label "$src (main)" <(on "$host" 'cat "$1" 2>/dev/null || sudo -n cat "$1"' "$p") <(committed "$src") \
             && echo "(the same)"
     done <<<"$rows"
 }
@@ -239,6 +251,38 @@ cmd_link(){
     done
 }
 
+# runs as root on the target: TMP (lab-sync as committed). Installs it, its service and its 5-minute timer, enables
+# the timer and runs it once. Boot never waits for it: the timer first fires two minutes after boot.
+ENABLE_SYNC='set -eu
+tmp=$1
+[ "$(hostname -s)" != sojiro ] || { echo "sojiro keeps manual copies; no lab-sync there" >&2; rm -f "$tmp"; exit 1; }
+install -m 755 -o root -g root "$tmp" /usr/local/sbin/.lab-sync.new && mv -f /usr/local/sbin/.lab-sync.new /usr/local/sbin/lab-sync; rm -f "$tmp"
+command -v restorecon >/dev/null && restorecon -F /usr/local/sbin/lab-sync
+printf "%s\n" "[Unit]" "Description=Keep this host'"'"'s lab scripts in step with the share (lab-sync)" "" "[Service]" "Type=oneshot" "ExecStart=/usr/local/sbin/lab-sync" "TimeoutStartSec=300" "Nice=10" > /etc/systemd/system/lab-sync.service
+printf "%s\n" "[Unit]" "Description=Run lab-sync every 5 minutes" "" "[Timer]" "OnBootSec=2min" "OnCalendar=*:0/5" "RandomizedDelaySec=60" "" "[Install]" "WantedBy=timers.target" > /etc/systemd/system/lab-sync.timer
+systemctl daemon-reload; systemctl enable --now lab-sync.timer >/dev/null 2>&1
+/usr/local/sbin/lab-sync || true'
+
+cmd_enable_sync(){
+    local hosts=("$@") h tmp
+    [ ${#hosts[@]} -eq 0 ] && hosts=("$SELF")
+    for h in "${hosts[@]}"; do
+        is_self "$h" && h=$SELF
+        echo "== $h"
+        tmp=$(committed scripts/lab-sync | on -i "$h" 'f=$(mktemp /tmp/lab-sync.XXXXXX) && cat > "$f" && echo "$f"') || { echo "  could not reach $h" >&2; continue; }
+        as_root "$h" "$ENABLE_SYNC" "$tmp" || echo "  lab-sync setup failed on $h" >&2
+    done
+}
+
+cmd_sync(){
+    local hosts=("$@") h
+    [ ${#hosts[@]} -eq 0 ] && hosts=("$SELF")
+    for h in "${hosts[@]}"; do
+        is_self "$h" && h=$SELF
+        echo "== $h"; as_root "$h" '/usr/local/sbin/lab-sync' || echo "  lab-sync reported problems on $h (see above)" >&2
+    done
+}
+
 cmd_install(){
     local name=${1:-}; [ -n "$name" ] || usage 2; shift
     local hosts=("$@") h rows src p mode tmp
@@ -259,7 +303,7 @@ cmd_install(){
             continue
         fi
         echo "== $h: $src -> $p"
-        tmp=$(on -i "$h" 'f=$(mktemp /tmp/lab-scripts.XXXXXX) && cat > "$f" && echo "$f"' < "$ROOT/$src") || { echo "  could not reach $h" >&2; continue; }
+        tmp=$(committed "$src" | on -i "$h" 'f=$(mktemp /tmp/lab-scripts.XXXXXX) && cat > "$f" && echo "$f"') || { echo "  could not reach $h" >&2; continue; }
         if as_root "$h" "$INSTALL" "$tmp" "$p" "$TODAY"; then did=1
         else echo "  install failed on $h (sudo password, or run sudo-grant $h first)" >&2; fi
     done
@@ -382,6 +426,8 @@ case "${1:-status}" in
     diff) shift; cmd_diff "$@" ;;
     install) shift; cmd_install "$@" ;;
     link) shift; cmd_link "$@" ;;
+    sync) shift; cmd_sync "$@" ;;
+    enable-sync) shift; cmd_enable_sync "$@" ;;
     setup) shift; cmd_setup "$@" ;;
     timer) as_root mementos "$TIMER" ;;
     push) cmd_push ;;

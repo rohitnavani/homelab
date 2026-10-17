@@ -1,44 +1,40 @@
-# deploy.list - how each host runs each script in this repo. `lab-scripts status` checks every entry; `lab-scripts link
-# HOST` and `lab-scripts install NAME HOST` put them in place. private/deploy.list (not public) does the same for the
-# private scripts.
+# deploy.list - how each host runs each script in this repo. lab-sync (every 5 minutes on every host but sojiro) keeps
+# the [copies] in step with what is committed here; `lab-scripts status` (run on makoto) shows anything out of step.
+# private/deploy.list (not public) does the same for the private scripts.
 #
-#   SOURCE                                      PATH ON THE HOST                      HOSTS ...  [check-only]
+#   SOURCE                                      PATH ON THE HOST                      HOSTS ...  [check-only] [restart=UNIT]
 #
-# [links]  The host's path is a symlink to this repo at /dataPool/homelab, so every host runs the one copy and an edit
-#          is live everywhere.
-# [copies] A real file on the host, for what must never wait on the share: the fan controllers and fan scripts (with
-#          fan-control/monitoring's thermal-log and lab-thermal-textfile, services that start at boot), the battery
-#          guards, mementos's check of the pool the share lives on, everything on sojiro (the backup box: nothing
-#          on the rest of the lab may change what it runs as root), akechi's monitoring (a laptop, often away), and
-#          cron schedules (cron rereads them every minute and would stall on a stalled share). check-only: compared,
-#          never copied by lab-scripts; a fan controller goes in with a restart and a live check (fan-control/README.md).
+# [links]  Tools run by hand at a fixed path: a symlink into this repo at /dataPool/homelab, live as soon as an edit
+#          is saved. Most hand-run tools need no entry: bin/ and private/bin are on PATH.
+# [copies] Everything that runs unattended (cron, services, boot) is a real file on the host, so it keeps running while
+#          mementos is down. lab-sync installs the committed version within 5 minutes: a syntax check, the old file
+#          kept in /var/lib/lab-sync/backup, a rename, then restart=UNIT if that unit is running. check-only:
+#          compared, never written; a fan controller goes in with a restart and a live check (fan-control/README.md).
+#          sojiro has no lab-sync: the backup box keeps manual copies (lab-scripts install NAME sojiro), so nothing
+#          on the rest of the lab can change what it runs as root.
 # HOST:PATH means that host keeps it at another path.
 
 [links]
-scripts/drivecheck                              /usr/local/bin/drivecheck             futaba makoto mementos morgana ryuji tinynas tinypc yusuke
-scripts/drive-selftest                          /usr/local/bin/drive-selftest         futaba makoto mementos morgana ryuji tinynas tinypc yusuke
-scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            makoto ryuji tinynas
-scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          makoto mementos ryuji
-scripts/zfs-retention                           /usr/local/sbin/zfs-retention         makoto mementos ryuji
+scripts/autorar                                 /usr/local/bin/autorar                tinynas
+scripts/newvm                                   /usr/local/bin/newvm                  mementos ryuji
+
+[copies]
+scripts/drivecheck                              /usr/local/bin/drivecheck             akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
+scripts/drive-selftest                          /usr/local/bin/drive-selftest         akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
+fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke restart=thermal-log.service
+fan-control/monitoring/lab-thermal-textfile     /usr/local/bin/lab-thermal-textfile   mementos ryuji restart=lab-thermal-textfile.service
+scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            makoto mementos ryuji sojiro tinynas
+scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          makoto mementos ryuji sojiro
+scripts/zfs-retention                           /usr/local/sbin/zfs-retention         makoto mementos ryuji sojiro
 scripts/snapshot                                /usr/local/bin/snapshot               tinynas
 scripts/retention                               /usr/local/bin/retention              tinynas
 scripts/root_disk_metrics                       /usr/local/bin/root_disk_metrics      tinynas
 scripts/backup-mementos                         /usr/local/sbin/backup-mementos       tinynas
-scripts/prune-replica                           /usr/local/sbin/prune-replica         tinynas
-scripts/autorar                                 /usr/local/bin/autorar                tinynas
+scripts/prune-replica                           /usr/local/bin/prune-replica          sojiro tinynas:/usr/local/sbin/prune-replica
+scripts/replicate                               /usr/local/bin/replicate              sojiro
 scripts/futaba-backup                           /usr/local/bin/futaba-backup          futaba
 scripts/resume-uptime                           /usr/local/bin/resume-uptime          futaba
-
-[copies]
-scripts/drivecheck                              /usr/local/bin/drivecheck             akechi sojiro
-scripts/drive-selftest                          /usr/local/bin/drive-selftest         akechi sojiro
-fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
-fan-control/monitoring/lab-thermal-textfile     /usr/local/bin/lab-thermal-textfile   mementos ryuji
-scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            mementos sojiro
-scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          sojiro
-scripts/zfs-retention                           /usr/local/sbin/zfs-retention         sojiro
-scripts/replicate                               /usr/local/bin/replicate              sojiro
-scripts/prune-replica                           /usr/local/bin/prune-replica          sojiro
+scripts/lab-sync                                /usr/local/sbin/lab-sync              akechi futaba makoto mementos morgana ryuji tinynas tinypc yusuke
 scripts/drivecheck.cron                         /etc/cron.d/drivecheck                futaba makoto mementos morgana ryuji sojiro tinypc yusuke
 scripts/zfs_metrics.cron                        /etc/cron.d/zfs-metrics               makoto sojiro
 fan-control/fan-watchdog/fan-watchdog           /usr/local/sbin/fan-watchdog          mementos check-only
