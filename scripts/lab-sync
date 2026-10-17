@@ -9,7 +9,8 @@
 # swaps the new one in with a rename so nothing ever reads half a file, and restarts the unit the entry names
 # (restart=UNIT) if that unit is running and the content changed. A path that is still a symlink becomes a real
 # file. check-only entries (the fan controllers) are never written, only counted. It writes lab_sync.prom for
-# node_exporter, so Prometheus sees a host that falls out of step. Nothing at boot waits for it.
+# node_exporter, so Prometheus sees a host that falls out of step. Nothing at boot waits for it. A share it cannot
+# read is reported (lab_sync_share_readable 0), not treated as a failure; a file it cannot install is one (exit 1).
 #
 #   lab-sync            do it
 #   lab-sync --dry-run  say what it would do, change nothing
@@ -83,8 +84,10 @@ syntax_ok(){  # syntax_ok FILE DEST: what the file's interpreter can check witho
 exec 9>/run/lock/lab-sync.lock
 flock -n 9 || { log "another lab-sync run is in progress; leaving it to that one"; exit 0; }
 if ! g "$REPO" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    # not lab-sync failing: mementos is down, or the share is withdrawn on purpose (akechi away from home).
+    # lab_sync_share_readable 0 and an unchanged last-success time record it; the unit stays clean.
     log "cannot read $REPO (share not mounted, or mementos down): nothing changed"
-    readable=0; metrics; exit 1
+    readable=0; metrics; exit 0
 fi
 COMMIT=$(g "$REPO" rev-parse --short HEAD 2>/dev/null)
 
