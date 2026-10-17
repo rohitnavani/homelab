@@ -1,30 +1,44 @@
-# deploy.list - which file in this repo is installed where. `lab-scripts status` compares every installed copy with
-# its source; `lab-scripts install NAME HOST` copies a source into place. Tools run by hand are not listed: they run
-# straight from bin/ on the share, except where root runs them or a sudo rule names them (autorar on tinynas).
-# private/deploy.list (not public) lists the private scripts the same way.
+# deploy.list - how each host runs each script in this repo. `lab-scripts status` checks every entry; `lab-scripts link
+# HOST` and `lab-scripts install NAME HOST` put them in place. private/deploy.list (not public) does the same for the
+# private scripts.
 #
-#   SOURCE                                      INSTALLED AS                          HOSTS ...  [check-only]
+#   SOURCE                                      PATH ON THE HOST                      HOSTS ...  [check-only]
 #
-# HOST:PATH means that host keeps it at another path. check-only: compared, never copied by lab-scripts; the fan
-# controllers go in with a service restart and a live check (fan-control/README.md).
+# [links]  The host's path is a symlink to this repo at /dataPool/homelab, so every host runs the one copy and an edit
+#          is live everywhere. On sojiro, which does not mount the share, /dataPool is a symlink to its own replica
+#          of it (backupPool/dataPool/labShare, refreshed by the 03:00 pull).
+# [copies] A real file on the host, for what must never wait on the share: the fan controllers and fan scripts, the
+#          battery guards, the checks of the pool a host's copy of the share lives on, sojiro's replication (it
+#          rewrites that replica while it runs) and its VPN scripts, akechi's monitoring (a laptop, often away), and
+#          cron schedules (cron rereads them every minute and would stall on a stalled share). check-only: compared,
+#          never copied by lab-scripts; a fan controller goes in with a restart and a live check (fan-control/README.md).
+# HOST:PATH means that host keeps it at another path.
 
-scripts/drivecheck                              /usr/local/bin/drivecheck             akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
-scripts/drive-selftest                          /usr/local/bin/drive-selftest         akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
-scripts/drivecheck.cron                         /etc/cron.d/drivecheck                futaba makoto mementos morgana ryuji sojiro tinypc yusuke
-fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
+[links]
+scripts/drivecheck                              /usr/local/bin/drivecheck             futaba makoto mementos morgana ryuji tinynas tinypc yusuke
+scripts/drive-selftest                          /usr/local/bin/drive-selftest         futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
+fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
 fan-control/monitoring/lab-thermal-textfile     /usr/local/bin/lab-thermal-textfile   mementos ryuji
-scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            mementos ryuji tinynas
+scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            ryuji tinynas
 scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          makoto mementos ryuji sojiro
 scripts/zfs-retention                           /usr/local/sbin/zfs-retention         makoto mementos ryuji sojiro
 scripts/snapshot                                /usr/local/bin/snapshot               tinynas
 scripts/retention                               /usr/local/bin/retention              tinynas
 scripts/root_disk_metrics                       /usr/local/bin/root_disk_metrics      tinynas
 scripts/backup-mementos                         /usr/local/sbin/backup-mementos       tinynas
-scripts/replicate                               /usr/local/bin/replicate              sojiro
-scripts/prune-replica                           /usr/local/bin/prune-replica          sojiro tinynas:/usr/local/sbin/prune-replica
+scripts/prune-replica                           /usr/local/sbin/prune-replica         tinynas
 scripts/autorar                                 /usr/local/bin/autorar                tinynas
 scripts/futaba-backup                           /usr/local/bin/futaba-backup          futaba
 scripts/resume-uptime                           /usr/local/bin/resume-uptime          futaba
+
+[copies]
+scripts/drivecheck                              /usr/local/bin/drivecheck             akechi sojiro
+scripts/drive-selftest                          /usr/local/bin/drive-selftest         akechi
+fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           akechi
+scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            mementos
+scripts/replicate                               /usr/local/bin/replicate              sojiro
+scripts/prune-replica                           /usr/local/bin/prune-replica          sojiro
+scripts/drivecheck.cron                         /etc/cron.d/drivecheck                futaba makoto mementos morgana ryuji sojiro tinypc yusuke
 fan-control/fan-watchdog/fan-watchdog           /usr/local/sbin/fan-watchdog          mementos check-only
 fan-control/md1200-fan/md1200-fan               /usr/local/bin/md1200-fan             mementos check-only
 fan-control/ryuji-fan-guard/ryuji-fan-guard     /usr/local/sbin/ryuji-fan-guard       ryuji check-only

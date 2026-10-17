@@ -2,18 +2,19 @@
 # lab-scripts - keeps the lab's scripts in one place: this repo, on mementos's dataPool (2026-10-16).
 #
 #   lab-scripts [status] [-v] [HOST...]  what is out of line: work in this repo (and private/) that is not committed
-#                                         or not on GitHub, and installed copies that differ from their source
-#   lab-scripts diff NAME [HOST]          the source against the copy installed on HOST (default: this machine)
-#   lab-scripts install NAME [HOST...]    copy the source over the installed copy on HOST (default: this machine)
+#                                         or not on GitHub, and hosts that do not run a script the way deploy.list says
+#   lab-scripts link [HOST...]            make every [links] path on HOST a symlink into the share (default: this machine)
+#   lab-scripts diff NAME [HOST]          the source against the file on HOST (default: this machine)
+#   lab-scripts install NAME [HOST...]    put NAME in place on HOST: the link, or for a [copies] entry a fresh copy
 #   lab-scripts setup [HOST...]           put the shared bin/ on PATH and on sudo's, on a host that mounts dataPool
 #   lab-scripts timer                     on mementos: pull GitHub's main into the share every 15 min (fast-forward only)
 #   lab-scripts push                      check the new commits for secrets, then push them to GitHub via tinynas
 #
-# The repo is /dataPool/homelab on every host that mounts the share (on mementos, where the share is local, that path
-# is a symlink to /dataPool/labShare/homelab). bin/ and private/bin/ are on those hosts' PATH: tools you run by hand
-# live only there. Scripts that cron, systemd or boot run stay installed on each host, because the share is a hard
-# NFS mount that hangs while mementos is down; deploy.list (and private/deploy.list) say which source is installed
-# where, and this command compares and copies them. NAME is a script's file name, installed or in the repo.
+# The repo is /dataPool/homelab on every lab host: over NFS on the clients, a symlink to /dataPool/labShare/homelab on
+# mementos, and on sojiro /dataPool is a symlink to its replica of the share. bin/ and private/bin/ are on PATH.
+# deploy.list (and private/deploy.list) say how each host runs each script: [links] are symlinks into the share, so
+# every host runs the one copy; [copies] are real files for what must never wait on the share (see deploy.list).
+# NAME is a script's file name, on the host or in the repo.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -24,7 +25,7 @@ TODAY=$(date +%F)
 SELF=$(hostname -s | tr '[:upper:]' '[:lower:]')
 
 die(){ echo "lab-scripts: $*" >&2; exit 1; }
-usage(){ sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage(){ sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 is_self(){ [ "$1" = "$SELF" ] || [ "$1" = local ]; }
 tty_flag(){ [ -t 0 ] && [ -t 1 ] && echo -t; }
 
@@ -44,14 +45,16 @@ as_root(){
     else "${SSH[@]}" $(tty_flag) "$h" "sudo bash -c $(printf %q "$s") lab-scripts $(quote_args "$@")"; fi
 }
 
-# deploy.list lines -> "SOURCE<TAB>HOST<TAB>PATH<TAB>MODE", one per host (MODE: install or check-only)
+# deploy.list lines -> "SOURCE<TAB>HOST<TAB>PATH<TAB>MODE", one per host (MODE: link, copy or check-only)
 entries(){
-    local list src path rest mode h
+    local list src path rest mode section h
     for list in "$ROOT/deploy.list" "$ROOT/private/deploy.list"; do
         [ -f "$list" ] || continue
+        section=links
         while read -r src path rest; do
             [[ -z "$src" || "$src" == \#* ]] && continue
-            mode=install
+            case "$src" in "[links]") section=links; continue ;; "[copies]") section=copy; continue ;; esac
+            mode=$section; [ "$mode" = links ] && mode=link
             [[ " $rest " == *" check-only "* ]] && { mode=check-only; rest=${rest/check-only/}; }
             for h in $rest; do
                 if [[ "$h" == *:* ]]; then printf '%s\t%s\t%s\t%s\n' "$src" "${h%%:*}" "${h#*:}" "$mode"
@@ -69,11 +72,13 @@ source_time(){
     echo "${t:-$(stat -c %Y "$ROOT/$f")}"
 }
 
-# md5 and mtime of each path on HOST, following symlinks (tinynas links /usr/local/bin into /pool/scripts)
+# for each path on HOST: KIND (L symlink, F file, MISSING, DANGLING, UNREADABLE), link target, md5 and mtime of what
+# it resolves to, path
 REMOTE_SUMS='for p in "$@"; do
-  if [ ! -e "$p" ]; then echo "MISSING 0 $p"
-  elif s=$(md5sum < "$p" 2>/dev/null || sudo -n md5sum "$p" 2>/dev/null); then echo "${s%% *} $(stat -L -c %Y "$p" 2>/dev/null || sudo -n stat -L -c %Y "$p") $p"
-  else echo "UNREADABLE 0 $p"; fi
+  k=F t=-; [ -L "$p" ] && { k=L; t=$(readlink "$p"); }
+  if [ ! -e "$p" ]; then if [ $k = L ]; then echo "DANGLING $t - 0 $p"; else echo "MISSING - - 0 $p"; fi
+  elif s=$(md5sum < "$p" 2>/dev/null || sudo -n md5sum "$p" 2>/dev/null); then echo "$k $t ${s%% *} $(stat -L -c %Y "$p" 2>/dev/null || sudo -n stat -L -c %Y "$p") $p"
+  else echo "UNREADABLE $t - 0 $p"; fi
 done'
 
 repo_state(){  # repo_state DIR LABEL REMOTE(0/1)
@@ -105,7 +110,7 @@ cmd_status(){
 
     local all; all=$(entries)
     [ ${#hosts[@]} -eq 0 ] && mapfile -t hosts < <(cut -f2 <<<"$all" | sort -u)
-    echo "== installed copies (deploy.list)"
+    echo "== how the hosts run them (deploy.list)"
     declare -A sum=() stime=()
     local src
     for src in $(cut -f1 <<<"$all" | sort -u); do
@@ -125,16 +130,33 @@ cmd_status(){
             else echo "  $h: unreachable from $SELF (run this on makoto, which reaches every host)"; fi
             bad=$((bad+1)); continue
         fi
-        local s p m mode got gt gp state
+        local s p m mode kind tgt got gt state
         while IFS=$'\t' read -r s _ p mode; do
-            read -r got gt gp < <(awk -v p="$p" '$3 == p' <<<"$out")
-            if [ "$got" = "${sum[$s]:-}" ]; then
-                ok=$((ok+1)); [ $verbose = 1 ] && printf '  %-9s %-30s ok\n' "$h" "$p"; continue
+            read -r kind tgt got gt _ < <(awk -v p="$p" '$5 == p' <<<"$out")
+            if [ "$mode" = link ]; then
+                if [ "$kind" = L ] && [ "$tgt" = "$SHARE/$s" ]; then
+                    ok=$((ok+1))
+                    if [ "$got" != "${sum[$s]:-}" ]; then printf '  %-9s %-30s links to the share; its copy there is behind (sojiro: until the 03:00 pull)\n' "$h" "$p"
+                    elif [ $verbose = 1 ]; then printf '  %-9s %-30s ok (link)\n' "$h" "$p"; fi
+                    continue
+                fi
+                case "$kind" in
+                    L) state="links to $tgt, not the share (lab-scripts link $h)" ;;
+                    F) if [ "$got" = "${sum[$s]:-}" ]; then state="a file, not a link yet; same content (lab-scripts link $h)"
+                       else state="a file that differs from $s, not a link (lab-scripts diff $(basename "$p") $h)"; fi ;;
+                    DANGLING) state="link points nowhere: $tgt" ;;
+                    MISSING) state="missing (lab-scripts link $h)" ;;
+                    *) state="not readable as $(id -un); try with sudo-grant active" ;;
+                esac
+                printf '  %-9s %-30s %s\n' "$h" "$p" "$state"; bad=$((bad+1)); continue
             fi
-            case "$got" in
-                MISSING) state="missing (source $s)" ;;
+            if [ "$got" = "${sum[$s]:-}" ]; then
+                ok=$((ok+1)); [ $verbose = 1 ] && printf '  %-9s %-30s ok (copy)\n' "$h" "$p"; continue
+            fi
+            case "$kind" in
+                MISSING|DANGLING) state="missing (source $s)" ;;
                 UNREADABLE) state="not readable as $(id -un); try with sudo-grant active" ;;
-                *) if [ "${gt:-0}" -gt "${stime[$s]:-0}" ]; then m="installed copy is newer: commit it to $s?"
+                *) if [ "${gt:-0}" -gt "${stime[$s]:-0}" ]; then m="the host's copy is newer: commit it to $s?"
                    else m="source is newer: lab-scripts install $(basename "$p") $h"; fi
                    state="differs from $s ($m)" ;;
             esac
@@ -185,6 +207,33 @@ install -D -m "$mode" -o "$uid" -g "$gid" "$tmp" "$new"
 mv -f "$new" "$real"; rm -f "$tmp"
 echo "installed $real${bak:+ (old copy kept as $bak)}"'
 
+# runs as root on the target: pairs of TARGET DEST. Each DEST becomes a symlink to TARGET (a rename, so nothing ever
+# sees it missing), but only when TARGET is reachable from that host and DEST is missing or has the same content:
+# a host whose file differs keeps it, and lab-scripts diff shows why. No backup: the content is the share's.
+LINK='set -u; fail=0
+while [ $# -ge 2 ]; do
+  target=$1 dest=$2; shift 2
+  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$target" ]; then continue; fi
+  if [ ! -e "$target" ]; then echo "  $dest: $target is not there on $(hostname -s); left alone" >&2; fail=1; continue; fi
+  if [ -e "$dest" ] && ! cmp -s "$dest" "$target"; then echo "  $dest: differs from $target; left alone (lab-scripts diff)" >&2; fail=1; continue; fi
+  mkdir -p "$(dirname "$dest")"
+  if ln -s "$target" "$dest.lab-scripts-new" && mv -Tf "$dest.lab-scripts-new" "$dest"; then echo "  $dest -> $target"
+  else rm -f "$dest.lab-scripts-new"; fail=1; fi
+done
+exit $fail'
+
+cmd_link(){
+    local hosts=("$@") h pairs=()
+    [ ${#hosts[@]} -eq 0 ] && hosts=("$SELF")
+    for h in "${hosts[@]}"; do
+        is_self "$h" && h=$SELF
+        mapfile -t pairs < <(entries | awk -F'\t' -v h="$h" -v share="$SHARE" '$2 == h && $4 == "link" {print share "/" $1; print $3}')
+        [ ${#pairs[@]} -gt 0 ] || { echo "== $h: no [links] entries"; continue; }
+        echo "== $h: $(( ${#pairs[@]} / 2 )) link(s)"
+        as_root "$h" "$LINK" "${pairs[@]}" || echo "  some were left alone on $h (see above)" >&2
+    done
+}
+
 cmd_install(){
     local name=${1:-}; [ -n "$name" ] || usage 2; shift
     local hosts=("$@") h rows src p mode tmp
@@ -197,6 +246,11 @@ cmd_install(){
         IFS=$'\t' read -r src _ p mode <<<"$rows"
         if [ "$mode" = check-only ]; then
             echo "lab-scripts: $p on $h is check-only; fan controllers go in with a restart and a live check (fan-control/README.md)" >&2
+            continue
+        fi
+        if [ "$mode" = link ]; then
+            echo "== $h: $p -> $SHARE/$src"
+            as_root "$h" "$LINK" "$SHARE/$src" "$p" || echo "  left alone on $h (see above)" >&2
             continue
         fi
         echo "== $h: $src -> $p"
@@ -218,8 +272,11 @@ if grep -qs "labShare[[:space:]]\+/dataPool[[:space:]]" /etc/fstab; then
 elif zfs list -H -o name dataPool/labShare >/dev/null 2>&1; then
   # mementos: the share is local; give it the same path as the NFS clients
   [ -e /dataPool/homelab ] || { ln -s labShare/homelab /dataPool/homelab; echo "linked /dataPool/homelab -> labShare/homelab"; }
+elif zfs list -H -o name backupPool/dataPool/labShare >/dev/null 2>&1; then
+  # sojiro: no NFS; its own replica of the share stands in for it (refreshed by the nightly pull)
+  [ -e /dataPool ] || { ln -s /backupPool/dataPool/labShare /dataPool; echo "linked /dataPool -> /backupPool/dataPool/labShare"; }
 else
-  echo "$(hostname -s): no dataPool NFS mount in /etc/fstab; it keeps installed copies only (lab-scripts install)"; exit 0
+  echo "$(hostname -s): no share here (no NFS mount in /etc/fstab, no local or replica dataPool/labShare)"; exit 0
 fi
 want=$(cat <<EOF
 # Lab scripts: the homelab repo on mementos (dataPool/labShare), the same path on every lab host. Written by
@@ -315,6 +372,7 @@ case "${1:-status}" in
     status) shift || true; cmd_status "$@" ;;
     diff) shift; cmd_diff "$@" ;;
     install) shift; cmd_install "$@" ;;
+    link) shift; cmd_link "$@" ;;
     setup) shift; cmd_setup "$@" ;;
     timer) as_root mementos "$TIMER" ;;
     push) cmd_push ;;
