@@ -1,32 +1,49 @@
 #!/bin/bash
-# newvm - create a KVM guest in its own ZFS dataset (one dataset per VM).
+# newvm - create a KVM guest on whichever lab host this runs on.
 #
 #   newvm [win11|2k22|2k25|ubuntu|rocky|iso]
 #   newwin11, new2k22, new2k25, newubuntu, newrocky are symlinks that pick the profile.
 #
-# Each VM gets <pool>/kvm/<name> (recordsize 64K = qcow2 cluster size) holding
-# <name>.qcow2 and a copy of its libvirt XML. Bridged onto the LAN via br0, VNC on 0.0.0.0.
-# ISOs come from <pool>/kvm/img. Works on mementos (vmPool/kvm), ryuji (computePool/kvm) and
-# tinynas (homePool/kvm); NEWVM_BASE=<pool>/kvm picks another dataset on other hosts.
-# The host needs a br0 bridge on its LAN NIC.
+# Where the disk goes:
+#   - mementos (vmPool/kvm) and ryuji (computePool/kvm): the VM gets its own dataset <pool>/kvm/<name>
+#     (recordsize 64K = qcow2 cluster size). NEWVM_BASE=<pool>/kvm picks another local dataset.
+#   - any other host: a folder on the shared vmPool/labShare (NFS from mementos), <share>/<host>/<name>,
+#     named after the host the VM runs on. The share is root_squash, so the folder and disk are made as
+#     you (not root) and the disk is mode 0666 so libvirt's qemu user can open it.
+# Either way the folder holds <name>.qcow2 and a copy of its libvirt XML; UEFI vars and TPM state
+# stay in the host's /var/lib/libvirt. Bridged onto the LAN via br0, VNC on 0.0.0.0.
+# ISOs come from <share>/img for every host. The share is /vmPool/labShare on mementos and /vmPool on
+# the NFS clients; NEWVM_SHARE=<path> overrides it. The host needs a br0 bridge on its LAN NIC.
 # virt-install registers a libvirt storage pool for each directory it uses (one per VM,
 # plus "img"); that's normal and is how tinynas ended up with its pools.
 set -euo pipefail
 
 V="sudo virsh -c qemu:///system"
 
-# where VMs live on this host: the first of these datasets that exists
-BASES=${NEWVM_BASE:-"vmPool/kvm computePool/kvm homePool/kvm"}
+host=$(hostname -s | tr '[:upper:]' '[:lower:]')
+
+# the lab's shared VM space, vmPool/labShare: local on mementos, NFS everywhere else
+if [ -n "${NEWVM_SHARE:-}" ]; then SHARE=$NEWVM_SHARE
+elif zfs list -H -o name vmPool/labShare >/dev/null 2>&1; then SHARE=$(zfs get -H -o value mountpoint vmPool/labShare)
+else SHARE=/vmPool
+fi
+ls "$SHARE" >/dev/null 2>&1 || true                 # wakes the automount
+findmnt -n -o FSTYPE -M "$SHARE" | grep -qxE 'nfs4|zfs' || { echo "$SHARE (vmPool/labShare) is not mounted on $host"; exit 1; }
+IMG=$SHARE/img
+VIRTIO=$IMG/virtio-win.iso
+[ -d "$IMG" ] || { echo "no ISO folder $IMG: the ISOs live in vmPool/labShare/img"; exit 1; }
+
+# a host with its own VM pool keeps the disk there, one dataset per VM; any other host uses the share
+BASES=${NEWVM_BASE:-"vmPool/kvm computePool/kvm"}
 BASE=
 for b in $BASES; do
   if zfs list -H -o name "$b" >/dev/null 2>&1; then BASE=$b; break; fi
 done
-[ -n "$BASE" ] || { echo "none of these datasets exist on $(hostname): $BASES"; exit 1; }
-MP=$(zfs get -H -o value mountpoint "$BASE")
-IMG=$MP/img
-VIRTIO=$IMG/virtio-win.iso
-[ -d "$IMG" ] || { echo "no ISO folder $IMG: create it and copy the ISOs in (mementos has them in /vmPool/kvm/img)"; exit 1; }
-ip link show br0 >/dev/null 2>&1 || { echo "no br0 bridge on $(hostname): VMs here are bridged onto the LAN through br0"; exit 1; }
+[ -n "${NEWVM_BASE:-}" ] && [ -z "$BASE" ] && { echo "$NEWVM_BASE does not exist on $host"; exit 1; }
+if [ -n "$BASE" ]; then MP=$(zfs get -H -o value mountpoint "$BASE")
+else MP=$SHARE/$host
+fi
+ip link show br0 >/dev/null 2>&1 || { echo "no br0 bridge on $host: VMs here are bridged onto the LAN through br0"; exit 1; }
 
 # profile from the command name, else the first argument, else ask
 case "$(basename "$0")" in
@@ -52,7 +69,7 @@ esac
 
 # Rocky/RHEL 10 need an x86-64-v3 CPU (AVX2); mementos' Ivy Bridge Xeons don't have it
 if [ "$profile" = rocky ] && ! grep -qw avx2 /proc/cpuinfo; then
-  echo "Rocky 10 needs a CPU with AVX2, and $(hostname) doesn't have one."
+  echo "Rocky 10 needs a CPU with AVX2, and $host doesn't have one."
   echo "Use a Rocky 9 ISO with 'newvm iso', or build this one on ryuji or tinynas."
   exit 1
 fi
@@ -89,7 +106,8 @@ pool_for_dir() {
 read -p "Name?: " name
 [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "name: letters, digits, . _ - only"; exit 1; }
 $V dominfo "$name" >/dev/null 2>&1 && { echo "a VM named $name already exists"; exit 1; }
-zfs list -H "$BASE/$name" >/dev/null 2>&1 && { echo "$BASE/$name already exists"; exit 1; }
+[ -n "$BASE" ] && zfs list -H "$BASE/$name" >/dev/null 2>&1 && { echo "$BASE/$name already exists"; exit 1; }
+[ -e "$MP/$name" ] && { echo "$MP/$name already exists"; exit 1; }
 read -p "RAM (in MB)? [$ram]: " a;      ram=${a:-$ram};   num RAM "$ram"
 read -p "vCPUs? [$cpu]: " a;            cpu=${a:-$cpu};   num vCPUs "$cpu"
 read -p "Disk size (in G)? [$size]: " a; size=${a:-$size}; num "Disk size" "$size"
@@ -97,11 +115,12 @@ port=$(next_vnc_port)
 read -p "VNC port? [$port]: " a;        port=${a:-$port}; num "VNC port" "$port"
 read -p "Start on boot? [y/N]: " a;     autostart=${a:-n}
 
-DS=$BASE/$name
+DS=${BASE:+$BASE/$name}
 DIR=$MP/$name
 DISK=$DIR/$name.qcow2
+# on the share the disk is made beforehand (root can't write there), so virt-install gets no size
 args=(--name "$name" --memory "$ram" --vcpus "$cpu"
-      --disk "path=$DISK,size=$size,format=qcow2,bus=virtio,discard=unmap"
+      --disk "path=$DISK,${DS:+size=$size,}format=qcow2,bus=virtio,discard=unmap"
       --osinfo "${osinfo:-detect=on,require=off}"
       --machine q35
       --cdrom "$IMG/$iso"
@@ -119,12 +138,18 @@ else
   args+=(--boot "uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=no")
 fi
 
-sudo zfs create -o recordsize=64K "$DS"
+if [ -n "$DS" ]; then
+  sudo zfs create -o recordsize=64K "$DS"
+else
+  mkdir -p "$DIR"
+  qemu-img create -q -f qcow2 "$DISK" "${size}G"
+  chmod 0666 "$DISK"
+fi
 if ! sudo virt-install "${args[@]}"; then
   if ! $V dominfo "$name" >/dev/null 2>&1; then
-    echo "!! creating $name failed - removing $DS"
+    echo "!! creating $name failed - removing ${DS:-$DIR}"
     for p in $(pool_for_dir "$DIR"); do $V pool-destroy "$p" >/dev/null 2>&1 || true; $V pool-undefine "$p" >/dev/null; done
-    sudo zfs destroy -r "$DS"
+    if [ -n "$DS" ]; then sudo zfs destroy -r "$DS"; else rm -rf "$DIR"; fi
   fi
   exit 1
 fi
@@ -135,13 +160,17 @@ if [ "$windows" = yes ]; then
 fi
 
 [[ $autostart == [yY]* ]] && $V autostart "$name" >/dev/null
-$V dumpxml --inactive "$name" | sudo tee "$DIR/$name.xml" >/dev/null
+if [ -n "$DS" ]; then $V dumpxml --inactive "$name" | sudo tee "$DIR/$name.xml" >/dev/null
+else $V dumpxml --inactive "$name" > "$DIR/$name.xml"
+fi
 mac=$($V domiflist "$name" | awk '$3 == "br0" {print $5}')
 ip=$(ip -4 -o addr show br0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
 
 echo
-echo "Created $name on $(hostname)"
-echo "  dataset : $DS ($DIR)"
+echo "Created $name on $host"
+if [ -n "$DS" ]; then echo "  dataset : $DS ($DIR)"
+else echo "  folder  : $DIR (vmPool/labShare on mementos, over NFS)"
+fi
 echo "  disk    : $DISK (${size}G)"
 echo "  console : VNC ${ip:-$(hostname -I | awk '{print $1}')}:$port"
 echo "  MAC     : $mac (add a DHCP reservation if it needs a fixed IP)"

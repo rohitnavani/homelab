@@ -176,7 +176,7 @@ because root reads the share as nobody; on an SELinux host, mount it with a `con
     ├── lab-scripts             # Compares and installs the hosts' copies, sets hosts up, pushes to GitHub (from bin/)
     ├── lab-sync                # Keeps a host's [copies] on the committed version every 5 minutes (all hosts but sojiro)
     ├── nextcloud-update        # Nextcloud AIO file permissions and rescan; skips if the data mount is missing (mementos)
-    ├── newvm                   # Interactive: creates a KVM guest in its own ZFS dataset (mementos, ryuji; from bin/)
+    ├── newvm                   # Interactive: creates a KVM guest on whichever host it runs on (from bin/)
     ├── prune-replica           # GFS pruning of received replicas, run by replicate (sojiro)
     ├── replicate               # Nightly syncoid pull of tinynas and mementos datasets (sojiro)
     ├── resume-uptime           # Writes tinynas's uptime for the resume site from Prometheus (futaba, every minute)
@@ -190,24 +190,42 @@ because root reads the share as nobody; on an SELinux host, mount it with a `con
 
 ## VMs
 
-`scripts/newvm` creates a libvirt/KVM guest in its own ZFS dataset `<pool>/kvm/<name>` (recordsize 64K, holding the
-qcow2 and a copy of its XML), from ISOs in `<pool>/kvm/img`, bridged onto the LAN through `br0`, with VNC on
-the next free port from 5900. Profiles: `win11`, `2k22`, `2k25` (Secure Boot with Microsoft keys, TPM 2.0, the virtio-win
-CD), `ubuntu`, `rocky` (plain UEFI; Rocky 10 needs AVX2, which mementos's Ivy Bridge Xeons lack) and `iso` (any ISO).
-It runs from `bin/` on the share (see "Lab scripts on dataPool"), where the symlinks `newwin11`, `new2k22`, `new2k25`,
-`newubuntu` and `newrocky` pick the profile; elsewhere, install it to `/usr/local/bin` with the same symlinks. It
-replaced tinynas's `~/newwin11`, `~/new2k22` and `~/new2k25` on 2026-10-06.
+`scripts/newvm` creates a libvirt/KVM guest on whichever lab host it runs on, bridged onto the LAN through `br0`,
+with VNC on the next free port from 5900. Profiles: `win11`, `2k22`, `2k25` (Secure Boot with Microsoft keys, TPM 2.0,
+the virtio-win CD), `ubuntu`, `rocky` (plain UEFI; Rocky 10 needs AVX2, which mementos's Ivy Bridge Xeons lack) and
+`iso` (any ISO). It runs from `bin/` on the share (see "Lab scripts on dataPool"), where the symlinks `newwin11`,
+`new2k22`, `new2k25`, `newubuntu` and `newrocky` pick the profile. It replaced tinynas's `~/newwin11`, `~/new2k22` and
+`~/new2k25` on 2026-10-06.
 
-It uses the first of `vmPool/kvm` (mementos), `computePool/kvm` (ryuji) and `homePool/kvm` (tinynas) that exists, and
-stops early if the `img` folder or `br0` is missing. On mementos and ryuji since 2026-10-14 (since 10-16 their
-`/usr/local/bin/newvm` is a symlink to the share); ryuji still needs its `computePool/kvm` dataset, the ISOs and a
-`br0` bridge before it can build VMs. VMs that need many cores
-or AVX2 (Rocky 10, Kubernetes nodes) belong on ryuji (2x E5-2696 v4, 88 threads); small always-on VMs such as
-2k25-test stay on mementos, next to their storage.
+Where things go (v3, 2026-10-18):
 
-To reuse it elsewhere: it needs libvirt, virtinst, ovmf and swtpm, a `<pool>/kvm` dataset with an `img` folder of ISOs
-(the ISO file names are in the profile table near the top), and a `br0` bridge. Set `NEWVM_BASE=<pool>/kvm` (or edit
-the `BASES` list) for a dataset with another name.
+- ISOs: one folder for the whole lab, `img` on the shared `vmPool/labShare` (NFS from mementos): `/vmPool/img` on the
+  clients, `/vmPool/labShare/img` on mementos itself. The ISO file names are in the profile table near the top.
+- Disks on a host with its own VM pool: a ZFS dataset per VM, `<pool>/kvm/<name>` (recordsize 64K = the qcow2 cluster
+  size): `vmPool/kvm` on mementos (12 mirrored pairs of 1.2 TB 10K SAS), `computePool/kvm` on ryuji.
+- Disks on any other host: a folder on the share named after the host that runs the VM, `/vmPool/<host>/<name>/`. The
+  export is `root_squash`, so newvm makes the folder and the qcow2 as you (`qemu-img create`) and sets the disk to 0666
+  so libvirt's qemu user can open it; libvirt's chown to that user fails on the squashed mount and it carries on.
+  These disks run at NFS speed over 1 GbE and depend on mementos being up (the mounts are `hard`). vmPool/labShare is
+  not backed up.
+
+Either way the folder holds `<name>.qcow2` and a copy of the libvirt XML; UEFI variables and TPM state stay in the
+host's `/var/lib/libvirt`. `NEWVM_BASE=<pool>/kvm` picks another local dataset, `NEWVM_SHARE=<path>` another share.
+newvm stops early if the share is not mounted, `img` is missing or there is no `br0`.
+
+Hosts that can build VMs (libvirt, qemu, virt-install, OVMF, swtpm and a `br0` that carries the LAN NIC's own MAC with
+`dhcp-identifier: mac`, so the UniFi DHCP reservations still match): mementos (eno1), ryuji (enp129s0f1, 2x E5-2696 v4,
+88 threads), tinynas (eno1), futaba (eno1), makoto (enp10s0), morgana (enp0s31f6), yusuke (the USB NIC
+enx0050b6240c00), all Ubuntu 24.04 with netplan/networkd, and tinypc (Fedora 44: a NetworkManager bridge `br0` with
+port `br0-port-enp5s0` and `ethernet.cloned-mac-address` set to enp5s0's MAC; SELinux `virt_use_nfs` on). Left out on
+purpose: sojiro (the backup box has no NFS and stays apart from the rest of the lab) and akechi (a laptop on Wi-Fi,
+which cannot be bridged, that sleeps and mounts the shares only on demand). VMs that need many cores or AVX2 (Rocky 10,
+Kubernetes nodes) belong on ryuji; small always-on VMs such as 2k25-test stay on mementos, next to their storage.
+
+To reuse it elsewhere: install libvirt-daemon-system, qemu-system-x86, qemu-utils, virtinst, ovmf, swtpm and
+swtpm-tools (Fedora: libvirt-daemon-kvm, qemu-kvm, qemu-img, virt-install, edk2-ovmf, swtpm-tools), put the LAN NIC in a
+`br0` bridge, and point `NEWVM_SHARE` at any shared folder with an `img` folder of ISOs (or `NEWVM_BASE` at a local
+`<pool>/kvm` dataset).
 
 Not in the repo: Nextcloud AIO, cloudflared, Jellyfin, the game servers, the Home Assistant VM, the rest of
 futaba's monitoring stack (the Prometheus, Alertmanager and Grafana compose and configs; `docker-compose/blackbox`
