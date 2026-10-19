@@ -253,13 +253,15 @@ cmd_link(){
 
 # runs as root on the target: TMP (lab-sync as committed). Installs it, its service and its 5-minute timer, enables
 # the timer and runs it once through the service (so a timer run and this one never overlap). Boot never waits for
-# it: the timer first fires two minutes after boot.
+# it: the timer first fires two minutes after boot. After=dataPool.mount makes shutdown stop a run before it unmounts
+# the share: on 2026-10-18 a run that started with ryuji's poweroff kept /dataPool busy, the network went down with the
+# hard mount still up, and the final sync hung until a hard reset. (No Requires=: a share it cannot read is reported.)
 ENABLE_SYNC='set -eu
 tmp=$1
 [ "$(hostname -s)" != sojiro ] || { echo "sojiro keeps manual copies; no lab-sync there" >&2; rm -f "$tmp"; exit 1; }
 install -m 755 -o root -g root "$tmp" /usr/local/sbin/.lab-sync.new && mv -f /usr/local/sbin/.lab-sync.new /usr/local/sbin/lab-sync; rm -f "$tmp"
 command -v restorecon >/dev/null && restorecon -F /usr/local/sbin/lab-sync
-printf "%s\n" "[Unit]" "Description=Keep this host'"'"'s lab scripts in step with the share (lab-sync)" "" "[Service]" "Type=oneshot" "ExecStart=/usr/local/sbin/lab-sync" "TimeoutStartSec=300" "Nice=10" > /etc/systemd/system/lab-sync.service
+printf "%s\n" "[Unit]" "Description=Keep this host'"'"'s lab scripts in step with the share (lab-sync)" "After=dataPool.mount" "" "[Service]" "Type=oneshot" "ExecStart=/usr/local/sbin/lab-sync" "TimeoutStartSec=300" "Nice=10" > /etc/systemd/system/lab-sync.service
 printf "%s\n" "[Unit]" "Description=Run lab-sync every 5 minutes" "" "[Timer]" "OnBootSec=2min" "OnCalendar=*:0/5" "RandomizedDelaySec=60" "" "[Install]" "WantedBy=timers.target" > /etc/systemd/system/lab-sync.timer
 systemctl daemon-reload; systemctl enable --now lab-sync.timer >/dev/null 2>&1
 systemctl start lab-sync.service || true
