@@ -1,11 +1,7 @@
 # Homelab Infrastructure
 
-Configuration, scripts and tools for Rohit's home lab: a 15U rack plus a few small boxes on one UniFi-routed LAN
-(smart-home gadgets sit apart on their own IoT VLAN). Every server runs Ubuntu Server 24.04. The storage and compute
-hosts (tinynas, mementos, ryuji, sojiro and makoto) keep their data on ZFS; futaba, morgana and yusuke have one ext4
-disk and no pools. Every lab host reports to one Prometheus, the lab's scripts live in one shared clone of this
-repo, and any host with a `br0` bridge can build VMs. The repo started as the config for tinynas alone and now covers
-the whole lab.
+Config, scripts and tools for Rohit's home lab: a 15U rack plus a few small boxes on one UniFi LAN. Servers run
+Ubuntu Server 24.04; the storage and compute hosts keep their data on ZFS.
 
 ## Machines
 
@@ -34,14 +30,8 @@ the whole lab.
 | Avocent DSR2030 | 16-port KVM over IP: console access to the rack |
 | UniFi Cloud Key Gen2 Plus | Wiped to Debian 11; isolated front-panel status display only |
 
-The two switches are not linked to each other: each uplinks to the UDW, so only tinynas and tinypc cross it to reach
-the rack. Every Catalyst port is 1 GbE, so a host's own port is the limit for NFS from mementos.
-
-VLANs (since 2026-10-18): the lab and its clients stay on the untagged default network. Smart-home gadgets (lights and
-appliances, all cloud-controlled) moved to an IoT VLAN with its own SSID and firewall zone: internet only, the
-gateway's DNS, and the LAN blocked except Home Assistant reaching in, with mDNS on. A management VLAN for the BMCs,
-the iDRAC, the PDU and the switch comes later; it needs the Catalyst's login recovered first, since the 2.5 GbE switch
-cannot carry tags.
+The two switches each uplink to the UDW and are not linked to each other. Smart-home gadgets sit on an IoT VLAN
+(internet only, since 2026-10-18); a management VLAN for the BMCs, PDU and switch is planned.
 
 ### Workstations and other devices
 
@@ -63,133 +53,61 @@ cannot carry tags.
 | sojiro | `backupPool` | 4x 4 TB raidz1 (since 2026-10-15; 2 mirrors of 2 TB and 4 TB pairs before) | Replicas of tinynas and mementos |
 | makoto | `backupPool` | 3x 1 TB SATA SSD, striped (no redundancy) | Logs; was the tinynas replica target until 2026-09-26 |
 
-Every host with a ZFS pool keeps `/var/log` on a dataset of that pool (tinynas `homePool/logBackup`, mementos
-`vmPool/logs`, ryuji `computePool/logs`, sojiro and makoto `backupPool/logs`). Those datasets are snapshotted hourly
-and pruned daily on a grandfather-father-son schedule: the newest 168 snapshots, plus the last one of each of 4 weeks,
-6 months and 2 years. logrotate stays at the Ubuntu default (weekly, 4 kept) on purpose: with a monthly tier, nearly
-every log line lands in a snapshot.
+Every ZFS host keeps `/var/log` on a pool dataset, so logs are snapshotted too.
 
-- tinynas runs `scripts/snapshot` and `scripts/retention` over all of its datasets.
-- mementos, ryuji, sojiro and makoto run `scripts/zfs-snapshot` (hourly) and `scripts/zfs-retention` (01:00) from
-  `/usr/local/sbin` over the dataset roots listed in `/etc/zfs-snapshot-targets`: Nextcloud, Docker, the VMs,
-  the logs and the two `labShare` NFS shares on mementos, only the logs dataset on the others.
-- sojiro's `scripts/replicate` (03:00) pulls replicas into `backupPool/<source pool>/...` with syncoid and prunes them
-  with `scripts/prune-replica` (72 hourly, 14 daily, 8 weekly, 6 monthly), independent of the source's retention.
-  Its mountpoint reset and pruning run per replica tree, so they never touch sojiro's own `backupPool/logs`.
-  It pulls tinynas's compose folders, `/etc` copy, logs, installed scripts, game and Minecraft servers, mementos's
-  Nextcloud datasets and logs, and all of `dataPool/labShare`. That share also carries what has no ZFS dataset of its
-  own: this repo's clone (`/dataPool/homelab`, the lab's scripts) and `/dataPool/backups`, where futaba's nightly
-  `futaba-backup` puts its service configs (secrets redacted) and tinypc puts its Open WebUI backups. Home
-  Assistant (the HAOS VM on futaba) writes its own encrypted automatic backups to the child dataset
-  `dataPool/labShare/homeassistant`, exported over NFS to the VM's address only and added in HA as the backup mount
-  `labshare` (Settings > System > Storage). To copy this, change the address in its `sharenfs`. VMs, Docker
-  data-roots other than Nextcloud AIO's, Jellyfin, samba and the iSCSI zvol are not backed up, by choice.
-- tinynas's `scripts/backup-mementos` (02:00, from `/usr/local/sbin`) pulls mementos's Nextcloud datasets
-  (`dataPool/nextcloud`, `vmPool/docker`, `vmPool/docker-compose/nextcloud-aio`) into
-  `homePool/backups/mementos/<pool>/...` as the onsite copy and prunes them with `scripts/prune-replica`. The
-  in-between datasets there are `canmount=off`, so the read-only replicas can mount below them.
+### Snapshots and backups
 
-To reuse these elsewhere: list your datasets in `/etc/zfs-snapshot-targets`; `replicate`'s `SOURCES` and `DEST` are
-specific to this lab.
+| Job | Host | When | What |
+|---|---|---|---|
+| `snapshot`, `retention` | tinynas | hourly, daily | All datasets |
+| `zfs-snapshot`, `zfs-retention` | mementos, ryuji, sojiro, makoto | hourly, 01:00 | Datasets listed in `/etc/zfs-snapshot-targets` |
+| `backup-mementos` | tinynas | 02:00 | Onsite copy of mementos's Nextcloud datasets |
+| `replicate`, `prune-replica` | sojiro | 03:00 | syncoid pull of tinynas, mementos's Nextcloud and logs, and all of `dataPool/labShare` |
+
+- Snapshots keep 168 hourly plus 4 weekly, 6 monthly and 2 yearly; replicas keep 72 hourly, 14 daily, 8 weekly and
+  6 monthly.
+- `dataPool/labShare` also carries this repo's clone, futaba's config backups, tinypc's Open WebUI backups and Home
+  Assistant's own backups, so all of them reach sojiro.
+- Not backed up, by choice: VMs, Docker data other than Nextcloud's, Jellyfin, Samba, the iSCSI zvol and
+  `vmPool/labShare`.
 
 ## Monitoring
 
-futaba runs the stack in Docker: Prometheus (90 days on its own disk), Alertmanager, Grafana and the Glance
-dashboard, with Cockpit beside them for a web shell on the servers.
+Prometheus (90 days), Alertmanager, Grafana and Glance run on futaba. Prometheus remote-writes everything to
+VictoriaMetrics on mementos, which keeps it for 100 years (history from 2026-10-06).
 
-- **What reaches Prometheus.** node_exporter on every Linux host, scraped every 15 s. akechi is the exception: a
-  Prometheus agent on the laptop pushes its samples (remote write) and keeps up to 24 hours on disk while it is away,
-  so time away fills in later instead of alerting. On top of node_exporter's own metrics, each host's textfile
-  directory carries `drivecheck` (SMART, every host), `zfs_metrics` (pool health, capacity, errors, scrub age and
-  I/O on all five ZFS hosts), `root_disk_metrics` (tinynas), `lab-sync`, the apt, nvme and smartmon collectors, BMC
-  sensors from ipmitool on ryuji, sojiro and makoto, and the fan controllers' state on mementos and ryuji
-  (`fan-control/monitoring/lab-thermal-textfile`). The rack PDU's current comes over read-only SNMP, and blackbox
-  probes check the six public sites every 60 s (`docker-compose/blackbox`). mementos has no in-band IPMI reader on
-  purpose: a second one next to fan-watchdog can make its read fail and send the R720 to loud iDRAC auto.
-- **History.** Since 2026-10-18 futaba's Prometheus also remote-writes every sample to VictoriaMetrics on mementos
-  (one container, data on `vmPool/victoriametrics`, 100-year retention), backfilled to the lab's first sample on
-  2026-10-06. Grafana has both: Prometheus for the live 90 days, VictoriaMetrics for everything.
-- **Dashboards.** "Lab - Overview" (Grafana's home page), "Lab - Network" and "Lab - I/O" each have a host picker
-  and default to VictoriaMetrics; "Lab - Thermal" (`fan-control/monitoring/lab-thermal.json`) follows the fans and
-  temperatures. Glance has a card per host.
-- **Alerts.** Alertmanager emails every alert. Rules: `monitoring/storage-rules.yml` (ZFS pool state and errors,
-  pending sectors, wear, NVMe, SAS and temperature margins; promtool tests in `storage-rules.test.yml`),
-  `monitoring/lab-sync-rules.yml`, `fan-control/monitoring/lab-thermal-rules.yml`, and site-down and certificate
-  expiry from the blackbox probes. Rules fire only on samples that exist (no `absent()`), because akechi's series
-  vanish while it is away.
-- **Adding a host.** `deploy-monitoring HOST` for a server, `--roaming` for a laptop, `--dry-run` to preview; it sets
-  up both the host and futaba's side. Details in `monitoring/README.md`.
+| Source | Hosts |
+|---|---|
+| node_exporter | All; akechi pushes from a Prometheus agent so time away isn't an alert |
+| `drivecheck` (SMART), `thermal-log` | All |
+| `zfs_metrics` | The five ZFS hosts |
+| Fan controller state | mementos, ryuji |
+| BMC sensors (ipmitool) | ryuji, sojiro, makoto (never mementos: it can upset fan-watchdog) |
+| PDU (SNMP), public sites (blackbox) | Polled from futaba |
 
-`thermal-log` (every host) also keeps a plain JSON-lines temperature record in `/var/log/thermal.jsonl`, 30 days,
-independent of Prometheus.
-
-To reuse this elsewhere: any Prometheus with `--web.enable-remote-write-receiver` (for roaming hosts) and a
-`remote_write` to VictoriaMetrics will do; the rule files load as they are, and `deploy-monitoring`'s host names and
-futaba paths are the parts to change.
+- Dashboards: Lab - Overview (home page), Network, I/O and Thermal.
+- Alerts go by email. Rules: `monitoring/` (storage, lab-sync) and `fan-control/monitoring/` (thermal).
+- Add a host: `deploy-monitoring HOST`, or `--roaming` for a laptop (see `monitoring/README.md`).
 
 ## Lab scripts on dataPool
 
-The lab keeps one copy of its scripts: a clone of this repo at `/dataPool/homelab` (since 2026-10-16), the same path
-on every host that mounts mementos's `dataPool/labShare` NFS share (NFS 4.2; on mementos itself a symlink to
-`/dataPool/labShare/homelab`): makoto, tinypc, futaba, tinynas, morgana, ryuji, yusuke and mementos, plus akechi on
-demand (soft mounts that a guard script offers only while mementos answers, at home or over the VPN, so the laptop
-never hangs on a share it cannot reach). sojiro does not mount it, on purpose (below).
+This repo is cloned at `/dataPool/homelab` on mementos's NFS share, mounted on every host except sojiro (akechi
+only while mementos is reachable).
 
-- **Tools you run by hand run straight from the share.** `/etc/profile.d/lab-scripts.sh` appends `bin/` and
-  `private/bin` to PATH, last, so a host's own commands win: `newvm` with its profile names, `autorar`,
-  `deploy-monitoring`, `lab-scripts`, `rename-host`. An edit there is live at once. A few sit at fixed paths as
-  symlinks into the share (`[links]` in `deploy.list`: newvm on mementos and ryuji, autorar on tinynas, sudo-grant and
-  sudo-revoke on makoto).
-- **Everything unattended runs from a local copy** (`[copies]`): cron jobs, services and boot scripts are real files
-  on each host, so they keep running while mementos is down. `scripts/lab-sync` keeps them in step: every 5 minutes
-  on every host but sojiro (`lab-sync.timer`) it compares each copy with the version committed on main in the share,
-  never the working tree, so a half-edited file never goes out. When one differs it checks the new version's syntax,
-  keeps the old file in `/var/lib/lab-sync/backup` (the last 5 per file), swaps the new one in with a rename and
-  restarts the unit the entry names (`restart=UNIT`). Edit, commit, and within 5 minutes every host has it.
-- **The fan controllers are `check-only`** (md1200-fan, fan-watchdog, ryuji-fan-guard, tinypc's GPU fan curve):
-  compared, never written. A new version goes in with a restart and a live check (see `fan-control/README.md`).
-- **Each host fetches from mementos's share; nothing goes through makoto.** A push from mementos would need root SSH
-  from mementos into every host, which the lab's SSH policy keeps servers from having.
-- **sojiro keeps manual copies.** It is the backup box: if it synced from the share, anything that can write the share
-  could change what it runs as root. `lab-scripts install NAME sojiro` puts a committed version there by hand.
-- **Visibility.** lab-sync writes `lab_sync.prom` for node_exporter (last run, last success, whether the share was
-  readable, files in step, installed, failed, and check-only files that differ); `monitoring/lab-sync-rules.yml`
-  alerts when a host has not synced for a day or keeps failing on a file. `lab-scripts status` on makoto checks
-  every copy and link against `deploy.list` and main.
-- **Boot never waits for the share.** Its fstab lines are `nofail` automounts: boot only sets up the mount point, and
-  the first use mounts it (30 s timeout). A `dataPool.mount` drop-in (written by `lab-scripts setup`) keeps it
-  retrying, so early requests at boot can never leave it unmounted for good, as happened on ryuji on 2026-10-17.
-  tinypc mounts it with `context=system_u:object_r:bin_t:s0`, so Fedora's SELinux lets programs run from it.
-- **Not public yet: `private/`.** Its own git repo inside the share copy, ignored by this one and never pushed: the
-  hosts' service scripts, the local AI tools, `rename-host`, `sudo-grant` and `sudo-revoke`, migration templates and
-  retired scripts, with their own `deploy.list`.
+- Hand-run tools in `bin/` run straight from the share, which is on PATH.
+- Unattended scripts run from local copies. Every 5 minutes `lab-sync` installs the version committed on main, as
+  `deploy.list` says. The fan controllers are check-only, and sojiro is updated by hand.
+- `private/` is a separate local repo, never pushed.
 
 ```sh
-lab-scripts                        # run on makoto: what is uncommitted, unpushed, or not as deploy.list and main say
-lab-scripts sync tinynas           # run lab-sync there now instead of waiting up to 5 minutes
-lab-scripts diff drivecheck sojiro # the committed source against a host's copy
-lab-scripts install zfs-snapshot sojiro   # put the committed version in place by hand (sojiro's only way)
-lab-scripts setup yusuke           # once per new host: the PATH snippet, sudo's secure_path, the mount drop-in
-lab-scripts enable-sync yusuke     # once per new host: lab-sync and its timer
-lab-scripts push                   # checks the new commits for secrets and vendor names, then pushes via tinynas
+lab-scripts                        # on makoto: anything uncommitted, unpushed or out of step
+lab-scripts sync HOST              # sync a host now
+lab-scripts install NAME sojiro    # sojiro's only way to get an update
+lab-scripts setup HOST             # new host, then: lab-scripts enable-sync HOST
+lab-scripts push                   # secret scan, then push via tinynas
 ```
 
-Edit in `/dataPool/homelab`, commit one version per change that works (only your own files: `git add <paths>`), and
-push with `lab-scripts push`: tinynas holds the GitHub credential. To try an uncommitted edit on one host, run it
-from the share by its full path; lab-sync only ever installs what is committed. `lab-scripts-pull.timer` on
-mementos fast-forwards the share from GitHub every 15 minutes, so a commit pushed from another clone reaches the hosts
-too. The every-minute cron jobs run under `flock -n` (zfs_metrics, root_disk_metrics and mon-watchdog on tinynas,
-zfs_metrics on ryuji, resume-uptime on futaba). sudo's `secure_path` includes the share only where `lab-scripts
-setup` has run since 2026-10-16 (makoto).
-
-The trade-off, accepted on purpose: whatever is committed on the share is what root runs on the synced hosts five
-minutes later, and rohit can write the share from any client. While mementos is down a shell on a client can hang
-on Tab completion, because PATH searches the share last; in that shell, `export PATH=${PATH%%:/dataPool/homelab/*}`
-drops it.
-
-To reuse this elsewhere: any path every host mounts will do. Change `SHARE` at the top of `scripts/lab-scripts`,
-`REPO` in `scripts/lab-sync` and the hosts in `deploy.list`. With root squashing, keep the files world-readable,
-because root reads the share as nobody; on an SELinux host, mount it with a `context=` label programs may execute.
+To change a script: edit in `/dataPool/homelab`, commit, `lab-scripts push`. Hosts have it within 5 minutes.
 
 ## Repository structure
 
@@ -241,47 +159,25 @@ because root reads the share as nobody; on an SELinux host, mount it with a `con
 
 ## VMs
 
-`scripts/newvm` creates a libvirt/KVM guest on whichever lab host it runs on, bridged onto the LAN through `br0`,
-with VNC on the next free port from 5900. Profiles: `win11`, `2k22`, `2k25` (Secure Boot with Microsoft keys, TPM 2.0,
-the virtio-win CD), `ubuntu`, `rocky` (plain UEFI; Rocky 10 needs AVX2, which mementos's Ivy Bridge Xeons lack) and
-`iso` (any ISO). It runs from `bin/` on the share (see "Lab scripts on dataPool"), where the symlinks `newwin11`,
-`new2k22`, `new2k25`, `newubuntu` and `newrocky` pick the profile. It replaced tinynas's `~/newwin11`, `~/new2k22` and
-`~/new2k25` on 2026-10-06.
+`newvm` (or `newwin11`, `new2k22`, `new2k25`, `newubuntu`, `newrocky`) builds a KVM guest on the host it runs on,
+bridged to the LAN on `br0`.
 
-Where things go (v3, 2026-10-18):
-
-- ISOs: one folder for the whole lab, `img` on the shared `vmPool/labShare` (NFS from mementos): `/vmPool/img` on the
-  clients, `/vmPool/labShare/img` on mementos itself. The ISO file names are in the profile table near the top.
-- Disks on a host with its own VM pool: a ZFS dataset per VM, `<pool>/kvm/<name>` (recordsize 64K = the qcow2 cluster
-  size): `vmPool/kvm` on mementos (12 mirrored pairs of 1.2 TB 10K SAS), `computePool/kvm` on ryuji.
-- Disks on any other host: a folder on the share named after the host that runs the VM, `/vmPool/<host>/<name>/`. The
-  export is `root_squash`, so newvm makes the folder and the qcow2 as you (`qemu-img create`) and sets the disk to 0666
-  so libvirt's qemu user can open it; libvirt's chown to that user fails on the squashed mount and it carries on.
-  These disks run at NFS speed over 1 GbE and depend on mementos being up (the mounts are `hard`). vmPool/labShare is
-  not backed up.
-
-Either way the folder holds `<name>.qcow2` and a copy of the libvirt XML; UEFI variables and TPM state stay in the
-host's `/var/lib/libvirt`. `NEWVM_BASE=<pool>/kvm` picks another local dataset, `NEWVM_SHARE=<path>` another share.
-newvm stops early if the share is not mounted, `img` is missing or there is no `br0`.
-
-Hosts that can build VMs (libvirt, qemu, virt-install, OVMF, swtpm and a `br0` that carries the LAN NIC's own MAC with
-`dhcp-identifier: mac`, so the UniFi DHCP reservations still match): mementos (eno1), ryuji (enp129s0f1, 2x E5-2696 v4,
-88 threads), tinynas (eno1), futaba (eno1), makoto (enp10s0), morgana (enp0s31f6), yusuke (the USB NIC
-enx0050b6240c00), all Ubuntu 24.04 with netplan/networkd, and tinypc (Fedora 44: a NetworkManager bridge `br0` with
-port `br0-port-enp5s0` and `ethernet.cloned-mac-address` set to enp5s0's MAC; SELinux `virt_use_nfs` on). Left out on
-purpose: sojiro (the backup box has no NFS and stays apart from the rest of the lab) and akechi (a laptop on Wi-Fi,
-which cannot be bridged, that sleeps and mounts the shares only on demand). VMs that need many cores or AVX2 (Rocky 10,
-Kubernetes nodes) belong on ryuji; small always-on VMs such as 2k25-test stay on mementos, next to their storage.
-
-To reuse it elsewhere: install libvirt-daemon-system, qemu-system-x86, qemu-utils, virtinst, ovmf, swtpm and
-swtpm-tools (Fedora: libvirt-daemon-kvm, qemu-kvm, qemu-img, virt-install, edk2-ovmf, swtpm-tools), put the LAN NIC in a
-`br0` bridge, and point `NEWVM_SHARE` at any shared folder with an `img` folder of ISOs (or `NEWVM_BASE` at a local
-`<pool>/kvm` dataset).
+- ISOs are in `/vmPool/img`, shared by the whole lab.
+- Disks go to `<pool>/kvm/<name>` on mementos and ryuji, and to `/vmPool/<host>/<name>/` on the share elsewhere
+  (NFS speed, not backed up).
+- Hosts with `br0`: mementos, ryuji, tinynas, futaba, makoto, morgana, yusuke, tinypc. Not sojiro or akechi.
+- Big or AVX2 VMs (Rocky 10, Kubernetes) go on ryuji; mementos's Ivy Bridge Xeons lack AVX2.
 
 ## Not in the repo
 
-Nextcloud AIO, cloudflared, Jellyfin, the game servers, the Home Assistant VM, the rest of futaba's monitoring stack
-(the Prometheus, Alertmanager and Grafana compose and configs, and the script that generates the Overview, Network
-and I/O dashboards; the repo holds the alert rules, the thermal dashboard and the blackbox probe parts),
-VictoriaMetrics's compose on mementos, the Glance dashboard config, tinypc's local AI stack (Ollama, Open WebUI,
-SearXNG) and everything under `private/`.
+Nextcloud AIO, cloudflared, Jellyfin, the game servers, Home Assistant, futaba's Prometheus/Alertmanager/Grafana
+configs, VictoriaMetrics, Glance, tinypc's local AI stack and `private/`.
+
+## Using this on other hardware
+
+- Fan control is specific to these boards; read `fan-control/README.md` first.
+- Snapshots: list your datasets in `/etc/zfs-snapshot-targets`. `replicate`'s `SOURCES` and `DEST` are lab-specific.
+- Lab scripts: set `SHARE` in `scripts/lab-scripts`, `REPO` in `scripts/lab-sync` and the hosts in `deploy.list`.
+- VMs: install libvirt, qemu, virtinst, OVMF and swtpm, bridge the LAN NIC as `br0`, set `NEWVM_SHARE` or
+  `NEWVM_BASE`.
+- Monitoring: change the host names and futaba paths in `deploy-monitoring`.
