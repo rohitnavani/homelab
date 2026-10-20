@@ -10,6 +10,7 @@
           - 'https://ha.rohitnavani.com'
           - 'https://jellyfin.rohitnavani.com/health'
           - 'https://cockpit.rohitnavani.com'
+          - 'https://grafana.rohitnavani.com/api/health'
         labels: {module: http_2xx}
       - targets: ['https://homelab.rohitnavani.com']
         labels: {module: http_2xx_or_401}
