@@ -8,7 +8,7 @@ groups:
   - name: lab-thermal
     rules:
       - alert: FanControllerStale
-        expr: lab_controller_state_age_seconds > 300 unless on(instance) (node_systemd_unit_state{state="active",name=~"(shelf-exp|shelf-decay|mementos-steps|mementos-fixedfan|mementos-quiet|md1200-fan-quiet|mic-r720|mic-shelf|scrub-quiet|ryuji-profile|ryuji-quiet|ryuji-floor|emm-query|tinynas-cage)[^.]*[.]service"} == 1)
+        expr: lab_controller_state_age_seconds > 300 unless on(instance) (node_systemd_unit_state{state="active",name=~"(shelf-exp|shelf-decay|mementos-steps|mementos-fixedfan|mementos-quiet|md1200-fan-quiet|mic-r720|mic-shelf|scrub-quiet|ryuji-profile|ryuji-quiet|ryuji-floor|emm-query|tinynas-cage|makoto-fanstep|makoto-fan-test)[^.]*[.]service"} == 1)
         for: 10m
         labels: {severity: critical}
         annotations:
@@ -24,13 +24,15 @@ groups:
             unless on(instance) lab_controller_state_age_seconds{controller="fan-watchdog"}, "controller", "fan-watchdog", "", "")
           or label_replace((up{job="node"} * on(instance) group_left(nodename) node_uname_info{nodename="ryuji"}) == 1
             unless on(instance) lab_controller_state_age_seconds{controller="ryuji-fan-guard"}, "controller", "ryuji-fan-guard", "", "")
+          or label_replace((up{job="node"} * on(instance) group_left(nodename) node_uname_info{nodename="makoto"}) == 1
+            unless on(instance) lab_controller_state_age_seconds{controller="makoto-fan"}, "controller", "makoto-fan", "", "")
         for: 15m
         labels: {severity: warning}
         annotations:
           summary: "No fan controller metrics for {{ $labels.controller }} on {{ $labels.nodename }}"
           description: "{{ $labels.nodename }} is up, but lab-thermal-textfile publishes nothing for {{ $labels.controller }}: lab-thermal-textfile or the controller's state file is missing (controller not running since boot?)."
       - alert: R720FansInIdracAuto
-        expr: lab_r720_fan_auto == 1 unless on(instance) (node_systemd_unit_state{state="active",name=~"(shelf-exp|shelf-decay|mementos-steps|mementos-fixedfan|mementos-quiet|md1200-fan-quiet|mic-r720|mic-shelf|scrub-quiet|ryuji-profile|ryuji-quiet|ryuji-floor|emm-query|tinynas-cage)[^.]*[.]service"} == 1)
+        expr: lab_r720_fan_auto == 1 unless on(instance) (node_systemd_unit_state{state="active",name=~"(shelf-exp|shelf-decay|mementos-steps|mementos-fixedfan|mementos-quiet|md1200-fan-quiet|mic-r720|mic-shelf|scrub-quiet|ryuji-profile|ryuji-quiet|ryuji-floor|emm-query|tinynas-cage|makoto-fanstep|makoto-fan-test)[^.]*[.]service"} == 1)
         for: 15m
         labels: {severity: warning}
         annotations:
@@ -64,3 +66,20 @@ groups:
         annotations:
           summary: "Room hot: mementos inlet {{ $value }}C for 30 min"
           description: "Check the AC. With the AC working the inlet reads 23-25C; with the AC faulty (10-04 to 10-07) 26-28C."
+      # v4 (2026-10-20): makoto-fan. Its CPU runs warm by design under load (sustained full load ~80-90C, TjMax 105);
+      # these fire only when that goes on far longer than any normal job or the controller is in emergency.
+      - alert: MakotoCpuHot
+        expr: lab_makoto_temp_celsius{sensor="cpu_smooth"} >= 90
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "makoto CPU {{ $value }}C (smoothed) for 15 min"
+          description: "makoto-fan's smoothed CPU package temperature has been at or above 90C for 15 min (BMC warns at 91, TjMax 105). Check what is loading makoto, the fans' rpm (lab_makoto_fan_rpm) and the heatsink."
+      - alert: MakotoFanEmergency
+        expr: lab_makoto_emergency == 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "makoto-fan has held both fans at 100% for 5 min"
+          description: "A makoto sensor reached its emergency limit (makoto-fan EMERG). Check: journalctl -u makoto-fan, the lab_makoto_temp_celsius series."
+

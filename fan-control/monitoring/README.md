@@ -1,14 +1,14 @@
 # Lab thermal monitoring
 
-Puts the three fan controllers' own readings, and the BMC sensors of the boxes without a controller, into the lab's
+Puts the four fan controllers' own readings, and the BMC sensors of the boxes without a controller, into the lab's
 central Prometheus, with a Grafana dashboard and alert rules. Added 2026-10-07. The room reference for every test
 (mementos's iDRAC inlet sensor) now has long-term history, so a test run can start by looking at the dashboard
 instead of starting ad-hoc loggers.
 
 | File | Runs on | What it does |
 |---|---|---|
-| `lab-thermal-textfile` (+ `.service`) | mementos, ryuji | Every 15 s, turns the state files of `md1200-fan`, `fan-watchdog` and `ryuji-fan-guard` into node_exporter textfile metrics. Reads no sensors itself |
-| `lab-thermal-rules.yml` | the Prometheus host (`rules/`) | 7 alert rules on those metrics, set to fire only on real trouble |
+| `lab-thermal-textfile` (+ `.service`) | mementos, ryuji, makoto | Every 15 s, turns the state files of `md1200-fan`, `fan-watchdog`, `ryuji-fan-guard` and `makoto-fan` into node_exporter textfile metrics. Reads no sensors itself |
+| `lab-thermal-rules.yml` | the Prometheus host (`rules/`) | 9 alert rules on those metrics, set to fire only on real trouble |
 | `lab-thermal.json` | the Grafana host (provisioned dashboard) | "Lab - Thermal": room proxies on four machines with the rack current, shelf, R720 and ryuji temperatures against their fan levels (ryuji's as % of top speed from its BMC's rpm sensors: the BMC never reports a PWM duty), controller health |
 | `thermal-log` (+ `.service`, `.logrotate`) | every Linux host | A plain local record next to Prometheus: one JSON line per minute in `/var/log/thermal.jsonl` with the inlet, CPU, board, BMC and drive temperatures (added 2026-10-07 evening; see "Local temperature log") |
 
@@ -78,7 +78,7 @@ absent elsewhere.
 | MD1200 shelf | Dell PowerVault MD1200, EMM firmware 1.06, 12x 8 TB SAS | its temperatures and fan speed come from `md1200-fan`'s state |
 | ryuji | Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2650 v3, Ubuntu 24.04.5 | runs `ryuji-fan-guard`; `lab-thermal-textfile` publishes it; its BMC sensors are exported too |
 | sojiro | Gigabyte MB10-series board, Xeon D-1521, BMC firmware 8.65 | BMC sensors only (MB_TEMP1 is a room proxy) |
-| makoto | ASRock Rack board, Xeon D-1622, BMC firmware 0.06 | BMC sensors only (MB Temp is a room proxy) |
+| makoto | ASRock Rack board, Xeon D-1622, BMC firmware 0.06, Ubuntu 24.04.5 | runs `makoto-fan` (since 2026-10-20); `lab-thermal-textfile` publishes it; its BMC sensors are exported too (MB Temp is a room proxy) |
 | tinynas | ASUS PRIME B650M-A AX II, Ryzen 5 9600X, Nuvoton NCT6799 | hwmon only (NVMe Composite and SYSTIN are room proxies) |
 | futaba | Lenovo ThinkCentre M700 Tiny, Core i5-6500T, 32 GB, Ubuntu 24.04.5, Docker 29.1 | the monitoring stack: Prometheus 3.15, Alertmanager 0.34, Grafana 13.2, snmp_exporter 0.30 (the rack PDU) |
 
@@ -100,6 +100,9 @@ ipmitool-sensor timer would be a second in-band IPMI reader next to `fan-watchdo
 | `lab_md1200_fan_percent`, `_fan_rpm`, `_fan_expected_rpm`, `_primary`, `_takeovers` | | same |
 | `lab_ryuji_fan_offset` | | `/run/ryuji-fan-guard.state` (-127 heavy job, -80 quiet at idle, light and full load, -16 warm, 0 Performance (or hot drives), 127 Full; -60 light load in v2.4-v2.6); the guard's own setting, so it stays put while a test tool drives the BMC |
 | `lab_ryuji_temp_celsius` | `sensor` = sio1, cpu, vr, dimm | same |
+| `lab_makoto_fan_percent`, `lab_makoto_fan_rpm` | `fan` = fan1 (CPU heatsink), fan4 (case) | `/run/makoto-fan.state` (the duty `makoto-fan` holds; rpm from its BMC read every 30 s) |
+| `lab_makoto_temp_celsius` | `sensor` = cpu (package), cpu_smooth (what FAN1 follows), ddr, mb, card (Card Side Temp, held at 50C), nvme, ssd | same |
+| `lab_makoto_emergency` | | same (1 while both fans are held at 100%) |
 | `lab_controller_state_age_seconds` | `controller` | seconds since each controller last wrote its state (normal: under ~60 s) |
 
 ## Alert rules
@@ -112,6 +115,8 @@ ipmitool-sensor timer would be a second in-band IPMI reader next to `fan-watchdo
 | ShelfDriveHot | hottest MD1200 drive 54C or more (`md1200-fan` v3.2 targets 50C and goes urgent at 53C; the drives trip at 60C) | 10 min |
 | ShelfEmmNotPrimary | the serial cable's EMM is not primary (fan commands are held) | 10 min |
 | RyujiSioHot | ryuji SIO Temp 1 82C or more (BMC warns at 80, critical at 85) | 10 min |
+| MakotoCpuHot | makoto's smoothed CPU 90C or more (the BMC warns at 91, TjMax 105) | 15 min |
+| MakotoFanEmergency | `makoto-fan` holds both fans at 100% for a sensor at its emergency limit | 5 min |
 | LabRoomHot | mementos inlet 31C or more (23-25C with the AC working, 26-28C while it was faulty) | 30 min |
 
 A host that is down is left to the stack's own `TargetDown` rule; silence that in Alertmanager when a box is off on
@@ -122,7 +127,7 @@ hosts' Ubuntu packages enable. A test unit with another name still alerts.
 
 ## Install
 
-On mementos and ryuji:
+On mementos, ryuji and makoto:
 
 ```sh
 sudo install -m 755 monitoring/lab-thermal-textfile /usr/local/bin/lab-thermal-textfile

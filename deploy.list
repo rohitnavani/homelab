@@ -22,7 +22,7 @@ scripts/newvm                                   /usr/local/bin/newvm            
 scripts/drivecheck                              /usr/local/bin/drivecheck             akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
 scripts/drive-selftest                          /usr/local/bin/drive-selftest         akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke
 fan-control/monitoring/thermal-log              /usr/local/sbin/thermal-log           akechi futaba makoto mementos morgana ryuji sojiro tinynas tinypc yusuke restart=thermal-log.service
-fan-control/monitoring/lab-thermal-textfile     /usr/local/bin/lab-thermal-textfile   mementos ryuji restart=lab-thermal-textfile.service
+fan-control/monitoring/lab-thermal-textfile     /usr/local/bin/lab-thermal-textfile   makoto mementos ryuji restart=lab-thermal-textfile.service
 scripts/zfs_metrics                             /usr/local/bin/zfs_metrics            makoto mementos ryuji sojiro tinynas
 scripts/zfs-snapshot                            /usr/local/sbin/zfs-snapshot          makoto mementos ryuji sojiro
 scripts/zfs-retention                           /usr/local/sbin/zfs-retention         makoto mementos ryuji sojiro

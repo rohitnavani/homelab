@@ -1,5 +1,5 @@
 [Unit]
-Description=Publish fan controller state (room, shelf, R720, ryuji) as node_exporter textfile metrics
+Description=Publish fan controller state (room, shelf, R720, ryuji, makoto) as node_exporter textfile metrics
 After=local-fs.target
 
 [Service]
