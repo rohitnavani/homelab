@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gbt-fan-offset: read or set the Gigabyte/Avocent BMC "PWM offset" (ryuji 10.0.0.118, sojiro 10.0.0.14) through
+# gbt-fan-offset: read or set the Gigabyte/Avocent BMC "PWM offset" (ryuji 10.0.0.118, sojiro: sojiro-bmc-ip) through
 # the same web calls its Utilities page makes. Usage: gbt-fan-offset.py <bmc ip> get | set <offset -127..127>
 # The password is read from a 0600 file; nothing is printed or passed on a command line.
 import os, re, ssl, sys, urllib.parse, urllib.request, http.cookiejar

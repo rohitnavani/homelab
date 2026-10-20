@@ -1,0 +1,21 @@
+# lab-bmc-ip (2026-10-20, sojiro): at boot, record the BMC's address from `ipmitool lan print 1` in /var/lib/lab/bmc-ip
+# (sojiro-bmc-ip checks it by MAC and ARP first). The BMC is on DHCP and can get its lease minutes after the host,
+# or have its cable out: 10 tries, 30 s apart, then the unit stays failed until the next boot or a manual start.
+# A retry does not hold up boot: the first failure ends the start job and the restarts run on their own.
+[Unit]
+Description=Record sojiro's BMC address (sojiro-bmc-ip)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sojiro-bmc-ip
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

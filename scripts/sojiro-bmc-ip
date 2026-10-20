@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+# sojiro-bmc-ip (2026-10-20): the address of sojiro's BMC, for the scripts that call its web UI (gbt-fan-offset.py).
+# The BMC is on DHCP with no reservation (on purpose), so its address is never hard-coded: this reads it from the BMC
+# with `ipmitool lan print 1` (in band; sojiro has no fan controller, so the extra read is safe) and prints it only if
+#   - the MAC that lan print reports is the BMC's (EXPECT_MAC; change it if the board is replaced), and
+#   - the address answers a ping from this host, with that same MAC in a fresh ARP entry.
+# A BMC keeps its old lease while its cable is out, so the address may belong to another device by then, and
+# gbt-fan-offset.py skips TLS checks: the ARP check is what keeps the BMC password going only to the BMC.
+# On success: "IP MAC epoch" to CACHE (0600, directory 0700, swapped in with a rename) and the IP on stdout.
+# Otherwise: the reason on stderr, nothing written, exit 1.
+#   sojiro-bmc-ip            look it up now (root)
+#   sojiro-bmc-ip --cached   the last good lookup, from CACHE only (exit 1 if none): to show, not for BMC calls
+# lab-bmc-ip.service runs it at boot, retrying for about 5 minutes (the BMC can get its lease after the host is up).
+import ipaddress, os, re, subprocess, sys, tempfile, time
+
+EXPECT_MAC = '1c:1b:0d:e8:f9:05'
+CHANNEL = '1'
+CACHE = '/var/lib/lab/bmc-ip'
+
+
+def fail(msg):
+    sys.exit(f'sojiro-bmc-ip: {msg}')
+
+
+def run(*cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        fail(f'{" ".join(cmd)}: {e}')
+
+
+def from_cache():
+    try:
+        with open(CACHE) as f:
+            ip, mac, epoch = f.read().split()
+        ipaddress.IPv4Address(ip)
+        int(epoch)
+    except (OSError, ValueError) as e:
+        fail(f'no usable {CACHE} ({e})')
+    if mac != EXPECT_MAC:
+        fail(f'{CACHE} holds MAC {mac}, not the BMC ({EXPECT_MAC})')
+    return ip
+
+
+def lookup():
+    r = run('ipmitool', 'lan', 'print', CHANNEL)
+    if r.returncode != 0:
+        fail(f'ipmitool lan print {CHANNEL} failed (rc {r.returncode}): {r.stderr.strip()[-200:]}')
+    f = {}
+    for line in r.stdout.splitlines():
+        k, _, v = line.partition(':')
+        f.setdefault(k.strip(), v.strip())
+    ip, mac = f.get('IP Address', ''), f.get('MAC Address', '').lower()
+    if mac != EXPECT_MAC:
+        fail(f'lan print reports MAC {mac or "none"}, not the BMC ({EXPECT_MAC}); {ip or "its address"} not used')
+    try:
+        a = ipaddress.IPv4Address(ip)
+    except ValueError:
+        fail(f'lan print reports no usable address ({ip!r})')
+    if a.is_unspecified or a.is_loopback or a.is_link_local or a.is_multicast or a.is_reserved:
+        fail(f'lan print reports {ip} (no lease yet?)')
+    # on the wire: a directly attached network, an answer to ping, and the BMC's MAC in a fresh ARP entry
+    r = run('ip', '-o', 'route', 'get', ip)
+    m = re.search(r'\bdev (\S+)', r.stdout)
+    if r.returncode != 0 or not m or ' via ' in r.stdout or r.stdout.startswith('local '):
+        fail(f'{ip} is not on a network this host is attached to: {(r.stdout or r.stderr).strip()}')
+    dev = m.group(1)
+    run('ip', 'neigh', 'del', ip, 'dev', dev)  # forget any cached entry: the MAC below comes from a new ARP reply
+    if not any(run('ping', '-n', '-q', '-c', '1', '-W', '1', ip).returncode == 0 for _ in range(3)):
+        fail(f'{ip} does not answer ping (BMC cable out, or no lease yet?)')
+    m = re.search(r'\blladdr (\S+)', run('ip', 'neigh', 'show', ip, 'dev', dev).stdout)
+    got = m.group(1).lower() if m else 'no ARP entry'
+    if got != EXPECT_MAC:
+        fail(f'{ip} answers from {got}, not the BMC ({EXPECT_MAC}): another device has its old address?')
+    return ip, mac
+
+
+def save(ip, mac):
+    d = os.path.dirname(CACHE)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix='.bmc-ip.')  # created 0600
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(f'{ip} {mac} {int(time.time())}\n')
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, CACHE)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+args = sys.argv[1:]
+if args not in ([], ['--cached']):
+    sys.exit('usage: sojiro-bmc-ip [--cached]')
+if os.geteuid() != 0:
+    fail('run it as root')
+if args:
+    print(from_cache())
+else:
+    ip, mac = lookup()
+    try:
+        save(ip, mac)
+    except OSError as e:  # the address is still good for this caller
+        print(f'sojiro-bmc-ip: {ip} checked, but {CACHE} was not written: {e}', file=sys.stderr)
+    print(ip)

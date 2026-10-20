@@ -32,6 +32,8 @@ scripts/root_disk_metrics                       /usr/local/bin/root_disk_metrics
 scripts/backup-mementos                         /usr/local/sbin/backup-mementos       tinynas
 scripts/prune-replica                           /usr/local/bin/prune-replica          sojiro tinynas:/usr/local/sbin/prune-replica
 scripts/replicate                               /usr/local/bin/replicate              sojiro
+scripts/sojiro-bmc-ip                           /usr/local/sbin/sojiro-bmc-ip         sojiro
+scripts/lab-bmc-ip.service                      /etc/systemd/system/lab-bmc-ip.service sojiro
 scripts/futaba-backup                           /usr/local/bin/futaba-backup          futaba
 scripts/resume-uptime                           /usr/local/bin/resume-uptime          futaba
 scripts/lab-sync                                /usr/local/sbin/lab-sync              akechi futaba makoto mementos morgana ryuji tinynas tinypc yusuke

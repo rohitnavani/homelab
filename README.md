@@ -141,6 +141,7 @@ To change a script: edit in `/dataPool/homelab`, commit, `lab-scripts push`. Hos
     ├── drivecheck.cron         # /etc/cron.d/drivecheck: check 00:00, short self-tests Sat 22:00, long first Mon 08:00
     │                           #   (tinynas runs the same jobs from root's crontab)
     ├── futaba-backup           # Nightly copy of futaba's service configs to labShare, secrets redacted (futaba)
+    ├── lab-bmc-ip.service      # At boot: sojiro-bmc-ip until the BMC answers, 10 tries 30 s apart (sojiro)
     ├── lab-scripts             # Compares and installs the hosts' copies, sets hosts up, pushes to GitHub (from bin/)
     ├── lab-sync                # Keeps a host's [copies] on the committed version every 5 minutes (all hosts but sojiro)
     ├── nextcloud-update        # Nextcloud AIO file permissions and rescan; skips if the data mount is missing (mementos)
@@ -151,6 +152,8 @@ To change a script: edit in `/dataPool/homelab`, commit, `lab-scripts push`. Hos
     ├── retention               # GFS snapshot pruning (tinynas)
     ├── root_disk_metrics       # Root filesystem usage for Prometheus (tinynas)
     ├── snapshot                # Hourly ZFS snapshots (tinynas)
+    ├── sojiro-bmc-ip           # sojiro's BMC address (DHCP) from ipmitool lan print, checked by MAC and ARP, for the
+    │                           #   scripts that call its web UI (sojiro; sbin)
     ├── zfs-retention           # GFS pruning for /etc/zfs-snapshot-targets (mementos, ryuji, sojiro, makoto; sbin)
     ├── zfs-snapshot            # Hourly snapshots of /etc/zfs-snapshot-targets (same hosts; /usr/local/sbin)
     ├── zfs_metrics             # ZFS pool and I/O metrics for Prometheus (all five ZFS hosts)

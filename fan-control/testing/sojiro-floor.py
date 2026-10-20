@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-# sojiro-floor (2026-10-14): idle step test of sojiro's BMC fan offset (Gigabyte MB10-series board, Avocent MergePoint 8.65 at
-# 10.0.0.14; the same "PWM offset" as ryuji, set through the BMC's web calls by gbt-fan-offset.py). sojiro has no fan
+# sojiro-floor (2026-10-14): idle step test of sojiro's BMC fan offset (Gigabyte MB10-series board, Avocent MergePoint 8.65 on
+# DHCP; the same "PWM offset" as ryuji, set through the BMC's web calls by gbt-fan-offset.py). sojiro has no fan
 # controller: the BMC's own curves run the fans and the offset shifts them (on ryuji a negative offset moved only the CPU
 # fans at idle; the curves still ramp with temperature). Its noise is the CPU fan (3,400 rpm at idle at offset 0).
 # usage (root, on sojiro): sojiro-floor.py <label> [plan]   CSV /var/tmp/sojiro-floor-<label>.csv (every 20 s)
-# Safety: back to offset 0 at once and exit if SYS_FAN1 reads under 600 rpm or not at all (it idles at 600, its BMC
-# lower-critical), CPU0_FAN under 1,000 rpm, CPU0_TEMP 85C or more (Xeon D-1521: coretemp high 92, crit 102) or
+# Safety: back to production (-80) at once and exit if SYS_FAN1 reads under 600 rpm or not at all (it idles at 600, its
+# BMC lower-critical), CPU0_FAN under 1,000 rpm, CPU0_TEMP 85C or more (Xeon D-1521: coretemp high 92, crit 102) or
 # MB_TEMP1 75C or more (it idles at 65-67C; BMC thresholds 55/60 are wrong for this board and never acted on).
-# Any BMC set that fails exits (no retries). The end of the plan and any stop leave the offset at 0 (the BMC default);
-# ExecStopPost sojiro-floor-restore.sh does the same if the unit is stopped. The first set switches the BMC to user mode.
+# Any BMC set that fails exits (no retries). The end of the plan and any stop leave the offset at -80 (production since
+# 2026-10-15); ExecStopPost sojiro-floor-restore.sh does the same if the unit is stopped. The first set switches the BMC
+# to user mode.
+# 2026-10-20: the BMC's address comes from sojiro-bmc-ip at each start (lan print, checked by MAC and ARP); without a
+# checked address it makes no BMC call and exits 1. A failed BMC login leaves /run/sojiro-bmc-login-failed, which stops
+# every later call here and in the restore until it is removed by hand (the rule: stop after two failed logins).
 import os, re, subprocess, sys, time
 
 LABEL = sys.argv[1] if len(sys.argv) > 1 else 'run'
@@ -16,10 +20,13 @@ PLANS = {
     'steps': [('o0_a', 0, 6), ('o31', -31, 6), ('o61', -61, 6), ('o80', -80, 6), ('o100', -100, 6), ('o127', -127, 6),
               ('o0_b', 0, 6)],
     'dry': [('d0', 0, 0.5), ('d61', -61, 0.5), ('d0b', 0, 0.5)],
+    'proof': [('o100', -100, 5)],  # night-safe (quieter than production only): stop the unit early to prove the restore
 }
 PLAN = PLANS[sys.argv[2] if len(sys.argv) > 2 else 'steps']
 CSV = f'/var/tmp/sojiro-floor-{LABEL}.csv'
-TOOL = ['python3', '-W', 'ignore', '/var/tmp/gbt-fan-offset.py', '10.0.0.14']
+PROD = -80
+BMC_IP = '/usr/local/sbin/sojiro-bmc-ip'
+LOGIN_FAILED = '/run/sojiro-bmc-login-failed'
 ENV = dict(os.environ, BMC_PWFILE='/root/.bmc-pass', BMC_USER='root')
 STOP = {'cpu_fan_min': 1000, 'sys_fan_min': 600, 'cpu': 85, 'mb': 75}
 
@@ -35,7 +42,13 @@ def note(m):
 
 
 def set_offset(o):
+    if os.path.exists(LOGIN_FAILED):
+        note(f'BMC set {o} skipped: a login failed earlier ({LOGIN_FAILED})')
+        return False
     r = sh(*TOOL, 'set', str(o), env=ENV)
+    if 'login failed' in r.stderr:
+        with open(LOGIN_FAILED, 'w') as f:
+            f.write(f'{time.strftime("%F %T")} sojiro-floor: {r.stderr.strip()[-160:]}\n')
     got = re.search(r'now (-?\d+)', r.stdout)
     if r.returncode != 0 or not got or int(got.group(1)) != o:
         note(f'BMC set {o} failed (rc {r.returncode}: {r.stdout.strip()[-120:]} {r.stderr.strip()[-160:]})')
@@ -69,7 +82,15 @@ cols = ['epoch', 'time', 'phase', 'phase_min', 'offset', 'cpu', 'pkg', 'mb', 'cp
 if not os.path.exists(CSV):
     with open(CSV, 'w') as f:
         f.write(','.join(cols) + '\n')
-note(f'start {LABEL} ({sum(m for _, _, m in PLAN)} min)')
+if os.path.exists(LOGIN_FAILED):
+    note(f'refused: a BMC login failed earlier ({LOGIN_FAILED}); check /root/.bmc-pass, then remove it')
+    sys.exit(1)
+r = sh(BMC_IP)
+if r.returncode != 0 or not re.fullmatch(r'\d+\.\d+\.\d+\.\d+', r.stdout.strip()):
+    note(f'refused, no BMC call made: no checked BMC address ({r.stderr.strip()[-200:]})')
+    sys.exit(1)
+TOOL = ['python3', '-W', 'ignore', '/var/tmp/gbt-fan-offset.py', r.stdout.strip()]
+note(f'start {LABEL} ({sum(m for _, _, m in PLAN)} min), BMC at {TOOL[-1]}')
 ok = True
 try:
     for label, off, mins in PLAN:
@@ -95,11 +116,11 @@ try:
             if (s['mb'] or 0) >= STOP['mb']:
                 bad.append(f'MB_TEMP1 {s["mb"]}')
             if bad and off != 0:
-                note(f'{label}: STOP ({", ".join(bad)}): back to 0')
+                note(f'{label}: STOP ({", ".join(bad)}): back to {PROD}')
                 ok = False
                 break
         if not ok:
             break
     note('done' if ok else 'ended early')
 finally:
-    set_offset(0)
+    set_offset(PROD)
