@@ -1,0 +1,12 @@
+# 10-20 from 13:15 (after the new test session's mirror-mic noise blocks, 08:00-13:15): full load (8 workers, nice
+# 19 matrixprod) at fixed fans, FAN4 A/B at FAN1 100%; then 4 workers at two FAN1 levels. Load off 95C, abort 98C,
+# Card Side 57C. Revised 07:10 10-20: FAN4 kept at 50-80% under load (the case model puts Card Side near 63C at FAN4
+# 30% and full load, which would end the run) and FAN1 under 80% dropped at full load (the CPU model reaches the 95C
+# load-off there). Then day1b.sched runs the same loads with makoto-fan in control.
+f8_100 100 100 540 8
+f8_100f4 100 50 420 8
+f8_80 80 80 300 8
+cool1 40 40 300 0
+w4_100 100 60 420 4
+w4_60 60 60 420 4
+cool2 30 30 300 0

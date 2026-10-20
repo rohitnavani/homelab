@@ -1,0 +1,13 @@
+[Unit]
+Description=makoto fan control (FAN1/FAN4 through the BMC): quiet at idle, more air only as the temperatures need
+After=local-fs.target
+
+[Service]
+ExecStart=/usr/bin/python3 -W ignore /usr/local/sbin/makoto-fan
+# any stop or crash hands the fans back to the BMC's own curve
+ExecStopPost=/usr/bin/ipmitool raw 0x3a 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

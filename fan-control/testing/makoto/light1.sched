@@ -1,0 +1,17 @@
+# Revised 23:09: FAN4 is the case fan that sets the internal air (idle: FAN4 1,500 -> 2,300 rpm = -3..-6C on every
+# sensor; FAN1 1,800 -> 3,600 only -1..-3C). Idle with FAN1 at its floor and FAN4 stepped down (Card Side <= 50C?),
+# then 1 and 2 workers (nice 19 matrixprod) with FAN4 20% and FAN1 stepped down; FAN4 A/B/A at 2 workers.
+# Nothing above the BMC idle level (30%): quiet at night.
+i_f4_20 1 20 720 0
+i_f4_15 1 15 720 0
+i_f4_10 1 10 600 0
+l1_f30 30 20 600 1
+l1_f20 20 20 420 1
+l1_f10 10 20 420 1
+l1_f1 1 20 420 1
+l2_f30 30 20 540 2
+l2_f20 20 20 420 2
+l2_f20f4lo 20 1 420 2
+l2_f20f4hi 20 30 420 2
+l2_f10 10 20 420 2
+cool 1 20 600 0

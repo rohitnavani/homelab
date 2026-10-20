@@ -1,0 +1,8 @@
+# 10-20 after day1 (~14:00): the same loads with makoto-fan (the trial unit) holding the fans: settle, 2, 4 and 8
+# workers (nice 19 matrixprod), then the unwind. Load off 95C, abort 98C, Card Side 57C; the run ends if makoto-fan
+# stops, and makoto-fan keeps the fans afterwards.
+c_idle ctl ctl 300 0
+c_w2 ctl ctl 600 2
+c_w4 ctl ctl 600 4
+c_w8 ctl ctl 600 8
+c_unwind ctl ctl 900 0

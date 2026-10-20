@@ -1,0 +1,8 @@
+# 2 workers (nice 19 matrixprod, ~20 W): which fan cools the CPU. A/B/A on FAN1 (30 -> 1 -> 30) with FAN4 at 30,
+# then on FAN4 (30 -> 15 -> 30) with FAN1 at 30. Nothing above the BMC idle level (30%).
+p_base 30 30 600 2
+p_f1lo 1 30 480 2
+p_base2 30 30 480 2
+p_f4lo 30 15 480 2
+p_base3 30 30 480 2
+cool 30 30 300 0

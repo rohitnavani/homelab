@@ -2,13 +2,14 @@
 
 Quiet fans for the rack without hurting the hardware: as quiet as possible at idle and light load, a medium level
 under heavy work, loud only at full load or when something is genuinely hot. Built and tested 2026-10-04 to
-2026-10-06; `git log -p fan-control/` shows each version and why it changed.
+2026-10-06 (`makoto-fan` 2026-10-19/20); `git log -p fan-control/` shows each version and why it changed.
 
 | Controller | Runs on | Controls | Installs to |
 |---|---|---|---|
 | `md1200-fan` | mementos | MD1200 shelf fans, via the EMM serial console (`_shutup <pct>` over an FTDI adapter, `/dev/ttyUSB0`, cable on the TOP EMM) | `/usr/local/bin/md1200-fan` |
 | `fan-watchdog` | mementos | Dell R720xd fans, via `ipmitool raw 0x30 0x30` | `/usr/local/sbin/fan-watchdog` |
 | `ryuji-fan-guard` | ryuji | Gigabyte MD70-HB0 BMC (Avocent) fan offset, via the BMC's own web API | `/usr/local/sbin/ryuji-fan-guard` |
+| `makoto-fan` | makoto | its CPU heatsink fan and case fan, via the ASRock Rack BMC (`ipmitool raw 0x3a 0x01`) | `/usr/local/sbin/makoto-fan` |
 
 `monitoring/` puts the controllers' readings into Prometheus, with a Grafana dashboard and alert rules (see
 `monitoring/README.md`).
@@ -19,9 +20,9 @@ hardware" before running any of it anywhere else.
 
 ## Hardware
 
-Recorded 2026-10-06 (read with `dmidecode`, `lscpu`, `lspci`, `lsusb`, `ipmitool mc info`, `sg_inq`, `lsblk`).
-Both controller hosts run Ubuntu 24.04.5 LTS (kernel 6.8), Python 3.12, ipmitool 1.8.19, smartmontools 7.4,
-sg3-utils 1.46, python3-serial 3.5.
+Recorded 2026-10-06, makoto 2026-10-19 (read with `dmidecode`, `lscpu`, `lspci`, `lsusb`, `ipmitool mc info`,
+`sg_inq`, `lsblk`). The controller hosts run Ubuntu 24.04.5 LTS (kernel 6.8), Python 3.12, ipmitool 1.8.19,
+smartmontools 7.4, sg3-utils 1.46, python3-serial 3.5.
 
 ### mementos: Dell PowerEdge R720xd (runs `fan-watchdog` and `md1200-fan`)
 
@@ -64,6 +65,18 @@ sg3-utils 1.46, python3-serial 3.5.
 | Fans | `CPU0_FAN`, `CPU1_FAN`, `SYS_FAN1`-`SYS_FAN4` (`SYS_FAN5` not connected). The BMC runs its own curve; the only setting it exposes is a PWM offset (-127 to 127) added to that curve |
 | Limiting sensors | At idle `SIO Temp 1` (BMC warns at 80C, critical 85C), which follows system-fan airflow more than CPU load; under load the CPUs (CPU1 runs ~10C hotter than CPU0 at the same 150 W: 74 vs 63C at full load and -80) |
 
+### makoto: Xeon D-1622 board with an ASRock Rack BMC (runs `makoto-fan`)
+
+| Part | What is installed |
+|---|---|
+| Server | Small desktop chassis, external 250 W power brick (no PSU fan). BIOS L0.07 (2020-11-16) |
+| BMC | ASRock Rack (IPMI manufacturer 49622, product 0x0202), firmware 0.06. No fan settings in the BIOS or web UI; it takes ASRock Rack's older OEM commands (`raw 0x3a 0x01` / `0x02`); the newer AST2500 set (`0x3a 0xd6`-`0xda`) answers "invalid command" |
+| CPU | Intel Xeon D-1622 (4 cores / 8 threads, 2.6 GHz, 3.2 GHz turbo), RAPL PL1 40 W / PL2 48 W, TjMax 105C (coretemp high 83C). The BMC warns at 91C |
+| Memory | 2x 16 GB DDR4 (Kingston 9965754-008, rated 2666, runs at 2133), BMC sensors `DDR4_A Temp` / `DDR4_B Temp` (warn 84C) |
+| Drives | 3x Crucial MX500 1 TB SATA SSD (ZFS `backupPool` raidz1), 1x Crucial P310 500 GB NVMe (boot; warns at 83C) |
+| Fans | `FAN1` (CPU heatsink) and `FAN4` (case) on the board's headers; `FAN2`/`FAN3` empty. Neither stalls down to 1% duty |
+| Other sensors | `MB Temp` (warn 65C) and `Card Side Temp` (warn 60C), the board sensors the case fan has to keep cool at idle |
+
 ### The rack and the room
 
 - One rack in a living room, bottom to top: the MD1200, mementos, ryuji, then other gear; a CyberPower PDU20SW8FNET
@@ -94,6 +107,11 @@ thresholds from the hardware above. What carries over and what to change:
   8.44). It drives the same web calls as the BMC's Utilities page, which need legacy TLS. The BMC address
   (`10.0.0.118`), the sensor names (`SIO Temp 1`, `CPUn_TEMP`, `VR_*`, `DIMM*`) and every threshold are specific
   to this board and these CPUs. Profile the box first (`tools/ryuji-profile.py`) and set the thresholds from that.
+- **makoto-fan** needs an ASRock Rack BMC that takes the older `raw 0x3a 0x01` fan command (tested: firmware 0.06;
+  `raw 0x3a 0x02` must answer 8 bytes; newer AST2500 firmware uses `0x3a 0xd6`-`0xda` instead). Map bytes to
+  headers one at a time below the BMC's own duty (`testing/makoto/map-test.sh`) and check that 1% does not stall
+  your fans. The sensor names (`Card Side Temp`, `MB Temp`, `DDR4_A/B Temp`), the curves, `CARD_TARGET` and the
+  CPU feedforward are fitted to this board, a 40 W Xeon D under one heatsink fan, and this case.
 - For any of them: run the offline tests, then deploy behind a watch that rolls back by itself
   (`testing/deploy-examples/`), as `METHODOLOGY.md` describes.
 
@@ -198,6 +216,28 @@ thresholds from the hardware above. What carries over and what to change:
   are tuned for them); see "Hardware". The package-power lines (220 / 200 W) depend on this CPU pair and on running
   one power supply.
 
+## makoto-fan (makoto)
+
+- Two fans through the BMC's OEM command (ASRock Rack FAQ id 38): `ipmitool raw 0x3a 0x01 B1..B8`, one byte per
+  header, 0 = the BMC's own curve, 1-100 = a fixed duty; `raw 0x3a 0x02` reads it back. Byte 1 = `FAN1`, byte 4 =
+  `FAN4` (the others are empty headers). A fixed duty, not a floor: the BMC does not step in, even at 1%.
+- `FAN1` (CPU heatsink) follows the CPU package temperature, smoothed so a few seconds of load do not rev it (rises
+  with a 20 s time constant, falls with 60 s), with a fast path on the raw reading from 88C. `FAN4` (case) holds
+  `Card Side Temp` at 50C (the BMC warns at 60) with a slow PI loop plus more air as soon as the CPU works, since
+  the case takes 15-30 min to show it; DIMM, board, NVMe and SSD curves are backstops above it.
+- Duties rise at once and fall only to the highest demand of the last 2 min, at 1% per 5 s; changes under 3% are
+  not written. Any sensor at its emergency limit (CPU 95, DIMM 80, board 62, card side 58, NVMe 80, SSD 68C) sends
+  both fans to 100% until all are 5C below.
+- Fails to the BMC: on exit, a crash, an unreadable CPU sensor or 5 failed writes the fans go back to the BMC curve
+  (the unit's `ExecStopPost` does the same). Without a fresh BMC reading for 3 min `FAN4` runs at least 50%. The
+  setting is read back every 60 s and written again if the BMC dropped it.
+- State: `/run/makoto-fan.state` (JSON, every 2 s), published by `monitoring/lab-thermal-textfile` as `lab_makoto_*`.
+
+| Fan | 1% | 10% | 20% | 30% (BMC idle) | 40% | BMC curve, highest seen |
+|---|---|---|---|---|---|---|
+| FAN1 rpm | 1,800 | 2,300 | 3,000 | 3,600 | 4,100 | 7,000 |
+| FAN4 rpm | 1,500 | 1,600 | 1,900 | 2,300 | 2,700 | 4,500 |
+
 ## Install or update
 
 ```sh
@@ -220,6 +260,7 @@ python3 -I md1200-fan/tests/sweep_md1200_scenarios.py <older md1200-fan> md1200-
 fan-watchdog/tests/run-tests.sh                                                        # about 2 minutes
 python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 50 scenarios (v2.11)
 python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)
+python3 -I makoto-fan/tests/test_makoto_fan.py                                             # 12 scenarios (v1)
 ```
 
 ## Tools
@@ -249,7 +290,7 @@ python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-g
 `METHODOLOGY.md` covers how the 2026-10-05/06 data was gathered, what went wrong (mainly a room that cycled 24-28C
 while the AC struggled) and how to run the tests again: the shelf and mementos with the AC working, ryuji after the
 E5-2696 v4 upgrade, noise with a microphone, and tinynas after its cage fan check. `testing/` has the scripts as they
-ran (see `testing/README.md`).
+ran (see `testing/README.md`; makoto's, 2026-10-19/20, in `testing/makoto/`).
 
 ## Results, 2026-10-06 (room 24-28C)
 
@@ -483,3 +524,27 @@ Memory bandwidth (stress-ng stream, 44 copies): 59.1 GB/s read + 39.4 GB/s write
 DDR4-2133). openssl 3.0.13 on 88 processes: AES-256-GCM 119 GB/s (one thread 3.45), SHA-256 16.2 GB/s, RSA-2048
 57,961 signs/s. sysbench cpu: 487 events/s on one thread, 24,598 on 88. The standard run for the comparison table
 (`testing/bench-7zip.sh`'s procedure): 4,991 / 113,283 / 174,086 on ryuji, 4,152 / 68,217 / 103,448 on mementos.
+
+## Results, 2026-10-19/20: makoto (room ~23C)
+
+- Fans: byte 1 = FAN1 (CPU heatsink), byte 4 = FAN4 (case); a fixed duty the BMC never overrides, no stall at 1%,
+  no BMC events from the mapping.
+- Which fan cools what: at idle FAN4 moves every sensor (2,300 -> 1,500 rpm: +3-6C); under 2 workers (~21 W) FAN1
+  3,500 -> 1,700 rpm took the CPU from 82-84 to 89-91C within a minute.
+- Idle needs case air: FAN4 at 20-25% holds Card Side Temp at 50C. FAN1 can idle at 1%, but makoto's own bursts
+  (Claude sessions, mirror-voice) took a fixed 1% to 85-94C, so it needs the closed loop.
+- The CPU cooler is marginal: 2 workers (~21 W) ran 82-84C at 3,500 / 2,300 rpm, and a heavy mirror-voice job
+  83-88C even at the BMC's 6,900 / 4,500 (case still warm from a test). Fitted: CPU over case air ~ (0.80 + 1.96 /
+  FAN1 krpm) C per package watt. Clean the heatsink and fan.
+- Noise: the mirror's Pi mic, next to makoto, cannot hear it at normal speeds (broadband flat from FAN1 2,000 to
+  7,000 rpm); both fans near the BMC's top add 1.2-1.4 dB(A).
+- BMC event log: one CPU1 91C warning (a FAN1-at-1% test under other load), cleared 30 s later.
+
+v1 as a trial (unit `makoto-fan-test`, 2026-10-20 00:17-06:50, no restarts, no failed writes):
+
+| Load | FAN1 | FAN4 | CPU | Card Side |
+|---|---|---|---|---|
+| Idle, ~3 W | 1%, 1,700 rpm | 21-30%, 1,900-2,300 rpm | 55-57C | 50-51C |
+| Bursts of ~11 W, 1-3 min | up to 28%, 3,400 rpm | up to 41%, 2,700 rpm | 69-74C | 50-51C |
+| mirror-voice's heavy job, ~21 W | 47-54%, 4,600-4,900 rpm | 53-63%, 3,300-3,500 rpm | 76C (smoothed) | 50-51C |
+| The BMC's own curve, idle | 30%, 3,600 rpm | 30%, 2,300 rpm | | |

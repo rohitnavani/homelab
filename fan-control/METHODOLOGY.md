@@ -383,6 +383,35 @@ speed about 1C. If one does, a drive-temperature controller with a BIOS hand-bac
 - `testing/ryuji-maxbench.sh`: what the E5-2696 v4s can do (7-Zip 1-88 threads, 15 min sustained, Full Speed A/B,
   memory, crypto). Cooling does not limit them: they sit at their 2.8 GHz all-core turbo at any offset.
 
+### Done 2026-10-19/20: makoto (the Xeon D-1622 box), fan mapping and makoto-fan
+
+- **Fan command check first.** `raw 0x3a 0x02` (8 bytes) answered, the AST2500 set (`0x3a 0xd6`-`0xda`) did not, so
+  the older ASRock Rack `raw 0x3a 0x01` set (ASRock Rack FAQ id 38) was the one to use. Map one byte at a time at a
+  duty below the BMC's current level, with a trap that writes all zeros (BMC auto) on any exit
+  (`testing/makoto/map-test.sh`): byte 1 = FAN1, byte 4 = FAN4; it is a fixed duty, not a floor.
+- **Duty -> rpm in short steps** (`fanstep.py` schedules `map-f1`/`map-f4`, 10-12 s per step, the other fan on auto,
+  BMC auto for 15 s between FAN1 steps because the CPU was busy): neither fan stalls at 1%, no SEL entry.
+- **Which fan cools what needs load, not idle.** At idle (3-4 W package) FAN4, the case fan, moves every sensor more
+  than FAN1, because the case air sets the CPU's temperature when the CPU makes little heat. Under 2 workers (~21 W)
+  FAN1 3,500 -> 1,700 rpm took the CPU from 82-84 to 89-91C within a minute (time constant ~20-30 s): FAN1 is the
+  heatsink fan. A single A/B at idle would have picked the wrong fan.
+- **The case is slow.** Card Side Temp and the DIMMs take 15-30 min to settle after a FAN4 change; 12 min idle steps
+  were too short. Use 20-30 min holds, or a closed loop.
+- **makoto is not idle.** It runs the Claude sessions and mirror-voice: their bursts (a service restart, a model run)
+  reach 20-27 W for seconds to minutes, and twice ended a fixed-fan test at its temperature stop (FAN1 at its floor).
+  Fit steady states against RAPL package power instead of assuming a clean idle (`fit-steady.py`), and keep test stops
+  on the CPU at 90+ so a burst does not end the run.
+- **The mirror mic does not hear makoto** at normal speeds (Pi mic on top of the mirror next to it, read from
+  mirror-voice's AEC debug dump, levels only): broadband flat with FAN1 2,000-7,000 rpm; +1.2-1.4 dB(A) with both
+  fans near the BMC's maximum. So makoto's tuning is thermal-first, by rpm, with no revving.
+- **Controller loop:** offline harness with a case-air plant model fitted to these runs (`makoto-fan/tests/`), a PI
+  gain sweep across case time constants of 10-30 min, then a trial unit (`makoto-fan-test`) behind a watch
+  (`testing/makoto/fan-watch.sh`) that stops it, and so hands the fans to the BMC, on a crash loop, failed writes,
+  a stale state file or heat the controller does not answer.
+- **Trial, then load with the controller in charge.** v1 ran unattended overnight as `makoto-fan-test`; the
+  full-load map with fixed fans (`day1.sched`) is followed by the same loads with makoto-fan holding the fans
+  (`fanstep.py` `ctl` lines, `day1b.sched`), so its top end is checked before anyone else loads the box.
+
 ## 9. Checklists
 
 **Before:** room flat for 2-3 h (ac-verify); loggers writing; stop rules in the scripts; fallbacks tested; idle

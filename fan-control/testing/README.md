@@ -1,12 +1,12 @@
-# Test tools (2026-10-05 to 10-16)
+# Test tools (2026-10-05 to 10-20)
 
 The scripts used to measure the rack and validate the fan controllers, kept as they ran so the tests can be
 repeated. How they fit together, and what to change for the repeat runs, is in `../METHODOLOGY.md`.
 
 ## Hardware these tools were written for
 
-The scripts assume this lab's machines by name, device path and sensor name. The three controlled boxes
-(mementos, the MD1200 shelf, ryuji) are described part by part in `../README.md` ("Hardware"); the rest of the
+The scripts assume this lab's machines by name, device path and sensor name. The controlled boxes
+(mementos, the MD1200 shelf, ryuji, makoto) are described part by part in `../README.md` ("Hardware"); the rest of the
 setup the tests use:
 
 | Host | Hardware | Role in the tests |
@@ -16,7 +16,7 @@ setup the tests use:
 | ryuji | Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 (since 2026-10-12; E5-2650 v3 before), 128 GB DDR4, one FSP800-20ERM supply | BMC fan offset profile and guard tests |
 | sojiro | Gigabyte MB10-series board, Xeon D-1521, 32 GB, Avocent BMC | room proxy; since 2026-10-15 its BMC fan offset sits at -80 (`sojiro-floor.py` step test; set by hand with `../ryuji-fan-guard/gbt-fan-offset.py`, the BMC keeps it; the BMC is on DHCP: `sudo sojiro-bmc-ip` gives its address), no fan controller |
 | tinynas | ASUS PRIME B650M-A AX II, Ryzen 5 9600X, 64 GB DDR5, 8x HGST HUS724040AL 4 TB, 2x Crucial P3 Plus 1 TB NVMe; Nuvoton NCT6799 super I/O (`nct6775` driver) | drive-cage fan test; NVMe and SYSTIN as room proxies |
-| makoto | ASRock Rack board, Xeon D-1622, 32 GB | runs the makoto-side tools, the room logger and the PDU poller |
+| makoto | ASRock Rack board, Xeon D-1622, 32 GB | runs the makoto-side tools, the room logger and the PDU poller; its own fan tests (`makoto/`, 2026-10-19/20) |
 | morgana (formerly arsene) | Dell Latitude 5420 (i5-1135G7), Realtek codec, internal mic | noise measurements (`mic-level-log.py`) |
 | Rack PDU | CyberPower PDU20SW8FNET (20 A, 8 switched outlets, fw 0.95) | rack current by SNMP v1 GET; bank load only, in 0.1 A. Never SET, never the web UI: both can switch the rack's power |
 
@@ -216,6 +216,24 @@ across hosts, with backstops. Plans, schedule and results: `../METHODOLOGY.md` (
 | `mic-r720-listen.sh` | mementos | the blind listening test: R720 fans at fixed levels in 90 s slots on a fixed timetable while Rohit listens from the couch and the kitchen (key kept out of sight); `listen-table.py <mic.csv> --start HH:MM:SS` joins the slots with the mic |
 | `mementos-thermal-model.py <run.csv> ...`, `fw-sim.py` | anywhere | a two-node model of mementos's hotter CPU fitted to `mementos-steps.py` runs (rmse 1.1C) and fan-watchdog's loop simulated on it, to compare down-step rules (2026-10-15: a faster unwind would cut burst noise, but mementos's real load never leaves 10%) |
 | `ryuji-maxbench.sh <label> [dry]` | ryuji | what the E5-2696 v4s can do: 7-Zip at 1-88 threads, 15 min sustained under the guard, 8 min at Full Speed fans, stress-ng stream and sysbench memory, openssl, sysbench cpu, with sensors and turbostat; restore `ryuji-maxbench-restore.sh` |
+
+## makoto (2026-10-19/20)
+
+Fan mapping, fixed-fan load steps and the `makoto-fan` trial, in `makoto/`. They ran from `~/lab-thermal-2026-10-19`
+on makoto with these scripts in `tools/`, the controller in `makoto-fan/` and output in `data/` (the shell scripts
+find the rest relative to themselves; the analysis scripts read `D` at their top). Results: `../README.md`
+("Results, 2026-10-19/20").
+
+| Script | Runs on | What it does |
+|---|---|---|
+| `mfan get\|auto\|set8 B1..B8` | makoto | reads the 8 OEM fan bytes, gives the fans back to the BMC, or sets them (each 0-100) |
+| `map-test.sh` | makoto | attended: which byte drives which header, one byte at a time below the BMC's own duty, all zeros on any exit |
+| `fanstep.py <schedule> <out.csv> [--load-off C] [--abort C] [--card-max C] [--stall note\|restore] [--check]` | makoto | fixed duties per step (`LABEL F1 F4 SECONDS [WORKERS]`, re-asserted every 10 s) with nice 19 stress-ng load; stops on CPU, DIMM, board, card-side and NVMe limits; BMC auto at the end. `@gate F1 F4 MAXWAIT` waits for 10 quiet minutes in mirror-voice's journal; a schedule of `LABEL ctl ctl SECONDS WORKERS` lines leaves the fans to makoto-fan and only adds load (no IPMI calls). Schedules: `map-f1`/`map-f4` (duty to rpm), `idle1`/`idle2`, `light1`/`light2` (`make-light.sh`), `day1` (full and 4-worker load), `day1b` (the same with makoto-fan) |
+| `run-step.sh`, `run-after.sh`, `run-at.sh` | makoto | a schedule as the unit `makoto-fanstep-NAME`: now, after the previous one, or at a time after stopping a unit; `ExecStopPost` is `restore.sh` (BMC auto unless another fanstep run or makoto-fan is driving the fans) |
+| `start-trial.sh [hours]`, `fan-watch.sh UNIT [hours]`, `after-day1.sh` | makoto | the controller trial as `makoto-fan-test` behind a watch that stops it (the BMC takes over) on a crash loop, failed writes, a stale state, heat it does not answer or a fan under 600 rpm; `after-day1.sh` puts the trial back after `day1` and runs `day1b` |
+| `msample.py` | makoto | every 2 s: package and core temperatures, NVMe, RAPL watts, busy threads, MHz, both fans' rpm and duty, the BMC temperatures (`msample.csv`) |
+| `miclevels.py` | makoto | levels only from mirror-voice's AEC debug dump (the mirror's Pi mic, next to makoto): 10 s clips, dB(A), octaves and tones, frames dropped while the Sonos plays |
+| `steps-table.py`, `step-transients.py`, `fit-steady.py`, `fan-tones.py`, `trial-summary.py FROM [min]` | anywhere | per-step medians with a fitted end value; step responses; a least-squares steady-state model against package watts; blade tones per step; the trial in blocks (duties, rpm, temperatures, how often a duty changed) |
 
 ## Deploying a controller
 

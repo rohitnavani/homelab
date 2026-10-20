@@ -1,0 +1,6 @@
+# idle (mirror-voice serve ~0.5 core, ~3 W package): auto, both fans at the floor, each fan alone at the floor, auto
+idle_auto1 0 0 600
+idle_floor 1 1 1200
+idle_f1low 1 30 900
+idle_f4low 30 1 900
+idle_auto2 0 0 600

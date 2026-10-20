@@ -1,0 +1,4 @@
+# idle, which fan cools what (rerun of idle1's single-fan phases; idle1 aborted at a 85C load spike at 22:50)
+idle_f4low 30 1 900
+idle_f1low 1 30 900
+idle_auto3 0 0 300

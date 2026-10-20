@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+# makoto-fan v1 (DRAFT, curves to be set from the 2026-10-19/20 measurements): quiet fan control for makoto.
+# A Xeon D-1622 board (4C/8T, 40 W) with an ASRock Rack BMC (firmware 0.06); fans on its FAN1 and FAN4 headers.
+# The BMC takes the ASRock Rack OEM command from its FAQ (id 38): raw 0x3a 0x01 with one byte per header, 0 = BMC auto,
+# 1-100 = a fixed duty; raw 0x3a 0x02 reads it back. Byte 1 = FAN1, byte 4 = FAN4 (verified 2026-10-19).
+# Every 2 s: CPU package temperature (coretemp) and the NVMe; every 30 s: the BMC's DIMM, board and card-side
+# temperatures and both fans' rpm; every 5 min: the SATA SSDs. Each fan runs at the highest duty any of its curves asks
+# for. The CPU reading is smoothed (rises with a 20 s time constant, falls with 60 s) so a few seconds of Whisper or
+# Kokoro do not rev the fans, and duties fall by at most 1% every 5 s. Emergency: any sensor at its emergency
+# limit sends both fans to 100% until all are 5C below. On exit, a crash, an unreadable CPU sensor or repeated BMC
+# write failures the fans go back to the BMC's own curve (the unit's ExecStopPost does the same).
+import collections, glob, json, math, os, signal, subprocess, sys, time
+
+STATE = '/run/makoto-fan.state'
+EVERY, BMC_EVERY, SSD_EVERY, VERIFY_EVERY = 2, 30, 300, 60      # seconds
+TAU_UP, TAU_DOWN = 20.0, 60.0          # CPU smoothing time constants, s
+DOWN_PER_S = 0.2                       # % per second a duty may fall
+DEADBAND = 3                           # % change before writing a new duty (except to the floor or 100)
+HOLD = 120                             # s: a duty falls only to the highest demand of this long (peak hold)
+FLOOR1, FLOOR4 = 1, 1                  # lowest duties (fans keep spinning at 1%: FAN1 ~1,800 rpm, FAN4 1,500)
+# (temperature C, duty %) points, linear in between, flat outside. Placeholders until the measurements set them.
+FAN1_CPU = [(64, 1), (70, 20), (76, 45), (80, 70), (84, 100)]   # on the smoothed CPU temperature
+FAN1_CPU_RAW = [(88, 1), (92, 70), (95, 100)]             # on the raw reading: heat that outruns the smoothing
+FAN4_CURVES = {                        # backstops; at idle Card Side is what FAN4 has to hold (below)
+    'ddr': [(62, 1), (70, 30), (78, 100)],
+    'mb': [(50, 1), (56, 30), (61, 100)],
+    'card': [(54, 1), (57, 60), (59, 100)],
+    'nvme': [(60, 1), (70, 40), (78, 100)],
+    'ssd': [(50, 1), (58, 40), (65, 100)],
+}
+# FAN4 holds Card Side Temp at CARD_TARGET (BMC warns at 60): the case takes 15-30 min to settle, so a steep curve would
+# overshoot and cycle and a flat one would settle too warm. FAN4 = FAN4_FF(smoothed CPU) + I + KP * (card - target):
+# the feedforward follows the CPU's heat into the case at once (and drops at once when a job ends), the slow integral I
+# (KI % per C per minute, between CARD_I_MIN and CARD_I_MAX) finds what the room needs.
+FAN4_FF = [(64, 0), (70, 12), (78, 30), (84, 50)]
+CARD_TARGET, CARD_KP, CARD_KI, CARD_I0, CARD_I_MIN, CARD_I_MAX = 50, 5.0, 0.15, 25.0, -30.0, 70.0
+EMERG = {'cpu': 95, 'ddr': 80, 'mb': 62, 'card': 58, 'nvme': 80, 'ssd': 68}   # cpu: raw package C (TjMax 105)
+BMC_STALE = 180                         # s: without a fresh BMC reading FAN4 runs at least STALE_FAN4
+STALE_FAN4 = 50
+BMC_SENS = ['FAN1', 'FAN4', 'DDR4_A Temp', 'DDR4_B Temp', 'MB Temp', 'Card Side Temp']
+
+
+def interp(curve, t):
+    if t is None:
+        return 0
+    if t <= curve[0][0]:
+        return curve[0][1]
+    for (t0, d0), (t1, d1) in zip(curve, curve[1:]):
+        if t <= t1:
+            return d0 + (d1 - d0) * (t - t0) / (t1 - t0)
+    return curve[-1][1]
+
+
+class Control:
+    """The decisions, without I/O (the offline tests drive this)."""
+
+    def __init__(self):
+        self.cpu_f, self.want, self.emergency, self.t = None, [None, None], False, 0.0
+        self.hist = [collections.deque(), collections.deque()]   # (t, demand) over the last HOLD s, per fan
+        self.i4 = CARD_I0                       # FAN4's integral term, %
+
+    def step(self, dt, cpu, temps, bmc_fresh):
+        """cpu: package C; temps: ddr/mb/card/nvme/ssd in C or None; bmc_fresh: the BMC values are recent.
+        Returns (fan1 %, fan4 %, {fan: what it follows}, emergency changed to True/False or None)."""
+        self.t += dt
+        if self.cpu_f is None:
+            self.cpu_f = cpu
+        tau = TAU_UP if cpu > self.cpu_f else TAU_DOWN
+        self.cpu_f += (cpu - self.cpu_f) * (1 - math.exp(-dt / tau))
+        why1 = {'cpu': interp(FAN1_CPU, self.cpu_f), 'cpu_now': interp(FAN1_CPU_RAW, cpu)}
+        why4 = {}
+        for k, curve in FAN4_CURVES.items():
+            why4[k] = interp(curve, temps.get(k))
+        card = temps.get('card')
+        if card is not None and bmc_fresh:
+            e = card - CARD_TARGET
+            self.i4 = min(CARD_I_MAX, max(CARD_I_MIN, self.i4 + CARD_KI * e * dt / 60))
+            why4['card_hold'] = interp(FAN4_FF, self.cpu_f) + self.i4 + CARD_KP * e
+        if not bmc_fresh:
+            why4['stale'] = STALE_FAN4
+        allt = dict(temps, cpu=cpu)
+        changed = None
+        if not self.emergency and any(allt.get(k) is not None and allt[k] >= lim for k, lim in EMERG.items()):
+            self.emergency = changed = True
+        elif self.emergency and all(allt.get(k) is None or allt[k] < lim - 5 for k, lim in EMERG.items()):
+            self.emergency, changed = False, False
+        if self.emergency:
+            why1['emergency'] = why4['emergency'] = 100.0
+        out = []
+        for i, (why, floor) in enumerate(((why1, FLOOR1), (why4, FLOOR4))):
+            d = max(floor, min(100.0, max(why.values())))
+            h = self.hist[i]
+            h.append((self.t, d))
+            while h[0][0] < self.t - HOLD:
+                h.popleft()
+            target, w = max(x[1] for x in h), self.want[i]
+            # up at once; down only to the highest demand of the last HOLD s, gliding at DOWN_PER_S
+            w = target if w is None or target >= w else max(target, w - DOWN_PER_S * dt)
+            self.want[i] = w
+            out.append(int(round(w)))
+        return out[0], out[1], {'fan1': max(why1, key=why1.get), 'fan4': max(why4, key=why4.get)}, changed
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def hwmon(name):
+    for d in glob.glob('/sys/class/hwmon/hwmon*'):
+        try:
+            if open(d + '/name').read().strip() == name:
+                return d
+        except OSError:
+            pass
+    return None
+
+
+def read_temp(path):
+    return int(open(path).read()) / 1000
+
+
+def ipmi(*args, timeout=10):
+    return subprocess.run(['ipmitool', *args], capture_output=True, text=True, timeout=timeout)
+
+
+def get_fans():
+    try:
+        b = ipmi('raw', '0x3a', '0x02').stdout.split()
+        return (int(b[0], 16), int(b[3], 16)) if len(b) == 8 else None
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
+def set_fans(f1, f4):
+    """f1/f4: 0 = BMC auto, 1-100 duty. True if the BMC reads back what was set."""
+    try:
+        r = ipmi('raw', '0x3a', '0x01', f'0x{f1:02x}', '0x00', '0x00', f'0x{f4:02x}', '0x00', '0x00', '0x00', '0x00')
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return r.returncode == 0 and get_fans() == (f1, f4)
+
+
+def read_bmc():
+    r = ipmi('sensor', 'reading', *BMC_SENS, timeout=20)
+    v = {}
+    for line in r.stdout.splitlines():
+        k, _, x = line.partition('|')
+        try:
+            v[k.strip()] = float(x)
+        except ValueError:
+            pass
+    if 'MB Temp' not in v:
+        raise RuntimeError('no BMC reading')
+    return v
+
+
+def read_ssds():
+    hot = None
+    for dev in sorted(glob.glob('/dev/sd[a-z]')):
+        if '/usb' in os.path.realpath('/sys/block/' + os.path.basename(dev)):
+            continue                    # the BMC's virtual media shows up as a USB disk
+        r = subprocess.run(['smartctl', '-n', 'standby', '-j', '-A', dev], capture_output=True, text=True, timeout=30)
+        try:
+            t = json.loads(r.stdout).get('temperature', {}).get('current')
+        except ValueError:
+            continue
+        if isinstance(t, (int, float)) and (hot is None or t > hot):
+            hot = t
+    return hot
+
+
+def main():
+    core, nvme_dir = hwmon('coretemp'), hwmon('nvme')
+    if not core:
+        log('no coretemp sensor: leaving the fans on the BMC')
+        return 1
+    cpu_path, nvme_path = core + '/temp1_input', (nvme_dir + '/temp1_input') if nvme_dir else None
+    ctl = Control()
+    bmc, bmc_ok, bmc_next, bmc_err, ssd, ssd_t, verify_t = {}, 0.0, 0.0, 0.0, None, 0.0, 0.0
+    cur, cpu_fail, write_fail, last_why, last_t = None, 0, 0, {}, None
+    log(f'makoto-fan started; fans now {get_fans()}')
+    while True:
+        t = time.time()
+        try:
+            cpu = read_temp(cpu_path)
+            cpu_fail = 0
+        except OSError:
+            cpu_fail += 1
+            if cpu_fail >= 3:
+                log('CPU temperature unreadable 3 times: fans back to the BMC')
+                return 1
+            time.sleep(EVERY)
+            continue
+        try:
+            nvme = read_temp(nvme_path) if nvme_path else None
+        except OSError:
+            nvme = None
+        if t >= bmc_next:
+            try:
+                bmc, bmc_ok, bmc_next = read_bmc(), t, t + BMC_EVERY
+            except Exception as ex:
+                if t - bmc_err >= 600:
+                    log(f'BMC read failed: {ex!r} (keeping the last values, retrying every 10 s)')
+                    bmc_err = t
+                bmc_next = t + 10
+        if t - ssd_t >= SSD_EVERY:
+            try:
+                ssd = read_ssds()
+            except Exception as ex:
+                log(f'SSD read failed: {ex!r}')
+            ssd_t = t
+        ddr = max((bmc[k] for k in ('DDR4_A Temp', 'DDR4_B Temp') if k in bmc), default=None)
+        temps = {'ddr': ddr, 'mb': bmc.get('MB Temp'), 'card': bmc.get('Card Side Temp'), 'nvme': nvme, 'ssd': ssd}
+        age = t - bmc_ok
+        f1, f4, why, emerg = ctl.step(EVERY if last_t is None else t - last_t, cpu, temps, bool(bmc) and age <= BMC_STALE)
+        last_t = t
+        if emerg is not None:
+            log(f'emergency {"on: both fans 100%" if emerg else "over"}: cpu {cpu} {temps}')
+        change = (cur is None or abs(f1 - cur[0]) >= DEADBAND or abs(f4 - cur[1]) >= DEADBAND
+                  or (f1 != cur[0] and f1 in (FLOOR1, 100)) or (f4 != cur[1] and f4 in (FLOOR4, 100)))
+        if not change and t - verify_t >= VERIFY_EVERY:
+            verify_t = t
+            if get_fans() != cur:
+                log(f'BMC no longer holds {cur} (reset?): writing it again')
+                change = True
+        if change:
+            if set_fans(f1, f4):
+                cur, write_fail, verify_t = (f1, f4), 0, t
+            else:
+                write_fail += 1
+                log(f'fan write failed ({write_fail})')
+                if write_fail >= 5:
+                    log('5 failed writes in a row: fans back to the BMC')
+                    return 1
+        if cur:
+            for i, (fan, floor) in enumerate((('fan1', FLOOR1), ('fan4', FLOOR4))):
+                if why[fan] != last_why.get(fan) and cur[i] > floor:
+                    log(f'{fan.upper()} {cur[i]}% for {why[fan]}')
+                    last_why[fan] = why[fan]
+        try:
+            s = {'t': round(t), 'fan1': cur and cur[0], 'fan4': cur and cur[1], 'rpm1': bmc.get('FAN1'),
+                 'rpm4': bmc.get('FAN4'), 'cpu': cpu, 'cpu_smooth': round(ctl.cpu_f, 1), **temps,
+                 'bmc_age': round(age) if bmc else None, 'fan1_for': why['fan1'], 'fan4_for': why['fan4'],
+                 'emergency': ctl.emergency}
+            with open(STATE + '.tmp', 'w') as f:
+                json.dump(s, f)
+            os.replace(STATE + '.tmp', STATE)
+        except OSError:
+            pass
+        time.sleep(max(0.2, EVERY - (time.time() - t)))
+
+
+def bmc_auto():
+    for _ in range(3):
+        try:
+            if set_fans(0, 0):
+                return
+        except Exception:
+            pass
+        time.sleep(1)
+
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    rc = 1
+    try:
+        rc = main()
+    except SystemExit as ex:
+        rc = ex.code or 0
+    except Exception as ex:
+        log(f'crashed: {ex!r}')
+    finally:
+        bmc_auto()
+        log('fans back to the BMC')
+    sys.exit(rc)

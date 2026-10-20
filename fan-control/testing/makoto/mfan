@@ -1,0 +1,21 @@
+#!/bin/bash
+# mfan: makoto's fans through the ASRock Rack OEM command documented in ASRock Rack's FAQ (id 38):
+#   ipmitool raw 0x3a 0x01 B1..B8   one byte per fan header, 0 = BMC auto (smart fan), 1-100 = duty %
+#   ipmitool raw 0x3a 0x02          reads the 8 bytes back
+# usage (root): mfan get | mfan auto | mfan set8 B1 B2 B3 B4 B5 B6 B7 B8   (decimal 0-100)
+set -euo pipefail
+get() { ipmitool raw 0x3a 0x02; }
+case ${1:-get} in
+  get) get ;;
+  auto) ipmitool raw 0x3a 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 >/dev/null; get ;;
+  set8)
+    shift
+    [ $# -eq 8 ] || { echo "set8 needs 8 values" >&2; exit 2; }
+    for v in "$@"; do
+      [[ $v =~ ^[0-9]+$ ]] && [ "$v" -le 100 ] || { echo "bad value $v (0-100)" >&2; exit 2; }
+    done
+    # shellcheck disable=SC2046
+    ipmitool raw 0x3a 0x01 $(printf '0x%02x ' "$@") >/dev/null
+    get ;;
+  *) echo "usage: mfan get|auto|set8 B1..B8" >&2; exit 2 ;;
+esac
