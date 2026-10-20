@@ -263,7 +263,7 @@
     },
     "overrides": []
    },
-   "description": "Speed as % of the top speed measured at Full (CPU fans 8,400 rpm, system fans 10,000 rpm), fastest fan of each group, from the BMC's rpm sensors. The BMC never reports its PWM duty: ryuji-fan-guard only sets an offset on the BMC's own curve (-80 quiet, -127 heavy jobs, -16 warm, 0 Performance or hot drives, 127 Full), shown in the ryuji graph's tooltip."
+   "description": "Speed as % of the top speed measured at Full (CPU fans 8,400 rpm, system fans 10,000 rpm), fastest fan of each group, from the BMC's rpm sensors. The BMC never reports its PWM duty: ryuji-fan-guard only sets an offset on the BMC's own curve (-80 quiet, -127 heavy jobs, -16 warm, 0 Performance or hot drives, 127 Full), kept in Prometheus as lab_ryuji_fan_offset."
   },
   {
    "id": 6,
@@ -612,11 +612,6 @@
      "refId": "C",
      "expr": "max(node_ipmi_speed_rpm{sensor=~\"SYS_FAN[1-4]\"} * on(instance) group_left(nodename) node_uname_info{nodename=\"ryuji\"}) / 10000 * 100",
      "legendFormat": "fan % sys (right)"
-    },
-    {
-     "refId": "D",
-     "expr": "lab_ryuji_fan_offset",
-     "legendFormat": "offset"
     }
    ],
    "fieldConfig": {
@@ -664,30 +659,6 @@
         "value": 100
        }
       ]
-     },
-     {
-      "matcher": {
-       "id": "byName",
-       "options": "offset"
-      },
-      "properties": [
-       {
-        "id": "custom.hideFrom",
-        "value": {
-         "viz": true,
-         "legend": true,
-         "tooltip": false
-        }
-       },
-       {
-        "id": "custom.axisPlacement",
-        "value": "hidden"
-       },
-       {
-        "id": "unit",
-        "value": "none"
-       }
-      ]
      }
     ]
    },
@@ -701,7 +672,7 @@
      "sort": "desc"
     }
    },
-   "description": "SIO Temp 1: BMC warns 80, critical 85; guard leaves -80 at 79. Fans as % of top speed (see the ryuji fans stat). The tooltip's offset is the guard's own setting: it stays put while a test tool drives the BMC (it read -80 during the Full holds of 10-13 and 10-16)."
+   "description": "SIO Temp 1: BMC warns 80, critical 85; guard leaves -80 at 79. Fans as % of top speed (see the ryuji fans stat)."
   },
   {
    "id": 11,
