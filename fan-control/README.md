@@ -533,9 +533,9 @@ DDR4-2133). openssl 3.0.13 on 88 processes: AES-256-GCM 119 GB/s (one thread 3.4
   3,500 -> 1,700 rpm took the CPU from 82-84 to 89-91C within a minute.
 - Idle needs case air: FAN4 at 20-25% holds Card Side Temp at 50C. FAN1 can idle at 1%, but makoto's own bursts
   (Claude sessions, mirror-voice) took a fixed 1% to 85-94C, so it needs the closed loop.
-- The CPU cooler is marginal: 2 workers (~21 W) ran 82-84C at 3,500 / 2,300 rpm, and a heavy mirror-voice job
-  83-88C even at the BMC's 6,900 / 4,500 (case still warm from a test). Fitted: CPU over case air ~ (0.80 + 1.96 /
-  FAN1 krpm) C per package watt. Clean the heatsink and fan.
+- CPU cooling: stress-ng tops out at ~24 W on this CPU (4 and 8 workers alike) and 70-79C (table below), but a heavy
+  mirror-voice job ran 83-88C even at the BMC's 6,900 / 4,500 rpm (case warm from a test), so real work can draw
+  more. A cleaned heatsink and fan would buy margin there.
 - Noise: the mirror's Pi mic, next to makoto, cannot hear it at normal speeds (broadband flat from FAN1 2,000 to
   7,000 rpm); both fans near the BMC's top add 1.2-1.4 dB(A).
 - BMC event log: one CPU1 91C warning (a FAN1-at-1% test under other load), cleared 30 s later.
@@ -548,3 +548,16 @@ v1 as a trial (unit `makoto-fan-test`, 2026-10-20 00:17-06:50, no restarts, no f
 | Bursts of ~11 W, 1-3 min | up to 28%, 3,400 rpm | up to 41%, 2,700 rpm | 69-74C | 50-51C |
 | mirror-voice's heavy job, ~21 W | 47-54%, 4,600-4,900 rpm | 53-63%, 3,300-3,500 rpm | 76C (smoothed) | 50-51C |
 | The BMC's own curve, idle | 30%, 3,600 rpm | 30%, 2,300 rpm | | |
+
+Full load, 2026-10-20 13:15-14:52 (`testing/makoto/day1.sched` fixed fans, then `day1b.sched` with v1 in control;
+stress-ng matrixprod, last 3 min of each step). No emergency, no BMC event; 15 min after the load v1 was back at
+FAN1 1% / FAN4 28%. v1 is production since 2026-10-20 14:54.
+
+| Load | Fans | FAN1 / FAN4 rpm | CPU | Card Side |
+|---|---|---|---|---|
+| 8 workers (24 W), fixed | 100 / 100% | 6,900 / 4,500 | 70-72C | 46C |
+| 8 workers (24 W), fixed | 100 / 50% | 6,900 / 3,000 | 75C | 50C |
+| 4 workers (24 W), fixed | 60 / 60% | 5,300 / 3,400 | 76C | 50C |
+| 2 workers (16 W), makoto-fan | 39 / 47% | 4,100 / 2,900 | 74C | 51C |
+| 4 workers (24 W), makoto-fan | 58 / 61% | 5,100 / 3,400 | 78C | 51C |
+| 8 workers (24 W), makoto-fan | 61 / 63% | 5,300 / 3,500 | 78-79C | 52C |

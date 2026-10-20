@@ -411,6 +411,10 @@ speed about 1C. If one does, a drive-temperature controller with a BIOS hand-bac
 - **Trial, then load with the controller in charge.** v1 ran unattended overnight as `makoto-fan-test`; the
   full-load map with fixed fans (`day1.sched`) is followed by the same loads with makoto-fan holding the fans
   (`fanstep.py` `ctl` lines, `day1b.sched`), so its top end is checked before anyone else loads the box.
+- **stress-ng is not the worst case here.** Its 4 and 8 matrixprod workers both drew ~24 W (far under the 40 W
+  limit) and stayed at 70-79C, while makoto's own speech jobs had run 83-88C at the BMC's top speeds. A model fitted
+  to the hotter readings had predicted 90-94C at full load. Measure the real workload too before trusting the top
+  of a curve.
 
 ## 9. Checklists
 

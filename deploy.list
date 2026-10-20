@@ -42,3 +42,4 @@ scripts/zfs_metrics.cron                        /etc/cron.d/zfs-metrics         
 fan-control/fan-watchdog/fan-watchdog           /usr/local/sbin/fan-watchdog          mementos check-only
 fan-control/md1200-fan/md1200-fan               /usr/local/bin/md1200-fan             mementos check-only
 fan-control/ryuji-fan-guard/ryuji-fan-guard     /usr/local/sbin/ryuji-fan-guard       ryuji check-only
+fan-control/makoto-fan/makoto-fan               /usr/local/sbin/makoto-fan            makoto check-only

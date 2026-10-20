@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# makoto-fan v1 (DRAFT, curves to be set from the 2026-10-19/20 measurements): quiet fan control for makoto.
+# makoto-fan v1 (2026-10-20; overnight trial, then checked to full load): quiet fan control for makoto.
 # A Xeon D-1622 board (4C/8T, 40 W) with an ASRock Rack BMC (firmware 0.06); fans on its FAN1 and FAN4 headers.
 # The BMC takes the ASRock Rack OEM command from its FAQ (id 38): raw 0x3a 0x01 with one byte per header, 0 = BMC auto,
 # 1-100 = a fixed duty; raw 0x3a 0x02 reads it back. Byte 1 = FAN1, byte 4 = FAN4 (verified 2026-10-19).
