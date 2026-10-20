@@ -216,7 +216,7 @@
   {
    "id": 5,
    "type": "stat",
-   "title": "ryuji fan offset",
+   "title": "ryuji fans",
    "gridPos": {
     "h": 4,
     "w": 4,
@@ -230,13 +230,18 @@
    "targets": [
     {
      "refId": "A",
-     "expr": "lab_ryuji_fan_offset",
-     "legendFormat": "offset"
+     "expr": "max(node_ipmi_speed_rpm{sensor=~\"CPU[01]_FAN\"} * on(instance) group_left(nodename) node_uname_info{nodename=\"ryuji\"}) / 8400 * 100",
+     "legendFormat": "CPU %"
+    },
+    {
+     "refId": "B",
+     "expr": "max(node_ipmi_speed_rpm{sensor=~\"SYS_FAN[1-4]\"} * on(instance) group_left(nodename) node_uname_info{nodename=\"ryuji\"}) / 10000 * 100",
+     "legendFormat": "sys %"
     }
    ],
    "fieldConfig": {
     "defaults": {
-     "unit": "none",
+     "unit": "percent",
      "decimals": 0,
      "thresholds": {
       "mode": "absolute",
@@ -247,18 +252,18 @@
        },
        {
         "color": "yellow",
-        "value": -16
+        "value": 40
        },
        {
         "color": "red",
-        "value": 0
+        "value": 60
        }
       ]
      }
     },
     "overrides": []
    },
-   "description": "ryuji-fan-guard: -80 quiet (idle, and medium to heavy loads since v2.5), -60 (a sustained light load under 160 W), -16 warm, 0 Performance, 127 Full."
+   "description": "Speed as % of the top speed measured at Full (CPU fans 8,400 rpm, system fans 10,000 rpm), fastest fan of each group, from the BMC's rpm sensors. The BMC never reports its PWM duty: ryuji-fan-guard only sets an offset on the BMC's own curve (-80 quiet, -127 heavy jobs, -16 warm, 0 Performance or hot drives, 127 Full), shown in the ryuji graph's tooltip."
   },
   {
    "id": 6,
@@ -581,7 +586,7 @@
   {
    "id": 10,
    "type": "timeseries",
-   "title": "ryuji (ryuji-fan-guard v2.1)",
+   "title": "ryuji (ryuji-fan-guard v2.11)",
    "gridPos": {
     "h": 8,
     "w": 12,
@@ -600,8 +605,18 @@
     },
     {
      "refId": "B",
+     "expr": "max(node_ipmi_speed_rpm{sensor=~\"CPU[01]_FAN\"} * on(instance) group_left(nodename) node_uname_info{nodename=\"ryuji\"}) / 8400 * 100",
+     "legendFormat": "fan % CPU (right)"
+    },
+    {
+     "refId": "C",
+     "expr": "max(node_ipmi_speed_rpm{sensor=~\"SYS_FAN[1-4]\"} * on(instance) group_left(nodename) node_uname_info{nodename=\"ryuji\"}) / 10000 * 100",
+     "legendFormat": "fan % sys (right)"
+    },
+    {
+     "refId": "D",
      "expr": "lab_ryuji_fan_offset",
-     "legendFormat": "offset (right)"
+     "legendFormat": "offset"
     }
    ],
    "fieldConfig": {
@@ -619,7 +634,7 @@
      {
       "matcher": {
        "id": "byRegexp",
-       "options": "offset.*"
+       "options": "fan %.*"
       },
       "properties": [
        {
@@ -628,7 +643,7 @@
        },
        {
         "id": "unit",
-        "value": "none"
+        "value": "percent"
        },
        {
         "id": "custom.lineStyle",
@@ -642,11 +657,35 @@
        },
        {
         "id": "min",
-        "value": -90
+        "value": 0
        },
        {
         "id": "max",
-        "value": 130
+        "value": 100
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "offset"
+      },
+      "properties": [
+       {
+        "id": "custom.hideFrom",
+        "value": {
+         "viz": true,
+         "legend": true,
+         "tooltip": false
+        }
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "hidden"
+       },
+       {
+        "id": "unit",
+        "value": "none"
        }
       ]
      }
@@ -662,7 +701,7 @@
      "sort": "desc"
     }
    },
-   "description": "SIO Temp 1: BMC warns 80, critical 85; guard leaves -80 at 79."
+   "description": "SIO Temp 1: BMC warns 80, critical 85; guard leaves -80 at 79. Fans as % of top speed (see the ryuji fans stat). The tooltip's offset is the guard's own setting: it stays put while a test tool drives the BMC (it read -80 during the Full holds of 10-13 and 10-16)."
   },
   {
    "id": 11,

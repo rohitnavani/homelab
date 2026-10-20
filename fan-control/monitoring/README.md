@@ -9,7 +9,7 @@ instead of starting ad-hoc loggers.
 |---|---|---|
 | `lab-thermal-textfile` (+ `.service`) | mementos, ryuji | Every 15 s, turns the state files of `md1200-fan`, `fan-watchdog` and `ryuji-fan-guard` into node_exporter textfile metrics. Reads no sensors itself |
 | `lab-thermal-rules.yml` | the Prometheus host (`rules/`) | 7 alert rules on those metrics, set to fire only on real trouble |
-| `lab-thermal.json` | the Grafana host (provisioned dashboard) | "Lab - Thermal": room proxies on four machines with the rack current, shelf, R720 and ryuji temperatures against their fan levels, controller health |
+| `lab-thermal.json` | the Grafana host (provisioned dashboard) | "Lab - Thermal": room proxies on four machines with the rack current, shelf, R720 and ryuji temperatures against their fan levels (ryuji's as % of top speed from its BMC's rpm sensors: the BMC never reports a PWM duty), controller health |
 | `thermal-log` (+ `.service`, `.logrotate`) | every Linux host | A plain local record next to Prometheus: one JSON line per minute in `/var/log/thermal.jsonl` with the inlet, CPU, board, BMC and drive temperatures (added 2026-10-07 evening; see "Local temperature log") |
 
 `lab-thermal-textfile` reads only files the controllers already write, so it adds no IPMI, serial or SES traffic.
@@ -98,7 +98,7 @@ ipmitool-sensor timer would be a second in-band IPMI reader next to `fan-watchdo
 | `lab_r720_fan_percent`, `lab_r720_fan_auto` | | same (`fan_percent` is absent while in iDRAC auto) |
 | `lab_md1200_temp_celsius` | `sensor` = drive (hottest), backplane, sim, expander | `/run/md1200-fan.state` |
 | `lab_md1200_fan_percent`, `_fan_rpm`, `_fan_expected_rpm`, `_primary`, `_takeovers` | | same |
-| `lab_ryuji_fan_offset` | | `/run/ryuji-fan-guard.state` (-127 heavy job, -80 quiet at idle, light and full load, -16 warm, 0 Performance (or hot drives), 127 Full; -60 light load in v2.4-v2.6) |
+| `lab_ryuji_fan_offset` | | `/run/ryuji-fan-guard.state` (-127 heavy job, -80 quiet at idle, light and full load, -16 warm, 0 Performance (or hot drives), 127 Full; -60 light load in v2.4-v2.6); the guard's own setting, so it stays put while a test tool drives the BMC |
 | `lab_ryuji_temp_celsius` | `sensor` = sio1, cpu, vr, dimm | same |
 | `lab_controller_state_age_seconds` | `controller` | seconds since each controller last wrote its state (normal: under ~60 s) |
 
