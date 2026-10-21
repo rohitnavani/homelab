@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "zpool $*" >> "${SHIM_LOG:-/tmp/shim.log}"
+exit 0

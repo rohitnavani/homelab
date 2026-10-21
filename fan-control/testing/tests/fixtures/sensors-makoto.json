@@ -1,0 +1,317 @@
+{
+ "host": "makoto",
+ "collected": "2026-10-19 23:51:40 EDT",
+ "hwmon": [
+  {
+   "hwmon": "hwmon0",
+   "name": "nvme",
+   "device": "pci0000:00/0000:00:01.0/0000:01:00.0/nvme/nvme0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "Composite",
+     "input": 52.85,
+     "path": "/sys/class/hwmon/hwmon0/temp1_input",
+     "max": 82.85,
+     "crit": 84.85,
+     "min": -5.15,
+     "alarm": "0"
+    },
+    {
+     "id": "temp2",
+     "label": "Sensor 1",
+     "input": 52.85,
+     "path": "/sys/class/hwmon/hwmon0/temp2_input",
+     "max": 65261.85,
+     "min": -273.15
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon1",
+   "name": "coretemp",
+   "device": "platform/coretemp.0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "Package id 0",
+     "input": 65.0,
+     "path": "/sys/class/hwmon/hwmon1/temp1_input",
+     "max": 83.0,
+     "crit": 105.0,
+     "crit_alarm": "0"
+    },
+    {
+     "id": "temp2",
+     "label": "Core 0",
+     "input": 65.0,
+     "path": "/sys/class/hwmon/hwmon1/temp2_input",
+     "max": 83.0,
+     "crit": 105.0,
+     "crit_alarm": "0"
+    },
+    {
+     "id": "temp3",
+     "label": "Core 1",
+     "input": 65.0,
+     "path": "/sys/class/hwmon/hwmon1/temp3_input",
+     "max": 83.0,
+     "crit": 105.0,
+     "crit_alarm": "0"
+    },
+    {
+     "id": "temp4",
+     "label": "Core 2",
+     "input": 65.0,
+     "path": "/sys/class/hwmon/hwmon1/temp4_input",
+     "max": 83.0,
+     "crit": 105.0,
+     "crit_alarm": "0"
+    },
+    {
+     "id": "temp5",
+     "label": "Core 3",
+     "input": 65.0,
+     "path": "/sys/class/hwmon/hwmon1/temp5_input",
+     "max": 83.0,
+     "crit": 105.0,
+     "crit_alarm": "0"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  }
+ ],
+ "thermal_zones": [
+  {
+   "zone": "thermal_zone0",
+   "type": "x86_pkg_temp",
+   "temp": 65.0,
+   "mode": "enabled",
+   "policy": "step_wise",
+   "path": "/sys/class/thermal/thermal_zone0/temp",
+   "trips": [
+    {
+     "type": "passive",
+     "temp": -274.0,
+     "hyst": 0.0
+    },
+    {
+     "type": "passive",
+     "temp": -274.0,
+     "hyst": 0.0
+    }
+   ]
+  }
+ ],
+ "power_supply": [],
+ "thinkpad_proc": {},
+ "dell_ddv_wmi": false,
+ "throttle": {
+  "cpus_with_counters": 8,
+  "core_throttle_count_sum": 0,
+  "core_throttle_count_max": 0,
+  "core_throttle_total_time_ms_sum": 0,
+  "core_nonzero": {},
+  "packages": {
+   "0": {
+    "package_throttle_count": "0",
+    "package_throttle_max_time_ms": "0",
+    "package_throttle_total_time_ms": "0"
+   }
+  }
+ },
+ "rapl": [
+  {
+   "zone": "intel-rapl:0",
+   "name": "package-0",
+   "enabled": "1",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "262143328850",
+   "constraints": [
+    {
+     "name": "long_term",
+     "power_limit_w": 40.0,
+     "time_window_s": 0.999,
+     "max_power_w": 40.0
+    },
+    {
+     "name": "short_term",
+     "power_limit_w": 48.0,
+     "time_window_s": 0.008,
+     "max_power_w": 80.0
+    }
+   ]
+  },
+  {
+   "zone": "intel-rapl:0:0",
+   "name": "dram",
+   "enabled": "0",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "262143328850",
+   "constraints": [
+    {
+     "name": "long_term",
+     "power_limit_w": 0.0,
+     "time_window_s": 0.001,
+     "max_power_w": 6.5
+    }
+   ]
+  }
+ ],
+ "rapl_watts": {
+  "intel-rapl:0 package-0": 3.32,
+  "intel-rapl:0:0 dram": 1.62
+ },
+ "cpufreq": {
+  "scaling_driver": "intel_cpufreq",
+  "scaling_governor": "schedutil",
+  "cpuinfo_min_freq": "800000",
+  "cpuinfo_max_freq": "3200000",
+  "scaling_min_freq": "800000",
+  "scaling_max_freq": "3200000",
+  "cur_mhz": {
+   "min": 798,
+   "avg": 825,
+   "max": 1000
+  },
+  "cpuinfo_max_freq_all": [
+   3200
+  ],
+  "scaling_max_freq_all": [
+   3200
+  ],
+  "intel_pstate_status": "passive",
+  "intel_pstate_no_turbo": "0",
+  "intel_pstate_max_perf_pct": "100",
+  "intel_pstate_min_perf_pct": "25",
+  "intel_pstate_turbo_pct": "25",
+  "intel_pstate_num_pstates": "25"
+ },
+ "platform_profile": null,
+ "drives": [
+  {
+   "dev": "sda",
+   "serial": "2152E5F70B12",
+   "model": "CT1000MX500SSD1",
+   "tran": "sata",
+   "rota": false,
+   "size": "931.5G",
+   "smartctl_rc": 4,
+   "temp": 35,
+   "lifetime_max": 52,
+   "op_limit_max": 70,
+   "limit_max": 100,
+   "power_cycle_max": 38,
+   "sct_history_op_limit_max": 100,
+   "sct_history_limit_max": 100,
+   "devstat_highest_temperature": 52,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 70,
+   "smart_passed": true,
+   "power_on_hours": 23718
+  },
+  {
+   "dev": "sdb",
+   "serial": "2016E29B77F7",
+   "model": "CT1000MX500SSD1",
+   "tran": "sata",
+   "rota": false,
+   "size": "931.5G",
+   "smartctl_rc": 4,
+   "temp": 35,
+   "lifetime_max": 71,
+   "op_limit_max": 70,
+   "limit_max": 100,
+   "power_cycle_max": 44,
+   "sct_history_op_limit_max": 100,
+   "sct_history_limit_max": 100,
+   "devstat_highest_temperature": 71,
+   "devstat_time_in_over_temperature": 43,
+   "devstat_specified_maximum_operating_temperature": 70,
+   "smart_passed": true,
+   "power_on_hours": 2422
+  },
+  {
+   "dev": "sdc",
+   "serial": "2007E28BD0DA",
+   "model": "CT1000MX500SSD1",
+   "tran": "sata",
+   "rota": false,
+   "size": "931.5G",
+   "smartctl_rc": 4,
+   "temp": 33,
+   "lifetime_max": 67,
+   "op_limit_max": 70,
+   "limit_max": 100,
+   "power_cycle_max": 37,
+   "sct_history_op_limit_max": 100,
+   "sct_history_limit_max": 100,
+   "devstat_highest_temperature": 67,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 70,
+   "smart_passed": true,
+   "power_on_hours": 2230
+  },
+  {
+   "dev": "nvme0n1",
+   "serial": "25154FA7F865",
+   "model": "CT500P310SSD8",
+   "tran": "nvme",
+   "rota": false,
+   "size": "465.8G",
+   "smartctl_rc": 4,
+   "messages": [
+    "Read Self-test Log failed: Invalid Field in Command (0x002)"
+   ],
+   "temp": 53,
+   "nvme_sensors": [
+    53
+   ],
+   "nvme_warning_temp_time_min": 0,
+   "nvme_critical_comp_time_min": 0,
+   "nvme_wctemp": 83,
+   "nvme_cctemp": 85,
+   "smart_passed": true,
+   "power_on_hours": 872
+  }
+ ],
+ "textfile": {
+  "/var/lib/prometheus/node-exporter/ipmitool_sensor.prom": [
+   "node_ipmi_temperature_celsius{sensor=\"MB Temp\"} 47.000000",
+   "node_ipmi_temperature_celsius{sensor=\"Card Side Temp\"} 54.000000",
+   "node_ipmi_temperature_celsius{sensor=\"CPU1 Temp\"} 66.000000",
+   "node_ipmi_temperature_celsius{sensor=\"DDR4_B Temp\"} 56.000000",
+   "node_ipmi_temperature_celsius{sensor=\"DDR4_A Temp\"} 57.000000",
+   "node_ipmi_speed_rpm{sensor=\"FAN1\"} 1700.000000",
+   "node_ipmi_speed_rpm{sensor=\"FAN4\"} 1700.000000"
+  ],
+  "/var/lib/node_exporter/textfile_collector/drivecheck.prom": [
+   "drivecheck_drive_info{host=\"makoto\",device=\"/dev/nvme0\",serial=\"25154FA7F865\",class=\"nvme\",model=\"CT500P310SSD8\",firmware=\"VACR001\",kind=\"nvme\"} 1",
+   "drivecheck_drive_info{host=\"makoto\",device=\"/dev/sda\",serial=\"2152E5F70B12\",class=\"sata\",model=\"CT1000MX500SSD1\",firmware=\"M3CR043\",kind=\"ssd\"} 1",
+   "drivecheck_drive_info{host=\"makoto\",device=\"/dev/sdb\",serial=\"2016E29B77F7\",class=\"sata\",model=\"CT1000MX500SSD1\",firmware=\"M3CR032\",kind=\"ssd\"} 1",
+   "drivecheck_drive_info{host=\"makoto\",device=\"/dev/sdc\",serial=\"2007E28BD0DA\",class=\"sata\",model=\"CT1000MX500SSD1\",firmware=\"M3CR032\",kind=\"ssd\"} 1",
+   "drivecheck_temperature_celsius{host=\"makoto\",device=\"/dev/nvme0\",serial=\"25154FA7F865\",class=\"nvme\",model=\"CT500P310SSD8\"} 46",
+   "drivecheck_temperature_celsius{host=\"makoto\",device=\"/dev/sda\",serial=\"2152E5F70B12\",class=\"sata\",model=\"CT1000MX500SSD1\"} 34",
+   "drivecheck_temperature_celsius{host=\"makoto\",device=\"/dev/sdb\",serial=\"2016E29B77F7\",class=\"sata\",model=\"CT1000MX500SSD1\"} 33",
+   "drivecheck_temperature_celsius{host=\"makoto\",device=\"/dev/sdc\",serial=\"2007E28BD0DA\",class=\"sata\",model=\"CT1000MX500SSD1\"} 32",
+   "drivecheck_temperature_limit_celsius{host=\"makoto\",device=\"/dev/nvme0\",serial=\"25154FA7F865\"} 83",
+   "drivecheck_temperature_limit_celsius{host=\"makoto\",device=\"/dev/sda\",serial=\"2152E5F70B12\"} 70",
+   "drivecheck_temperature_limit_celsius{host=\"makoto\",device=\"/dev/sdb\",serial=\"2016E29B77F7\"} 70",
+   "drivecheck_temperature_limit_celsius{host=\"makoto\",device=\"/dev/sdc\",serial=\"2007E28BD0DA\"} 70",
+   "drivecheck_temperature_margin_celsius{host=\"makoto\",device=\"/dev/nvme0\",serial=\"25154FA7F865\"} 37",
+   "drivecheck_temperature_margin_celsius{host=\"makoto\",device=\"/dev/sda\",serial=\"2152E5F70B12\"} 36",
+   "drivecheck_temperature_margin_celsius{host=\"makoto\",device=\"/dev/sdb\",serial=\"2016E29B77F7\"} 37",
+   "drivecheck_temperature_margin_celsius{host=\"makoto\",device=\"/dev/sdc\",serial=\"2007E28BD0DA\"} 38"
+  ]
+ },
+ "skipped": [
+  "/dev/sdd (usb vmDisk): not read"
+ ]
+}

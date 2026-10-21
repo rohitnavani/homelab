@@ -1,0 +1,439 @@
+{
+ "host": "futaba",
+ "collected": "2026-10-19 23:51:49 EDT",
+ "hwmon": [
+  {
+   "hwmon": "hwmon0",
+   "name": "acpitz",
+   "device": "virtual/thermal/thermal_zone0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": null,
+     "input": 27.8,
+     "path": "/sys/class/hwmon/hwmon0/temp1_input"
+    },
+    {
+     "id": "temp2",
+     "label": null,
+     "input": 29.8,
+     "path": "/sys/class/hwmon/hwmon0/temp2_input"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon1",
+   "name": "coretemp",
+   "device": "platform/coretemp.0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "Package id 0",
+     "input": 50.0,
+     "path": "/sys/class/hwmon/hwmon1/temp1_input",
+     "max": 84.0,
+     "crit": 100.0,
+     "crit_alarm": "0"
+    },
+    {
+     "id": "temp2",
+     "label": "Core 0",
+     "input": 50.0,
+     "path": "/sys/class/hwmon/hwmon1/temp2_input",
+     "max": 84.0,
+     "crit": 100.0,
+     "crit_alarm": "0"
+    },
+    {
+     "id": "temp3",
+     "label": "Core 1",
+     "input": 42.0,
+     "path": "/sys/class/hwmon/hwmon1/temp3_input",
+     "max": 84.0,
+     "crit": 100.0,
+     "crit_alarm": "0"
+    },
+    {
+     "id": "temp4",
+     "label": "Core 2",
+     "input": 41.0,
+     "path": "/sys/class/hwmon/hwmon1/temp4_input",
+     "max": 84.0,
+     "crit": 100.0,
+     "crit_alarm": "0"
+    },
+    {
+     "id": "temp5",
+     "label": "Core 3",
+     "input": 41.0,
+     "path": "/sys/class/hwmon/hwmon1/temp5_input",
+     "max": 84.0,
+     "crit": 100.0,
+     "crit_alarm": "0"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon2",
+   "name": "nct6683",
+   "device": "platform/nct6683.2592",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "PECI 0.0",
+     "input": 44.0,
+     "path": "/sys/class/hwmon/hwmon2/temp1_input",
+     "max": 99.0,
+     "crit": 0.0,
+     "min": 0.0,
+     "max_hyst": 0.0
+    },
+    {
+     "id": "temp2",
+     "label": "PCH CHIP",
+     "input": 0.0,
+     "path": "/sys/class/hwmon/hwmon2/temp2_input",
+     "max": 0.0,
+     "crit": 0.0,
+     "min": 0.0,
+     "max_hyst": 0.0
+    },
+    {
+     "id": "temp3",
+     "label": "Diode 0 (curr)",
+     "input": 42.5,
+     "path": "/sys/class/hwmon/hwmon2/temp3_input",
+     "max": 0.0,
+     "crit": 0.0,
+     "min": 0.0,
+     "max_hyst": 0.0
+    },
+    {
+     "id": "temp4",
+     "label": "Diode 1 (curr)",
+     "input": 26.5,
+     "path": "/sys/class/hwmon/hwmon2/temp4_input",
+     "max": 50.0,
+     "crit": 0.0,
+     "min": 0.0,
+     "max_hyst": 0.0
+    }
+   ],
+   "fans": [
+    {
+     "id": "fan2",
+     "label": null,
+     "rpm": 998.0,
+     "path": "/sys/class/hwmon/hwmon2/fan2_input",
+     "min": 500.0
+    }
+   ],
+   "pwm": [
+    {
+     "id": "pwm2",
+     "value": "53",
+     "enable": null,
+     "mode": null,
+     "path": "/sys/class/hwmon/hwmon2/pwm2"
+    }
+   ],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon3",
+   "name": "iwlwifi_1",
+   "device": "virtual/thermal/thermal_zone3",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": null,
+     "input": 36.0,
+     "path": "/sys/class/hwmon/hwmon3/temp1_input"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  }
+ ],
+ "thermal_zones": [
+  {
+   "zone": "thermal_zone0",
+   "type": "acpitz",
+   "temp": 27.8,
+   "mode": "enabled",
+   "policy": "step_wise",
+   "path": "/sys/class/thermal/thermal_zone0/temp",
+   "trips": [
+    {
+     "type": "critical",
+     "temp": 119.0,
+     "hyst": 0.0
+    },
+    {
+     "type": "active",
+     "temp": 71.0,
+     "hyst": 0.0
+    },
+    {
+     "type": "active",
+     "temp": 55.0,
+     "hyst": 0.0
+    },
+    {
+     "type": "active",
+     "temp": 50.0,
+     "hyst": 0.0
+    },
+    {
+     "type": "active",
+     "temp": 45.0,
+     "hyst": 0.0
+    },
+    {
+     "type": "active",
+     "temp": 40.0,
+     "hyst": 0.0
+    }
+   ]
+  },
+  {
+   "zone": "thermal_zone1",
+   "type": "acpitz",
+   "temp": 29.8,
+   "mode": "enabled",
+   "policy": "step_wise",
+   "path": "/sys/class/thermal/thermal_zone1/temp",
+   "trips": [
+    {
+     "type": "critical",
+     "temp": 119.0,
+     "hyst": 0.0
+    }
+   ]
+  },
+  {
+   "zone": "thermal_zone2",
+   "type": "x86_pkg_temp",
+   "temp": 46.0,
+   "mode": "enabled",
+   "policy": "step_wise",
+   "path": "/sys/class/thermal/thermal_zone2/temp",
+   "trips": [
+    {
+     "type": "passive",
+     "temp": -274.0,
+     "hyst": 0.0
+    },
+    {
+     "type": "passive",
+     "temp": -274.0,
+     "hyst": 0.0
+    }
+   ]
+  },
+  {
+   "zone": "thermal_zone3",
+   "type": "iwlwifi_1",
+   "temp": 36.0,
+   "mode": "enabled",
+   "policy": "step_wise",
+   "path": "/sys/class/thermal/thermal_zone3/temp",
+   "trips": [
+    {
+     "type": "passive",
+     "temp": -2147483.648,
+     "hyst": 0.0
+    },
+    {
+     "type": "passive",
+     "temp": -2147483.648,
+     "hyst": 0.0
+    },
+    {
+     "type": "passive",
+     "temp": -2147483.648,
+     "hyst": 0.0
+    },
+    {
+     "type": "passive",
+     "temp": -2147483.648,
+     "hyst": 0.0
+    },
+    {
+     "type": "passive",
+     "temp": -2147483.648,
+     "hyst": 0.0
+    },
+    {
+     "type": "passive",
+     "temp": -2147483.648,
+     "hyst": 0.0
+    },
+    {
+     "type": "passive",
+     "temp": -2147483.648,
+     "hyst": 0.0
+    },
+    {
+     "type": "passive",
+     "temp": -2147483.648,
+     "hyst": 0.0
+    }
+   ]
+  }
+ ],
+ "power_supply": [],
+ "thinkpad_proc": {},
+ "dell_ddv_wmi": false,
+ "throttle": {
+  "cpus_with_counters": 4,
+  "core_throttle_count_sum": 0,
+  "core_throttle_count_max": 0,
+  "core_throttle_total_time_ms_sum": 0,
+  "core_nonzero": {},
+  "packages": {
+   "0": {
+    "package_throttle_count": "0",
+    "package_throttle_max_time_ms": "0",
+    "package_throttle_total_time_ms": "0"
+   }
+  }
+ },
+ "rapl": [
+  {
+   "zone": "intel-rapl:0",
+   "name": "package-0",
+   "enabled": "1",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "262143328850",
+   "constraints": [
+    {
+     "name": "long_term",
+     "power_limit_w": 35.0,
+     "time_window_s": 7.995,
+     "max_power_w": 35.0
+    },
+    {
+     "name": "short_term",
+     "power_limit_w": 43.75,
+     "time_window_s": 0.002,
+     "max_power_w": 0.0
+    }
+   ]
+  },
+  {
+   "zone": "intel-rapl:0:0",
+   "name": "core",
+   "enabled": "0",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "262143328850",
+   "constraints": [
+    {
+     "name": "long_term",
+     "power_limit_w": 0.0,
+     "time_window_s": 0.001,
+     "max_power_w": null
+    }
+   ]
+  },
+  {
+   "zone": "intel-rapl:0:1",
+   "name": "uncore",
+   "enabled": "0",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "262143328850",
+   "constraints": [
+    {
+     "name": "long_term",
+     "power_limit_w": 0.0,
+     "time_window_s": 0.001,
+     "max_power_w": null
+    }
+   ]
+  },
+  {
+   "zone": "intel-rapl:0:2",
+   "name": "dram",
+   "enabled": "0",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "262143328850",
+   "constraints": [
+    {
+     "name": "long_term",
+     "power_limit_w": 0.0,
+     "time_window_s": 0.001,
+     "max_power_w": null
+    }
+   ]
+  }
+ ],
+ "rapl_watts": {
+  "intel-rapl:0 package-0": 1.3,
+  "intel-rapl:0:0 core": 0.34,
+  "intel-rapl:0:1 uncore": 0.0,
+  "intel-rapl:0:2 dram": 0.91
+ },
+ "cpufreq": {
+  "scaling_driver": "intel_pstate",
+  "scaling_governor": "powersave",
+  "cpuinfo_min_freq": "800000",
+  "cpuinfo_max_freq": "3100000",
+  "scaling_min_freq": "800000",
+  "scaling_max_freq": "3100000",
+  "base_frequency": "2500000",
+  "energy_performance_preference": "balance_performance",
+  "cur_mhz": {
+   "min": 799,
+   "avg": 800,
+   "max": 800
+  },
+  "cpuinfo_max_freq_all": [
+   3100
+  ],
+  "scaling_max_freq_all": [
+   3100
+  ],
+  "intel_pstate_status": "active",
+  "intel_pstate_no_turbo": "0",
+  "intel_pstate_max_perf_pct": "100",
+  "intel_pstate_min_perf_pct": "25",
+  "intel_pstate_hwp_dynamic_boost": "0",
+  "intel_pstate_turbo_pct": "25",
+  "intel_pstate_num_pstates": "24"
+ },
+ "platform_profile": null,
+ "drives": [
+  {
+   "dev": "sda",
+   "serial": "50026B7686786BE8",
+   "model": "KINGSTON OM8P0S3",
+   "tran": "sata",
+   "rota": false,
+   "size": "238.5G",
+   "smartctl_rc": 0,
+   "temp": 49,
+   "lifetime_max": 54,
+   "devstat_highest_temperature": 54,
+   "smart_passed": true,
+   "power_on_hours": 22225
+  }
+ ],
+ "textfile": {
+  "/var/lib/node_exporter/textfile_collector/drivecheck.prom": [
+   "drivecheck_drive_info{host=\"futaba\",device=\"/dev/sda\",serial=\"50026B7686786BE8\",class=\"sata\",model=\"KINGSTON OM8P0S3256Q-A0\",firmware=\"SBFK66.5\",kind=\"ssd\"} 1",
+   "drivecheck_temperature_celsius{host=\"futaba\",device=\"/dev/sda\",serial=\"50026B7686786BE8\",class=\"sata\",model=\"KINGSTON OM8P0S3256Q-A0\"} 49"
+  ]
+ },
+ "skipped": []
+}

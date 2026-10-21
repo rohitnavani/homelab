@@ -15,6 +15,15 @@
 #   HDD 50 (fan-watchdog's emergency is 52), SSD 60, iDRAC auto, room above ROOM_STOP or no room reading.
 # Run: systemd-run --unit=mementos-steps-<x> -p ExecStopPost=/var/tmp/mementos-steps-restore.sh \
 #      python3 /var/tmp/mementos-steps.py <plan> <label>
+# 2026-10-20 (new-spot run, notes ~/lab-thermal-2026-10-20): plans t4_mem (T4), e1_mix (E1), e2_burst (E2, = fin_burstm)
+# and t1b_steps (T1b's fallback if T1a shows the mic cannot see the rack). ROOM_START / ROOM_STOP from the env (28 / 29
+# by default: load off at an R720 inlet of 30C or more). NIGHT_FAN_CAP (env, fan %): fan-watchdog's fans above it on
+# two of its readings in a row while loaded -> load off, and every later load step runs idle (a window's noise cap).
+# LOAD_UNTIL also drops the load of a step still running when it passes. No load while a step waits for the room (the
+# previous step's load kept running through the wait before). stress-ng at nice 19 (brief B8). CPU stop 89C and the
+# other stops as 2026-10-13.
+#   systemd-run --unit=mementos-steps-<x> -p ExecStopPost=/var/tmp/mementos-steps-restore-fin.sh \
+#     python3 -I /var/tmp/mementos-steps-1020.py <plan> <label>
 import glob, os, re, subprocess, sys, time
 
 
@@ -48,13 +57,36 @@ PLANS = {  # label, workers (0 = idle), minutes
     'fin_burst': [('b_ref', 0, 5)] + seq(BURST_ALL) + [('b_unwind', 0, 20)],
     'fin_soak': [('s_ref', 0, 5), ('s_36w', 36, 120), ('s_unwind', 0, 25)],
     'dry': [('d_idle', 0, 1), ('d_1w', 1, 1), ('d_cool', 0, 1)],
+    # ---- 2026-10-20 new-spot run (rack a few inches off a wall; notes ~/lab-thermal-2026-10-20) ----
+    # T4 (2026-10-20): fin_comb's shape on T4's clock: idle 10 min (start ~14:05), 24 workers 10 min (14:15), 48 workers
+    # 60 min (14:25-15:25, every drive soak alongside), then the unwind. ryuji holds 44 workers (t4_comb) throughout.
+    't4_mem': [('c_ref', 0, 10), ('c_24w', 24, 10), ('c_48w', 48, 60), ('c_unwind', 0, 25)],
+    # E1 (2026-10-20): mementos's half of the everyday mix (ryuji 11 workers and shelf sequential reads alongside);
+    # 40-min hold (review B2, was 60).
+    'e1_mix': [('x_ref', 0, 5), ('x_12w', 12, 40), ('x_unwind', 0, 15)],
+    # E2 (2026-10-20): fin_burstm unchanged, 55 min (30 min of 0-18 worker bursts, ref and unwind).
+    'e2_burst': [('bm_ref', 0, 5)] + seq(BURST_MED) + [('bm_unwind', 0, 20)],
+    # T1b fallback (2026-10-20, only if T1a shows the mic cannot see the rack): 6/12/18/24/36/48 workers, 15 min each.
+    't1b_steps': [('idle', 0, 5), ('w6', 6, 15), ('w12', 12, 15), ('w18', 18, 15), ('w24', 24, 15), ('w36', 36, 15),
+                  ('w48', 48, 15), ('cool', 0, 25)],
+    # W2 rack-only phase (2026-10-21, WED-NOTES.md): 48 workers for 40 min with ryuji at 44 and shelf random reads
+    # (shelf boxes and sojiro idle), after both W2 units end; then the unwind. 63 min.
+    'w2_rack': [('r_ref', 0, 3), ('r_48w', 48, 40), ('r_unwind', 0, 20)],
 }
 LABEL = sys.argv[2] if len(sys.argv) > 2 else sys.argv[1]
 CSV = f'/var/tmp/mementos-steps-{LABEL}.csv'
 STATE = '/run/fan-watchdog.state'
 STOP = {'cpu': 89, 'dimm': 75, 'exh': 60, 'hdd': 50, 'ssd': 60}
-ROOM_START, ROOM_STOP, WAIT_MAX = 26, 27, 25 * 60   # 2026-10-08: test heat off above 27C (Rohit)
+WAIT_MAX = 25 * 60   # 2026-10-08: test heat off above 27C (Rohit)
+# 2026-10-20: room gates from the env, 28 / 29 by default (were 26 / 27): a load step starts at 28C or less, and its
+# load drops when the inlet reads 30C or more
+ROOM_START = int(os.environ.get('ROOM_START', '28'))
+ROOM_STOP = int(os.environ.get('ROOM_STOP', '29'))
 LOAD_UNTIL = float(os.environ.get('LOAD_UNTIL', 'inf'))
+# 2026-10-20: NIGHT_FAN_CAP (fan %, env; unset = no cap). Counted on fan-watchdog's own readings (it writes every 30 s;
+# this script samples every 10-20 s, so one reading is seen up to 3 times) while a load runs.
+CAP = float(os.environ['NIGHT_FAN_CAP']) if os.environ.get('NIGHT_FAN_CAP') else None
+cap = {'n': 0, 'stamp': None, 'hit': False}
 ZONES = sorted(glob.glob('/sys/class/powercap/intel-rapl:[01]'))
 PKGT = {}
 for h in glob.glob('/sys/class/hwmon/hwmon*'):
@@ -89,6 +121,7 @@ def state():
     m = re.search(r'(\d+)%', st)
     v['pct'] = int(m.group(1)) if m else None
     v['mode'] = 'auto' if 'auto' in st.lower() else 'curve'
+    v['stamp'] = st[:19]   # 2026-10-20: fan-watchdog's own time stamp, one per reading (for NIGHT_FAN_CAP)
     return v
 
 
@@ -124,9 +157,9 @@ def load(n):
         except subprocess.TimeoutExpired:
             stress.kill()
     stress = None
-    if n:
-        stress = subprocess.Popen(['stress-ng', '--cpu', str(n), '--cpu-method', 'matrixprod', '--quiet'],
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if n:   # 2026-10-20: nice 19 (brief B8: mementos serves NFS, VMs and Nextcloud; an idle box gives it all the CPU)
+        stress = subprocess.Popen(['nice', '-n', '19', 'stress-ng', '--cpu', str(n), '--cpu-method', 'matrixprod',
+                                   '--quiet'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 cols = ['epoch', 'time', 'phase', 'phase_min', 'load', 'pkg0_w', 'pkg1_w', 'pkg0_t', 'pkg1_t', 'cpu', 'dimm', 'exh',
@@ -152,6 +185,7 @@ def log_row(label, t0, st, n):
     with open(CSV, 'a') as f:
         f.write(','.join('' if row.get(c) is None else str(row.get(c)) for c in cols) + '\n')
     if not cur:
+        cap['n'] = 0   # 2026-10-20: the cap counts readings in a row while loaded
         return
     hot = [f'{k}={v[k]}' for k, lim in STOP.items() if isinstance(v.get(k), int) and v[k] >= lim]
     hot += [f'pkg{p}={t}' for p, t in pt.items() if t >= STOP['cpu']]
@@ -164,6 +198,18 @@ def log_row(label, t0, st, n):
     elif row['room'] is None or row['room'] > ROOM_STOP:
         load(0)
         note(f'{label}: load stopped (room {row["room"]}C)')
+    elif time.time() > LOAD_UNTIL:   # 2026-10-20: no load past LOAD_UNTIL, even mid-step
+        load(0)
+        note(f'{label}: load stopped (past LOAD_UNTIL)')
+    elif CAP is not None and isinstance(v.get('pct'), int):   # 2026-10-20: the window's fan cap
+        if v.get('stamp') != cap['stamp']:
+            cap['stamp'] = v.get('stamp')
+            cap['n'] = cap['n'] + 1 if v['pct'] > CAP else 0
+        if cap['n'] >= 2:
+            load(0)
+            cap['hit'] = True
+            note(f'{label}: load stopped (fans {v["pct"]}% above NIGHT_FAN_CAP {CAP:g}% on 2 fan-watchdog readings in a'
+                 f' row); every later load step runs idle')
 
 
 plan = sys.argv[1]
@@ -171,16 +217,21 @@ if not os.path.exists(CSV):
     with open(CSV, 'w') as f:
         f.write(','.join(cols) + '\n')
 note(f'start plan {plan} ({sum(m for _, _, m in PLANS[plan]):.0f} min); coretemp packages {sorted(PKGT)}; '
-     f'LOAD_UNTIL {time.strftime("%F %T", time.localtime(LOAD_UNTIL)) if LOAD_UNTIL != float("inf") else "none"}')
+     f'LOAD_UNTIL {time.strftime("%F %T", time.localtime(LOAD_UNTIL)) if LOAD_UNTIL != float("inf") else "none"}; '
+     f'room gates {ROOM_START}/{ROOM_STOP}C; NIGHT_FAN_CAP {"none" if CAP is None else f"{CAP:g}%"}')
 try:
     for label, n, mins in PLANS[plan]:
         st = {'e0': energy(), 'tp': time.time()}
         if n and time.time() > LOAD_UNTIL:
             note(f'{label}: past LOAD_UNTIL, running it idle')
             n = 0
+        if n and cap['hit']:   # 2026-10-20
+            note(f'{label}: NIGHT_FAN_CAP tripped earlier, running it idle')
+            n = 0
         if n:
             r = room()
             if r is None or r > ROOM_START:
+                load(0)   # 2026-10-20: the previous step's load kept running through the wait before
                 note(f'{label}: room {r}C, waiting for <= {ROOM_START}C before adding load')
                 tw = time.time()
                 while (r is None or r > ROOM_START) and time.time() - tw < WAIT_MAX:
@@ -190,6 +241,9 @@ try:
                 if r is None or r > ROOM_START:
                     note(f'{label}: skipped (room {r}C after {WAIT_MAX // 60} min)')
                     continue
+                if time.time() > LOAD_UNTIL:   # 2026-10-20: the wait can run past it
+                    note(f'{label}: past LOAD_UNTIL after the room wait, running it idle')
+                    n = 0
         load(n)
         note(f'phase {label}: {n} workers, {mins} min, room {room()}C')
         t0 = time.time()

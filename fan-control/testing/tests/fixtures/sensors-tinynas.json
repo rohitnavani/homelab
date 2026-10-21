@@ -1,0 +1,442 @@
+{
+ "host": "TinyNAS",
+ "collected": "2026-10-19 23:51:48 EDT",
+ "hwmon": [
+  {
+   "hwmon": "hwmon0",
+   "name": "nvme",
+   "device": "pci0000:00/0000:00:02.1/0000:02:00.0/0000:03:00.0/0000:04:00.0/nvme/nvme1",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "Composite",
+     "input": 30.85,
+     "path": "/sys/class/hwmon/hwmon0/temp1_input",
+     "max": 82.85,
+     "crit": 84.85,
+     "min": -0.15,
+     "alarm": "0"
+    },
+    {
+     "id": "temp2",
+     "label": "Sensor 1",
+     "input": 29.85,
+     "path": "/sys/class/hwmon/hwmon0/temp2_input",
+     "max": 65261.85,
+     "min": -273.15
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon1",
+   "name": "nvme",
+   "device": "pci0000:00/0000:00:01.2/0000:01:00.0/nvme/nvme0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "Composite",
+     "input": 29.85,
+     "path": "/sys/class/hwmon/hwmon1/temp1_input",
+     "max": 82.85,
+     "crit": 84.85,
+     "min": -0.15,
+     "alarm": "0"
+    },
+    {
+     "id": "temp2",
+     "label": "Sensor 1",
+     "input": 29.85,
+     "path": "/sys/class/hwmon/hwmon1/temp2_input",
+     "max": 65261.85,
+     "min": -273.15
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon2",
+   "name": "k10temp",
+   "device": "pci0000:00/0000:00:18.3",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "Tctl",
+     "input": 41.125,
+     "path": "/sys/class/hwmon/hwmon2/temp1_input"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon3",
+   "name": "asus",
+   "device": "platform/eeepc-wmi",
+   "temps": [],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon4",
+   "name": "amdgpu",
+   "device": "pci0000:00/0000:00:08.1/0000:0d:00.0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "edge",
+     "input": 38.0,
+     "path": "/sys/class/hwmon/hwmon4/temp1_input"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [
+    {
+     "id": "power1_input",
+     "label": "PPT",
+     "watts": 0.003,
+     "path": "/sys/class/hwmon/hwmon4/power1_input"
+    }
+   ],
+   "freq": [
+    {
+     "id": "freq1",
+     "label": "sclk",
+     "mhz": 600.0,
+     "path": "/sys/class/hwmon/hwmon4/freq1_input"
+    }
+   ]
+  }
+ ],
+ "thermal_zones": [],
+ "power_supply": [],
+ "thinkpad_proc": {},
+ "dell_ddv_wmi": false,
+ "throttle": {
+  "cpus_with_counters": 0,
+  "core_throttle_count_sum": 0,
+  "core_throttle_count_max": 0,
+  "core_throttle_total_time_ms_sum": 0,
+  "core_nonzero": {},
+  "packages": {}
+ },
+ "rapl": [
+  {
+   "zone": "intel-rapl:0",
+   "name": "package-0",
+   "enabled": "0",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "65532610987",
+   "constraints": []
+  },
+  {
+   "zone": "intel-rapl:0:0",
+   "name": "core",
+   "enabled": "0",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "65532610987",
+   "constraints": []
+  }
+ ],
+ "rapl_watts": {
+  "intel-rapl:0 package-0": 16.58,
+  "intel-rapl:0:0 core": 0.26
+ },
+ "cpufreq": {
+  "scaling_driver": "amd-pstate-epp",
+  "scaling_governor": "powersave",
+  "cpuinfo_min_freq": "600000",
+  "cpuinfo_max_freq": "5484000",
+  "scaling_min_freq": "600000",
+  "scaling_max_freq": "5484000",
+  "energy_performance_preference": "performance",
+  "amd_pstate_max_freq": "5484000",
+  "amd_pstate_highest_perf": "166",
+  "amd_pstate_lowest_nonlinear_freq": "3004000",
+  "amd_pstate_hw_prefcore": "enabled",
+  "cur_mhz": {
+   "min": 600,
+   "avg": 1792,
+   "max": 5470
+  },
+  "cpuinfo_max_freq_all": [
+   5484
+  ],
+  "scaling_max_freq_all": [
+   5484
+  ],
+  "amd_pstate_status": "active",
+  "amd_pstate_prefcore": "enabled"
+ },
+ "platform_profile": null,
+ "drives": [
+  {
+   "dev": "sda",
+   "serial": "PN2338P4HASBJC",
+   "model": "HGST HUS724040AL",
+   "tran": "sata",
+   "rota": true,
+   "size": "3.6T",
+   "smartctl_rc": 0,
+   "temp": 46,
+   "lifetime_max": 56,
+   "op_limit_max": 60,
+   "limit_max": 70,
+   "power_cycle_max": 47,
+   "sct_history_op_limit_max": 60,
+   "sct_history_limit_max": 70,
+   "devstat_highest_temperature": 56,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 60,
+   "smart_passed": true,
+   "power_on_hours": 56159
+  },
+  {
+   "dev": "sdb",
+   "serial": "PN1334PCKSXVZS",
+   "model": "HGST HUS724040AL",
+   "tran": "sata",
+   "rota": true,
+   "size": "3.6T",
+   "smartctl_rc": 0,
+   "temp": 39,
+   "lifetime_max": 48,
+   "op_limit_max": 60,
+   "limit_max": 70,
+   "power_cycle_max": 41,
+   "sct_history_op_limit_max": 60,
+   "sct_history_limit_max": 70,
+   "devstat_highest_temperature": 48,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 60,
+   "smart_passed": true,
+   "power_on_hours": 55978
+  },
+  {
+   "dev": "sdc",
+   "serial": "PN2338P4H9UPLC",
+   "model": "HGST HUS724040AL",
+   "tran": "sata",
+   "rota": true,
+   "size": "3.6T",
+   "smartctl_rc": 0,
+   "temp": 45,
+   "lifetime_max": 55,
+   "op_limit_max": 60,
+   "limit_max": 70,
+   "power_cycle_max": 46,
+   "sct_history_op_limit_max": 60,
+   "sct_history_limit_max": 70,
+   "devstat_highest_temperature": 55,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 60,
+   "smart_passed": true,
+   "power_on_hours": 56642
+  },
+  {
+   "dev": "sdd",
+   "serial": "PN1334PCKSK5PS",
+   "model": "HGST HUS724040AL",
+   "tran": "sata",
+   "rota": true,
+   "size": "3.6T",
+   "smartctl_rc": 0,
+   "temp": 39,
+   "lifetime_max": 45,
+   "op_limit_max": 60,
+   "limit_max": 70,
+   "power_cycle_max": 40,
+   "sct_history_op_limit_max": 60,
+   "sct_history_limit_max": 70,
+   "devstat_highest_temperature": 45,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 60,
+   "smart_passed": true,
+   "power_on_hours": 56009
+  },
+  {
+   "dev": "sde",
+   "serial": "PN2338P4HAZR9C",
+   "model": "HGST HUS724040AL",
+   "tran": "sata",
+   "rota": true,
+   "size": "3.6T",
+   "smartctl_rc": 0,
+   "temp": 44,
+   "lifetime_max": 54,
+   "op_limit_max": 60,
+   "limit_max": 70,
+   "power_cycle_max": 45,
+   "sct_history_op_limit_max": 60,
+   "sct_history_limit_max": 70,
+   "devstat_highest_temperature": 54,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 60,
+   "smart_passed": true,
+   "power_on_hours": 56695
+  },
+  {
+   "dev": "sdf",
+   "serial": "PN2338P4HAPSEC",
+   "model": "HGST HUS724040AL",
+   "tran": "sata",
+   "rota": true,
+   "size": "3.6T",
+   "smartctl_rc": 0,
+   "temp": 39,
+   "lifetime_max": 47,
+   "op_limit_max": 60,
+   "limit_max": 70,
+   "power_cycle_max": 40,
+   "sct_history_op_limit_max": 60,
+   "sct_history_limit_max": 70,
+   "devstat_highest_temperature": 47,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 60,
+   "smart_passed": true,
+   "power_on_hours": 56159
+  },
+  {
+   "dev": "sdg",
+   "serial": "PN2334PCKTSADB",
+   "model": "HGST HUS724040AL",
+   "tran": "sata",
+   "rota": true,
+   "size": "3.6T",
+   "smartctl_rc": 0,
+   "temp": 41,
+   "lifetime_max": 50,
+   "op_limit_max": 60,
+   "limit_max": 70,
+   "power_cycle_max": 42,
+   "sct_history_op_limit_max": 60,
+   "sct_history_limit_max": 70,
+   "devstat_highest_temperature": 50,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 60,
+   "smart_passed": true,
+   "power_on_hours": 56986
+  },
+  {
+   "dev": "sdh",
+   "serial": "PN2338P4HAS7JC",
+   "model": "HGST HUS724040AL",
+   "tran": "sata",
+   "rota": true,
+   "size": "3.6T",
+   "smartctl_rc": 0,
+   "temp": 39,
+   "lifetime_max": 46,
+   "op_limit_max": 60,
+   "limit_max": 70,
+   "power_cycle_max": 40,
+   "sct_history_op_limit_max": 60,
+   "sct_history_limit_max": 70,
+   "devstat_highest_temperature": 46,
+   "devstat_time_in_over_temperature": 0,
+   "devstat_specified_maximum_operating_temperature": 60,
+   "smart_passed": true,
+   "power_on_hours": 56160
+  },
+  {
+   "dev": "nvme0n1",
+   "serial": "252050172DE8",
+   "model": "CT1000P3PSSD8",
+   "tran": "nvme",
+   "rota": false,
+   "size": "931.5G",
+   "smartctl_rc": 4,
+   "messages": [
+    "Read Self-test Log failed: Invalid Field in Command (0x002)"
+   ],
+   "temp": 30,
+   "nvme_sensors": [
+    30
+   ],
+   "nvme_warning_temp_time_min": 0,
+   "nvme_critical_comp_time_min": 0,
+   "nvme_wctemp": 83,
+   "nvme_cctemp": 85,
+   "smart_passed": true,
+   "power_on_hours": 5899
+  },
+  {
+   "dev": "nvme1n1",
+   "serial": "252050173620",
+   "model": "CT1000P3PSSD8",
+   "tran": "nvme",
+   "rota": false,
+   "size": "931.5G",
+   "smartctl_rc": 4,
+   "messages": [
+    "Read Self-test Log failed: Invalid Field in Command (0x002)"
+   ],
+   "temp": 30,
+   "nvme_sensors": [
+    30
+   ],
+   "nvme_warning_temp_time_min": 0,
+   "nvme_critical_comp_time_min": 0,
+   "nvme_wctemp": 83,
+   "nvme_cctemp": 85,
+   "smart_passed": true,
+   "power_on_hours": 7861
+  }
+ ],
+ "textfile": {
+  "/var/lib/node_exporter/textfile_collector/drivecheck.prom": [
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/nvme0\",serial=\"252050172DE8\",class=\"nvme\",model=\"CT1000P3PSSD8\",firmware=\"P9CR413\",kind=\"nvme\"} 1",
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/nvme1\",serial=\"252050173620\",class=\"nvme\",model=\"CT1000P3PSSD8\",firmware=\"P9CR413\",kind=\"nvme\"} 1",
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/sda\",serial=\"PN2338P4HASBJC\",class=\"sata\",model=\"HGST HUS724040ALA640\",firmware=\"MFAOAA70\",kind=\"hdd\"} 1",
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/sdb\",serial=\"PN1334PCKSXVZS\",class=\"sata\",model=\"HGST HUS724040ALA640\",firmware=\"MFAOAA70\",kind=\"hdd\"} 1",
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/sdc\",serial=\"PN2338P4H9UPLC\",class=\"sata\",model=\"HGST HUS724040ALA640\",firmware=\"MFAOAA70\",kind=\"hdd\"} 1",
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/sdd\",serial=\"PN1334PCKSK5PS\",class=\"sata\",model=\"HGST HUS724040ALA640\",firmware=\"MFAOAA70\",kind=\"hdd\"} 1",
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/sde\",serial=\"PN2338P4HAZR9C\",class=\"sata\",model=\"HGST HUS724040ALA640\",firmware=\"MFAOAA70\",kind=\"hdd\"} 1",
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/sdf\",serial=\"PN2338P4HAPSEC\",class=\"sata\",model=\"HGST HUS724040ALA640\",firmware=\"MFAOAA70\",kind=\"hdd\"} 1",
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/sdg\",serial=\"PN2334PCKTSADB\",class=\"sata\",model=\"HGST HUS724040ALA640\",firmware=\"MFAOAA70\",kind=\"hdd\"} 1",
+   "drivecheck_drive_info{host=\"TinyNAS\",device=\"/dev/sdh\",serial=\"PN2338P4HAS7JC\",class=\"sata\",model=\"HGST HUS724040ALA640\",firmware=\"MFAOAA70\",kind=\"hdd\"} 1",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/nvme0\",serial=\"252050172DE8\",class=\"nvme\",model=\"CT1000P3PSSD8\"} 30",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/nvme1\",serial=\"252050173620\",class=\"nvme\",model=\"CT1000P3PSSD8\"} 30",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/sda\",serial=\"PN2338P4HASBJC\",class=\"sata\",model=\"HGST HUS724040ALA640\"} 46",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/sdb\",serial=\"PN1334PCKSXVZS\",class=\"sata\",model=\"HGST HUS724040ALA640\"} 39",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/sdc\",serial=\"PN2338P4H9UPLC\",class=\"sata\",model=\"HGST HUS724040ALA640\"} 45",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/sdd\",serial=\"PN1334PCKSK5PS\",class=\"sata\",model=\"HGST HUS724040ALA640\"} 38",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/sde\",serial=\"PN2338P4HAZR9C\",class=\"sata\",model=\"HGST HUS724040ALA640\"} 44",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/sdf\",serial=\"PN2338P4HAPSEC\",class=\"sata\",model=\"HGST HUS724040ALA640\"} 38",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/sdg\",serial=\"PN2334PCKTSADB\",class=\"sata\",model=\"HGST HUS724040ALA640\"} 40",
+   "drivecheck_temperature_celsius{host=\"TinyNAS\",device=\"/dev/sdh\",serial=\"PN2338P4HAS7JC\",class=\"sata\",model=\"HGST HUS724040ALA640\"} 39",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/nvme0\",serial=\"252050172DE8\"} 83",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/nvme1\",serial=\"252050173620\"} 83",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/sda\",serial=\"PN2338P4HASBJC\"} 60",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/sdb\",serial=\"PN1334PCKSXVZS\"} 60",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/sdc\",serial=\"PN2338P4H9UPLC\"} 60",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/sdd\",serial=\"PN1334PCKSK5PS\"} 60",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/sde\",serial=\"PN2338P4HAZR9C\"} 60",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/sdf\",serial=\"PN2338P4HAPSEC\"} 60",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/sdg\",serial=\"PN2334PCKTSADB\"} 60",
+   "drivecheck_temperature_limit_celsius{host=\"TinyNAS\",device=\"/dev/sdh\",serial=\"PN2338P4HAS7JC\"} 60",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/nvme0\",serial=\"252050172DE8\"} 53",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/nvme1\",serial=\"252050173620\"} 53",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/sda\",serial=\"PN2338P4HASBJC\"} 14",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/sdb\",serial=\"PN1334PCKSXVZS\"} 21",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/sdc\",serial=\"PN2338P4H9UPLC\"} 15",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/sdd\",serial=\"PN1334PCKSK5PS\"} 22",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/sde\",serial=\"PN2338P4HAZR9C\"} 16",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/sdf\",serial=\"PN2338P4HAPSEC\"} 22",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/sdg\",serial=\"PN2334PCKTSADB\"} 20",
+   "drivecheck_temperature_margin_celsius{host=\"TinyNAS\",device=\"/dev/sdh\",serial=\"PN2338P4HAS7JC\"} 21"
+  ]
+ },
+ "skipped": []
+}

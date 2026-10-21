@@ -79,11 +79,15 @@ smartmontools 7.4, sg3-utils 1.46, python3-serial 3.5.
 
 ### The rack and the room
 
-- One rack in a living room, bottom to top: the MD1200, mementos, ryuji, then other gear; a CyberPower PDU20SW8FNET
-  on a 20 A circuit with nothing else on it (its NEMA 5-20 plug reaches a 15 A outlet through an adapter). About
-  700 W at idle; 12.9 A at most with everything at full load. sojiro, a Xeon D-1521 backup box with no fan
-  controller, sits behind the rack with its BMC fan offset at -80 (set once with
-  `ryuji-fan-guard/gbt-fan-offset.py`; the BMC keeps it).
+- Since 2026-10-18 one 15U open-frame rack stands against a living-room wall, a few inches off it. Bottom to top: the
+  MD1200, mementos, ryuji (one FSP800-20ERM supply), other gear, a 4U shelf (makoto, futaba and the laptops morgana and
+  yusuke), the KVM; the switch and the PDU at the back near the top. sojiro, a Xeon D-1521 backup box with no fan
+  controller, sits on top with its BMC fan offset at -80 (set with `ryuji-fan-guard/gbt-fan-offset.py`; the BMC keeps
+  it). tinynas stands beside the rack, tinypc is in the bedroom.
+- Power: the CyberPower PDU20SW8FNET (mementos, the shelf, sojiro, the network gear) is on a 20 A circuit through a
+  50 ft 14-gauge cord and an adapter to a 15 A outlet, so 12 A continuous is its ceiling: 5.2-5.4 A at idle, 8.9 A at
+  most with everything at full load. ryuji, tinynas, makoto, futaba and the laptops share a 15 A strip with no meter
+  (8.64 A at most, estimated by `testing/lr-cut.py`). Until 10-18 ryuji was on the PDU too: 12.9 A at most then.
 - An AC cools the room. During the 2026-10-04 to 10-06 work it was failing and the room cycled 24-28C;
   the numbers below were measured in that room.
 
@@ -261,6 +265,7 @@ fan-watchdog/tests/run-tests.sh                                                 
 python3 -I ryuji-fan-guard/tests/test_ryuji_fan_guard.py ryuji-fan-guard/ryuji-fan-guard  # 50 scenarios (v2.11)
 python3 -I ryuji-fan-guard/tests/test_guard_start.py ryuji-fan-guard/ryuji-fan-guard      # start-up retry (v2.2)
 python3 -I makoto-fan/tests/test_makoto_fan.py                                             # 12 scenarios (v1)
+sh testing/tests/run-all.sh             # disk-soak, lr-cut, lab-load: 171 fake-clock cases under a shim PATH
 ```
 
 ## Tools
@@ -290,7 +295,8 @@ python3 -I makoto-fan/tests/test_makoto_fan.py                                  
 `METHODOLOGY.md` covers how the 2026-10-05/06 data was gathered, what went wrong (mainly a room that cycled 24-28C
 while the AC struggled) and how to run the tests again: the shelf and mementos with the AC working, ryuji after the
 E5-2696 v4 upgrade, noise with a microphone, and tinynas after its cage fan check. `testing/` has the scripts as they
-ran (see `testing/README.md`; makoto's, 2026-10-19/20, in `testing/makoto/`).
+ran (see `testing/README.md`; makoto's, 2026-10-19/20, in `testing/makoto/`; the new spot's, 2026-10-20/21, in
+`testing/` with its dry runs in `testing/tests/`).
 
 ## Results, 2026-10-06 (room 24-28C)
 
@@ -561,3 +567,41 @@ FAN1 1% / FAN4 28%. v1 is production since 2026-10-20 14:54.
 | 2 workers (16 W), makoto-fan | 39 / 47% | 4,100 / 2,900 | 74C | 51C |
 | 4 workers (24 W), makoto-fan | 58 / 61% | 5,100 / 3,400 | 78C | 51C |
 | 8 workers (24 W), makoto-fan | 61 / 63% | 5,300 / 3,500 | 78-79C | 52C |
+
+## Results, 2026-10-20/21: the new spot (room ~23C)
+
+The rack's first test against the wall (10-18 layout above), every reachable box loaded. Tuesday ran every block:
+idle, quiet soaks, noise yardsticks, ryuji alone, the shelf boxes, everything at once and an evening mix. On
+Wednesday the drive soaks ran and the loud blocks were skipped (Rohit worked from home). Noise is the mirror's Pi mic, a doorway's
+width from the rack (AGC on, so only differences count). No controller changed.
+
+| | Old spot | New spot | Notes |
+|---|---|---|---|
+| Idle, R720 inlet | 24C | 23C | night, 01:30-05:30 |
+| Idle, mementos / shelf | CPU 51, 10K SAS 35, shelf drive 50, backplane 44C | 50, 34, 49, 44C | 0 to +1C over the inlet |
+| Idle, ryuji | SIO1 71, VR 56, DIMM 44, CPU 43C | 72, 57, 45, 43C | +2C over the inlet |
+| Idle, sojiro | CPU 66, MB_TEMP1 70, drives 42C (behind the rack) | 66, 70, 42C (on top) | +1C over the inlet |
+| Full load, ryuji (44 workers, guard -80) | CPU 74 (76), VR 80, DIMM 54C | 74 (75), 79, 52C | |
+| Full load, mementos (48 workers) | CPU 81 (82)C, fans 34-35% | the same | onset 84C, 41% for ~40 s |
+| Shelf, random reads 60 min | drive 53, backplane 46C, fans 16-22% | 53, 47C, fans to 26% | stop lines 54 / 48C |
+| Intake under the combined hour | +1.0C | -1.3C, 0.45C under the room proxy | no recirculation |
+| Dining-room PDU peak | 12.9 A (ryuji on it) | 8.9 A | |
+
+Where the new spot runs out (each stopped at its line by design):
+
+| Box | Load | Result |
+|---|---|---|
+| sojiro, on top | 8 or 4 threads + random reads | package 93C in 75 s (stop 92); its BMC ran CPU0_FAN at 6,200 rpm, so the offset is not the lever |
+| sojiro, on top | random reads, CPU idle | drives 42 -> 50C in 17 min (stop 50) |
+| tinynas | random reads, CPU idle | hottest HGST 47 -> 55C in 30 min (stop 55, rated 60); its drive cage has no fan |
+| morgana, 4U shelf | 8 threads | DPTF skin 51C in 46 s (stop 50), not throttled |
+| futaba / yusuke / makoto, 4U shelf | 2 / 16 / 2-4 threads | CPU 64 (stop 79) / Tctl 68 (90) / CPU 78 (88): fine |
+
+- Keep every controller: ryuji-fan-guard v2.11 (the -127 crossover is still between ~190 and ~250 W package: a tie at
+  22 workers, -3.3 dB at 33; -60 is 1.4 dB louder at 11 workers), fan-watchdog v4.2, md1200-fan v3.2 (53C reached,
+  not passed, no hunting), sojiro at -80.
+- The noise is ryuji's power supply: its whine (700-820 Hz) sits in the room's ringing band at every load. The R720
+  rings there at 40-45% (+9.3 to +10.3 dB at the mic); 39% is +6.6. The evening mix measured +3.5 dB.
+- Keep CPU and random-read jobs off sojiro on the top plate (backups and scrubs are fine at 42-47C), add airflow over
+  tinynas's drive cage before long random-read work, and keep morgana idle in the stack.
+- The living-room strip peaked at 8.64 A (estimated) against `lr-cut.py`'s 11 A cut; neither cut tripped.

@@ -1,0 +1,11 @@
+{
+ "_doc": "T4 tinypc, 14:25-15:25 10-20 (unit lab-load-t4-tinypc): CPU only, nice 19",
+ "tinypc": [
+  {
+   "name": "t4",
+   "cpu": 20,
+   "min": 60,
+   "until": "2026-10-20 15:25"
+  }
+ ]
+}

@@ -1,0 +1,1 @@
+{"_doc": "E1 10-20: makoto holds for the makoto session (2 workers 16:40-17:10, 4 workers 17:10-17:40), nice 19, B4", "makoto": [{"name": "m2", "cpu": 2, "min": 30, "until": "2026-10-20 17:10"}, {"name": "m4", "cpu": 4, "min": 30, "until": "2026-10-20 17:40"}]}

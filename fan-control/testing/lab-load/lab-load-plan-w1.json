@@ -1,0 +1,68 @@
+{
+ "_doc": "W1 half load, 08:00-10:00 10-21 (only after Rohit's adapter/cord check); tinypc: its 20-thread block moved from Tue T4 to W0 (unit lab-load-w0-tinypc, 07:00 timer, 55 min, never past 07:58; disks-only window, hours before the rack-only phase and the 15:30 baseline); makoto: 2 workers nice 19 (unit makoto-fan-test-lt1020-w1, w1-ok + mirror-voice gate); 10-20 21:15: sojiro CPU idle in W1 (93C at 4 threads in T3), morgana not loaded (50C skin stop)",
+ "morgana": [
+  {
+   "name": "w1",
+   "cpu": 4,
+   "min": 120,
+   "until": "2026-10-21 10:00"
+  }
+ ],
+ "yusuke": [
+  {
+   "name": "w1",
+   "cpu": 8,
+   "min": 120,
+   "until": "2026-10-21 10:00"
+  }
+ ],
+ "futaba": [
+  {
+   "name": "w1",
+   "cpu": 1,
+   "min": 120,
+   "until": "2026-10-21 10:00"
+  }
+ ],
+ "tinynas": [
+  {
+   "name": "w1",
+   "cpu": 6,
+   "fio": {
+    "mode": "seq",
+    "pool": "homePool"
+   },
+   "min": 120,
+   "until": "2026-10-21 10:00"
+  }
+ ],
+ "sojiro": [
+  {
+   "name": "w1",
+   "cpu": 0,
+   "fio": {
+    "mode": "seq",
+    "pool": "backupPool"
+   },
+   "min": 120,
+   "until": "2026-10-21 10:00"
+  }
+ ],
+ "tinypc": [
+  {
+   "name": "w0",
+   "cpu": 20,
+   "min": 55,
+   "until": "2026-10-21 07:58"
+  }
+ ],
+ "makoto": [
+  {
+   "name": "w1",
+   "cpu": 2,
+   "nice": 19,
+   "min": 120,
+   "until": "2026-10-21 10:00"
+  }
+ ]
+}

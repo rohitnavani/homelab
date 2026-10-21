@@ -1,0 +1,51 @@
+{
+ "_doc": "T3a/T3b/T4, 13:15-15:25 10-20 (unit lab-load-t3-<host>, start 13:15, not-after 13:45): every step ends at its \"until\" clock time, so a late start keeps T4 aligned",
+ "morgana": [
+  {
+   "name": "t3t4",
+   "cpu": 8,
+   "min": 130,
+   "until": "2026-10-20 15:25"
+  }
+ ],
+ "yusuke": [
+  {
+   "name": "t3t4",
+   "cpu": 16,
+   "min": 130,
+   "until": "2026-10-20 15:25"
+  }
+ ],
+ "futaba": [
+  {
+   "name": "t3t4",
+   "cpu": 2,
+   "min": 130,
+   "until": "2026-10-20 15:25"
+  }
+ ],
+ "tinynas": [
+  {
+   "name": "t3seq",
+   "cpu": 12,
+   "fio": {
+    "mode": "seq",
+    "pool": "homePool"
+   },
+   "min": 60,
+   "until": "2026-10-20 14:15"
+  }
+ ],
+ "sojiro": [
+  {
+   "name": "t3t4",
+   "cpu": 8,
+   "fio": {
+    "mode": "rand",
+    "pool": "backupPool"
+   },
+   "min": 130,
+   "until": "2026-10-20 15:25"
+  }
+ ]
+}

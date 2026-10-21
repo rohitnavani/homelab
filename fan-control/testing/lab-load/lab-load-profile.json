@@ -1,0 +1,597 @@
+{
+ "_doc": "lab-load.py profiles, 2026-10-20. Stop = 5C under each limit (brief B7) unless noted; abort = the limit itself (one reading); n = readings in a row at the stop line. Built from STATE-S0.md and data/sensors-inventory.json. Installed on every host as /var/tmp/lab-load-profile.json; each host picks its own entry by hostname.",
+ "hosts": {
+  "futaba": {
+   "host": "futaba",
+   "vendor": "intel",
+   "threads": 4,
+   "max_cpu": 2,
+   "note": "HA, DNS, Prometheus: never above 2 threads (clamped); CPU stop 5 under coretemp high 84",
+   "sensors": [
+    {
+     "name": "cpu_pkg",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Package id 0",
+     "stop": 79,
+     "abort": 84,
+     "target": 74
+    },
+    {
+     "name": "cpu_core",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Core \\d+",
+     "log_only": true
+    },
+    {
+     "name": "peci",
+     "kind": "hwmon",
+     "chip": "nct6683",
+     "label": "PECI 0\\.0",
+     "log_only": true
+    },
+    {
+     "name": "diode0",
+     "kind": "hwmon",
+     "chip": "nct6683",
+     "label": "Diode 0.*",
+     "log_only": true
+    },
+    {
+     "name": "air_diode1",
+     "kind": "hwmon",
+     "chip": "nct6683",
+     "label": "Diode 1.*",
+     "log_only": true
+    }
+   ],
+   "drives": [
+    {
+     "name": "ssd",
+     "serial": "50026B7686786BE8",
+     "proto": "ata",
+     "stop": 65,
+     "abort": 70
+    }
+   ],
+   "guards": {
+    "futaba_ha": {
+     "ha_url": "http://10.0.0.11:8123/",
+     "ha_max_s": 2.0
+    }
+   }
+  },
+  "morgana": {
+   "host": "morgana",
+   "vendor": "intel",
+   "threads": 8,
+   "max_cpu": 8,
+   "note": "no battery temperature: DPTF TSKN skin zone is the binding proxy (stop 50, passive trip 60); CPU n=3 so the 28 s PL2 burst at the onset is not a stop by itself (a real throttle event is)",
+   "sensors": [
+    {
+     "name": "cpu_pkg",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Package id 0",
+     "stop": 95,
+     "abort": 100,
+     "target": 90,
+     "n": 3
+    },
+    {
+     "name": "cpu_core",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Core \\d+",
+     "log_only": true
+    },
+    {
+     "name": "skin_tskn",
+     "kind": "zone",
+     "zone": "TSKN",
+     "stop": 50,
+     "abort": 55,
+     "target": 45
+    },
+    {
+     "name": "mem_tmem",
+     "kind": "zone",
+     "zone": "TMEM",
+     "stop": 55,
+     "abort": 60,
+     "target": 50
+    },
+    {
+     "name": "ngff",
+     "kind": "zone",
+     "zone": "NGFF",
+     "stop": 85,
+     "abort": 90
+    },
+    {
+     "name": "tcpu",
+     "kind": "zone",
+     "zone": "TCPU",
+     "log_only": true
+    },
+    {
+     "name": "nvme",
+     "kind": "hwmon",
+     "chip": "nvme",
+     "label": "Composite",
+     "stop": 78,
+     "abort": 83,
+     "target": 73
+    },
+    {
+     "name": "dell_smm",
+     "kind": "hwmon",
+     "chip": "dell_smm",
+     "label": ".*",
+     "log_only": true
+    },
+    {
+     "name": "battery",
+     "kind": "battery",
+     "stop": 45,
+     "abort": 50,
+     "optional": true
+    }
+   ]
+  },
+  "yusuke": {
+   "host": "yusuke",
+   "vendor": "amd",
+   "threads": 16,
+   "max_cpu": 16,
+   "note": "AMD: Tctl only (no thresholds exposed, Tjmax 100): stop 90; no throttle counters, clocks logged; no battery temperature and no proxy (the EC slots copy the CPU)",
+   "sensors": [
+    {
+     "name": "tctl",
+     "kind": "hwmon",
+     "chip": "k10temp",
+     "label": "Tctl",
+     "stop": 90,
+     "abort": 95,
+     "target": 85
+    },
+    {
+     "name": "nvme",
+     "kind": "hwmon",
+     "chip": "nvme",
+     "label": "Composite",
+     "stop": 81,
+     "abort": 86,
+     "target": 76
+    },
+    {
+     "name": "ec_cpu",
+     "kind": "hwmon",
+     "chip": "thinkpad",
+     "label": "CPU",
+     "log_only": true
+    },
+    {
+     "name": "gpu_edge",
+     "kind": "hwmon",
+     "chip": "amdgpu",
+     "label": "edge",
+     "log_only": true
+    },
+    {
+     "name": "acpitz",
+     "kind": "hwmon",
+     "chip": "acpitz",
+     "label": ".*",
+     "log_only": true
+    },
+    {
+     "name": "battery",
+     "kind": "battery",
+     "stop": 45,
+     "abort": 50,
+     "optional": true
+    }
+   ]
+  },
+  "tinynas": {
+   "host": "tinynas",
+   "vendor": "amd",
+   "threads": 12,
+   "max_cpu": 12,
+   "note": "AMD: Tctl only (Tjmax 95): stop 90; HGST rated 60: stop 55 (smartctl every 60 s); NVMe warning 83: stop 78; nvme1n1 (252050173620: homePool SLOG/L2ARC, nvmePool) is a drive too, so the t4rand reads get SMART health (media errors, critical warning)",
+   "sensors": [
+    {
+     "name": "tctl",
+     "kind": "hwmon",
+     "chip": "k10temp",
+     "label": "Tctl",
+     "stop": 90,
+     "abort": 95,
+     "target": 85
+    },
+    {
+     "name": "nvme",
+     "kind": "hwmon",
+     "chip": "nvme",
+     "label": "Composite",
+     "stop": 78,
+     "abort": 83,
+     "target": 73
+    },
+    {
+     "name": "gpu_edge",
+     "kind": "hwmon",
+     "chip": "amdgpu",
+     "label": "edge",
+     "log_only": true
+    }
+   ],
+   "drives": [
+    {
+     "name": "hgst",
+     "serial": "PN2338P4HASBJC",
+     "proto": "ata",
+     "stop": 55,
+     "abort": 60
+    },
+    {
+     "name": "hgst",
+     "serial": "PN1334PCKSXVZS",
+     "proto": "ata",
+     "stop": 55,
+     "abort": 60
+    },
+    {
+     "name": "hgst",
+     "serial": "PN2338P4H9UPLC",
+     "proto": "ata",
+     "stop": 55,
+     "abort": 60
+    },
+    {
+     "name": "hgst",
+     "serial": "PN1334PCKSK5PS",
+     "proto": "ata",
+     "stop": 55,
+     "abort": 60
+    },
+    {
+     "name": "hgst",
+     "serial": "PN2338P4HAZR9C",
+     "proto": "ata",
+     "stop": 55,
+     "abort": 60
+    },
+    {
+     "name": "hgst",
+     "serial": "PN2338P4HAPSEC",
+     "proto": "ata",
+     "stop": 55,
+     "abort": 60
+    },
+    {
+     "name": "hgst",
+     "serial": "PN2334PCKTSADB",
+     "proto": "ata",
+     "stop": 55,
+     "abort": 60
+    },
+    {
+     "name": "hgst",
+     "serial": "PN2338P4HAS7JC",
+     "proto": "ata",
+     "stop": 55,
+     "abort": 60
+    },
+    {
+     "name": "nvme",
+     "serial": "252050173620",
+     "proto": "nvme",
+     "stop": 78,
+     "abort": 83
+    }
+   ]
+  },
+  "sojiro": {
+   "host": "sojiro",
+   "vendor": "intel",
+   "threads": 8,
+   "max_cpu": 8,
+   "note": "no fan controller: BMC temps in-band every 30 s; MB_TEMP1 reads ~70 at idle (its 55/60 thresholds are wrong for this board): stop = start + 8; capped at 78 / 82 (idle 70 + 8 / + 12) so a warm start cannot raise it",
+   "sensors": [
+    {
+     "name": "cpu_pkg",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Package id 0",
+     "stop": 92,
+     "abort": 97,
+     "target": 89
+    },
+    {
+     "name": "cpu_core",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Core \\d+",
+     "log_only": true
+    },
+    {
+     "name": "pch",
+     "kind": "hwmon",
+     "chip": "pch_haswell",
+     "label": ".*",
+     "stop": 110,
+     "abort": 115
+    },
+    {
+     "name": "bmc_cpu0",
+     "kind": "ipmi",
+     "sensor": "CPU0_TEMP",
+     "stop": 92,
+     "abort": 97
+    },
+    {
+     "name": "bmc_mb1",
+     "kind": "ipmi",
+     "sensor": "MB_TEMP1",
+     "stop_over_start": 8,
+     "abort_over_start": 12,
+     "stop_max": 78,
+     "abort_max": 82
+    }
+   ],
+   "drives": [
+    {
+     "name": "mg04",
+     "serial": "X7UTK3EHFSYC",
+     "proto": "ata",
+     "stop": 50,
+     "abort": 55
+    },
+    {
+     "name": "mg04",
+     "serial": "X7UQK5XKFSYC",
+     "proto": "ata",
+     "stop": 50,
+     "abort": 55
+    },
+    {
+     "name": "mg04",
+     "serial": "X7UDK2CXFSYC",
+     "proto": "ata",
+     "stop": 50,
+     "abort": 55
+    },
+    {
+     "name": "mg04",
+     "serial": "X7UQK5XJFSYC",
+     "proto": "ata",
+     "stop": 50,
+     "abort": 55
+    },
+    {
+     "name": "boot",
+     "serial": "50026B7783924680",
+     "proto": "ata",
+     "stop": 65,
+     "abort": 70
+    }
+   ],
+   "guards": {
+    "sojiro_ipmi": {}
+   }
+  },
+  "tinypc": {
+   "host": "tinypc",
+   "vendor": "intel",
+   "threads": 20,
+   "max_cpu": 20,
+   "note": "CPU only while Rohit is out (no GPU load: whisper-gpu and Ollama keep it); coretemp high 80 is the fan-target number, TjMax 100: stop 95 on 3 readings (PL2 180 W for 28 s at the onset), a throttle event stops at once; GPU logged every 60 s (stop 88 = 93 max operating - 5); DIMM spd5118 temp1_max 55 is the SPD hub's default high-alarm register, not the DDR5 rating (0-85C, crit register 85): stop 80",
+   "sensors": [
+    {
+     "name": "cpu_pkg",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Package id 0",
+     "stop": 95,
+     "abort": 100,
+     "target": 90,
+     "n": 3
+    },
+    {
+     "name": "cpu_core",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Core \\d+",
+     "log_only": true
+    },
+    {
+     "name": "dimm",
+     "kind": "hwmon",
+     "chip": "spd5118",
+     "label": ".*",
+     "stop": 80,
+     "abort": 85,
+     "target": 75
+    },
+    {
+     "name": "nvme",
+     "kind": "hwmon",
+     "chip": "nvme",
+     "label": "Composite",
+     "stop": 80,
+     "abort": 85,
+     "target": 75
+    },
+    {
+     "name": "nvme_other",
+     "kind": "hwmon",
+     "chip": "nvme",
+     "label": "Sensor \\d",
+     "log_only": true
+    },
+    {
+     "name": "gpu",
+     "kind": "nvidia",
+     "stop": 88,
+     "abort": 93
+    }
+   ],
+   "guards": {
+    "tinypc_sat": {
+     "user": "rohit",
+     "units": [
+      "mirror-voice-sat",
+      "whisper-gpu"
+     ]
+    }
+   }
+  },
+  "makoto": {
+   "host": "makoto",
+   "vendor": "intel",
+   "threads": 8,
+   "max_cpu": 4,
+   "allow_from": "2026-10-20 16:00",
+   "note": "from the Tue 16:00 handoff only (lab-load refuses makoto before it and without this entry); B4: nice 19, at most 4 of 8 threads (8 only with mirror-voice's OK: not in any plan), no disk load; the makoto session's stop lines (CPU 88, Card Side 57, DDR 75, NVMe 72); Card Side, DDR, MB and the BMC CPU come from makoto-fan's /run/makoto-fan.state (its own \"t\") or the minutely ipmitool textfile, never from ipmitool (makoto-fan owns the BMC); mirror-voice guard: a wake or request in its journal stops the load; makoto_fan guard: makoto-fan active and its state fresh (t within 120 s, no emergency) on every sample, else refused / stopped on 2 bad samples (our unit names keep its stale-controller alert quiet, so this is the only protection)",
+   "sensors": [
+    {
+     "name": "cpu_pkg",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Package id 0",
+     "stop": 88,
+     "abort": 92,
+     "n": 3,
+     "target": 83
+    },
+    {
+     "name": "cpu_core",
+     "kind": "hwmon",
+     "chip": "coretemp",
+     "label": "Core \\d+",
+     "log_only": true
+    },
+    {
+     "name": "nvme",
+     "kind": "hwmon",
+     "chip": "nvme",
+     "label": "Composite",
+     "stop": 72,
+     "abort": 77,
+     "target": 67
+    },
+    {
+     "name": "card_side",
+     "kind": "file",
+     "sources": [
+      {
+       "path": "/run/makoto-fan.state",
+       "json": "card",
+       "time_key": "t"
+      },
+      {
+       "path": "/var/lib/prometheus/node-exporter/ipmitool_sensor.prom",
+       "metric": "node_ipmi_temperature_celsius",
+       "label": "sensor",
+       "match": "Card Side Temp"
+      }
+     ],
+     "stop": 57,
+     "abort": 60,
+     "target": 52
+    },
+    {
+     "name": "ddr",
+     "kind": "file",
+     "sources": [
+      {
+       "path": "/run/makoto-fan.state",
+       "json": "ddr",
+       "time_key": "t"
+      },
+      {
+       "path": "/var/lib/prometheus/node-exporter/ipmitool_sensor.prom",
+       "metric": "node_ipmi_temperature_celsius",
+       "label": "sensor",
+       "match": "DDR4_. Temp"
+      }
+     ],
+     "stop": 75,
+     "abort": 80,
+     "target": 70
+    },
+    {
+     "name": "mb",
+     "kind": "file",
+     "sources": [
+      {
+       "path": "/run/makoto-fan.state",
+       "json": "mb",
+       "time_key": "t"
+      },
+      {
+       "path": "/var/lib/prometheus/node-exporter/ipmitool_sensor.prom",
+       "metric": "node_ipmi_temperature_celsius",
+       "label": "sensor",
+       "match": "MB Temp"
+      }
+     ],
+     "log_only": true
+    },
+    {
+     "name": "bmc_cpu",
+     "kind": "file",
+     "sources": [
+      {
+       "path": "/run/makoto-fan.state",
+       "json": "cpu",
+       "time_key": "t"
+      },
+      {
+       "path": "/var/lib/prometheus/node-exporter/ipmitool_sensor.prom",
+       "metric": "node_ipmi_temperature_celsius",
+       "label": "sensor",
+       "match": "CPU1 Temp"
+      }
+     ],
+     "log_only": true
+    },
+    {
+     "name": "fan1_pct",
+     "kind": "file",
+     "sources": [
+      {
+       "path": "/run/makoto-fan.state",
+       "json": "fan1",
+       "time_key": "t"
+      }
+     ],
+     "log_only": true
+    },
+    {
+     "name": "fan4_pct",
+     "kind": "file",
+     "sources": [
+      {
+       "path": "/run/makoto-fan.state",
+       "json": "fan4",
+       "time_key": "t"
+      }
+     ],
+     "log_only": true
+    }
+   ],
+   "guards": {
+    "mirror_voice": {},
+    "makoto_fan": {
+     "unit": "makoto-fan",
+     "state": "/run/makoto-fan.state",
+     "max_age": 120
+    }
+   }
+  }
+ }
+}

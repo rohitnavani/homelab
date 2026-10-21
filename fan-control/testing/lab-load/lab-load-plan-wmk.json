@@ -1,0 +1,22 @@
+{
+ "_doc": "W2 makoto-fan validation, Wed 10:30 (unit makoto-fan-test-lt1020-w2, mirror-voice journal gate): 2 then 4 workers nice 19, 30 min each (makoto's case settles over 15-30 min), then 20 min idle",
+ "makoto": [
+  {
+   "name": "w2_2w",
+   "cpu": 2,
+   "nice": 19,
+   "min": 30
+  },
+  {
+   "name": "w2_4w",
+   "cpu": 4,
+   "nice": 19,
+   "min": 30
+  },
+  {
+   "name": "w2_idle",
+   "cpu": 0,
+   "min": 20
+  }
+ ]
+}

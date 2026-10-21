@@ -1,4 +1,4 @@
-# Test tools (2026-10-05 to 10-20)
+# Test tools (2026-10-05 to 10-21)
 
 The scripts used to measure the rack and validate the fan controllers, kept as they ran so the tests can be
 repeated. How they fit together, and what to change for the repeat runs, is in `../METHODOLOGY.md`.
@@ -15,12 +15,16 @@ setup the tests use:
 | MD1200 shelf | Dell PowerVault MD1200, 2 EMMs fw 1.06, 12x 8 TB Seagate SAS (ST8000NM0075 / ST8000NM0185) | shelf fan experiments (driven from mementos) |
 | ryuji | Gigabyte MD70-HB0, Avocent MergePoint BMC 8.44, 2x Xeon E5-2696 v4 (since 2026-10-12; E5-2650 v3 before), 128 GB DDR4, one FSP800-20ERM supply | BMC fan offset profile and guard tests |
 | sojiro | Gigabyte MB10-series board, Xeon D-1521, 32 GB, Avocent BMC | room proxy; since 2026-10-15 its BMC fan offset sits at -80 (`sojiro-floor.py` step test; set by hand with `../ryuji-fan-guard/gbt-fan-offset.py`, the BMC keeps it; the BMC is on DHCP: `sudo sojiro-bmc-ip` gives its address), no fan controller |
-| tinynas | ASUS PRIME B650M-A AX II, Ryzen 5 9600X, 64 GB DDR5, 8x HGST HUS724040AL 4 TB, 2x Crucial P3 Plus 1 TB NVMe; Nuvoton NCT6799 super I/O (`nct6775` driver) | drive-cage fan test; NVMe and SYSTIN as room proxies |
+| tinynas | ASUS PRIME B650M-A AX II, Ryzen 5 9600X, 64 GB DDR5, 8x HGST HUS724040AL 4 TB, 2x Crucial P3 Plus 1 TB NVMe; Nuvoton NCT6799 super I/O (`nct6775` driver) | drive-cage fan test; NVMe and SYSTIN as room proxies; beside the rack since 10-18: `lab-load.py` and `disk-soak.py` |
 | makoto | ASRock Rack board, Xeon D-1622, 32 GB | runs the makoto-side tools, the room logger and the PDU poller; its own fan tests (`makoto/`, 2026-10-19/20) |
-| morgana (formerly arsene) | Dell Latitude 5420 (i5-1135G7), Realtek codec, internal mic | noise measurements (`mic-level-log.py`) |
+| morgana (formerly arsene) | Dell Latitude 5420 (i5-1135G7, 8 threads), WD SN530 256 GB NVMe, Realtek codec, internal mic | noise measurements (`mic-level-log.py`, until 10-18); in the rack's 4U shelf since 10-18: `lab-load.py` (its DPTF skin zone is the stop line, no battery temperature exists) |
+| yusuke | Lenovo ThinkPad T14s Gen 4 (Ryzen 7 PRO 7840U, 16 threads), SK hynix 512 GB NVMe | in the 4U shelf: `lab-load.py` (k10temp Tctl only, no throttle counters on AMD: clocks logged) |
+| futaba | Lenovo ThinkCentre M700 Tiny (i5-6500T, 4 threads), Kingston OM8P0S3 256 GB SATA SSD | runs Home Assistant (VM), DNS, Prometheus; in the 4U shelf: `lab-load.py` at 2 threads at most, with the Home Assistant / Prometheus guard |
+| tinypc | ASUS ROG STRIX B660-I, i7-12700F (20 threads), RTX 3070, Crucial P1 1 TB + Samsung 970 EVO Plus 2 TB NVMe; Fedora 44, SELinux enforcing | in the bedroom: `lab-load.py`, CPU only (its GPU serves the voice assistant) |
 | Rack PDU | CyberPower PDU20SW8FNET (20 A, 8 switched outlets, fw 0.95) | rack current by SNMP v1 GET; bank load only, in 0.1 A. Never SET, never the web UI: both can switch the rack's power |
 
-All hosts run Ubuntu 24.04.5 LTS. On other hardware, expect to change the device paths, sensor names, drive
+All hosts run Ubuntu 24.04.5 LTS except tinypc (Fedora 44, SELinux enforcing: start every script with its interpreter,
+`/usr/bin/python3 /var/tmp/x.py`, and install unit files with `cp`, not `mv`). On other hardware, expect to change the device paths, sensor names, drive
 model strings, IPMI commands and every limit before a script is safe to run; the safety rules in
 `../METHODOLOGY.md` section 6 still apply.
 
@@ -234,6 +238,40 @@ find the rest relative to themselves; the analysis scripts read `D` at their top
 | `msample.py` | makoto | every 2 s: package and core temperatures, NVMe, RAPL watts, busy threads, MHz, both fans' rpm and duty, the BMC temperatures (`msample.csv`) |
 | `miclevels.py` | makoto | levels only from mirror-voice's AEC debug dump (the mirror's Pi mic, next to makoto): 10 s clips, dB(A), octaves and tones, frames dropped while the Sonos plays |
 | `steps-table.py`, `step-transients.py`, `fit-steady.py`, `fan-tones.py`, `trial-summary.py FROM [min]` | anywhere | per-step medians with a fitted end value; step responses; a least-squares steady-state model against package watts; blade tones per step; the trial in blocks (duties, rpm, temperatures, how often a duty changed) |
+
+## The new-spot run (2026-10-20/21)
+
+The rack against a wall since 10-18 (`../README.md`, "The rack and the room") and every reachable box loaded: units
+chained across nine hosts, with stop lines on every load. Results: `../README.md` ("Results, 2026-10-20/21").
+
+- Boxes without a fan controller run `lab-load.py` with a per-host profile of stop lines; two load cuts watch the
+  circuits: `pdu-cut.sh` on the dining-room PDU (mementos, sojiro) and `lr-cut.py` on the unmetered living-room strip.
+- `tests/run-all.sh` dry-runs disk-soak, lr-cut and lab-load on fake clocks under a shim PATH of fake binaries, with a
+  guard that fails any real process, network or kill call; run it after every change and before any install.
+- On other hardware: write a profile per host (hwmon and thermal-zone names, limits from the parts), set `lr-cut.py`'s
+  box map and meter series, and replace `disk-soak.py`'s never-touch and watch-list serials and its drive classes.
+
+| Script | Runs on | What it does |
+|---|---|---|
+| `lab-load.py [--selftest] LABEL PROFILE.json PLAN.json` | futaba, morgana, yusuke, tinynas, sojiro, tinypc, makoto | per-host load runner: stress-ng `--cpu N --cpu-method matrixprod` at nice 19 (0 workers starts none) and optional read-only fio, each step until its `min` or `until`; a CSV row every 10 s (busy, MHz, RAPL W, throttle counts, every profile sensor and drive). Stops (load off, 5 more min of rows, exit 4): a sensor at its stop line on n readings or its abort line on one, a sensor missing 3 times, an Intel thermal-throttle event, a SMART increase on a loaded drive, a guard. Guards: Home Assistant and Prometheus (futaba), the voice assistant's user units by cgroup (tinypc; `systemctl --user` fails inside a service), BMC temperatures in-band (sojiro), the voice assistant's journal and makoto-fan alive and current (makoto). futaba is held to 2 workers and makoto to 4 at nice 19 in code, makoto only from an explicit profile entry; `--selftest` dry-runs the exact stress-ng and fio arguments on the host |
+| `lab-load/lab-load-profile.json`, `lab-load/lab-load-plan-*.json` | each host (`/var/tmp`) | one profile for all hosts (each picks its entry by hostname): sensors with stop and abort lines (5C under each limit; neither laptop exposes a battery temperature, morgana's DPTF skin zone stands in), drives, guards; plans per block, keyed by host |
+| `lr-cut.py` | ryuji | the living-room strip has no meter: every 15 s ryuji's PSU input (its ACPI meter from Prometheus, or 125 + 1.37 x RAPL package W, the higher), the other boxes' CPU busy mapped idle to full watts, and a fixed 120 W, divided by 114 V; over `LIMIT` (11 A) on 2 fresh samples, or blind for 60 s, `systemctl stop` on `UNITS`, which may name only test-unit prefixes (empty, catch-all or production patterns refuse) |
+| `disk-soak.py [--selftest] <label> <pool> <phases> [limit C]` | mementos, ryuji, sojiro, tinynas | as before, plus stop lines per drive class (10K SAS 50, HUSMM 60, shelf Exos 54, MG04 50, HGST 55C, NVMe its warning minus 5) on 2 reads or 5C over on one; SMART health every 10 min (grown defects, SATA 5 and 197, NVMe media errors, phy counters up more than 100); night fan caps `FAN_CAP_SHELF` / `FAN_CAP_R720` from the controllers' state files; on the shelf the backplane, SIM and expander at 48 / 60 / 88C from md1200-fan's state (never SES); one column per disk named by serial; never makoto or the never-touch drives |
+| `fin-gate.py` | every host | as before, plus: a blocker on this host checked with systemctl; starting and stopping units count as busy, and so does a host that is down |
+| `pdu-cut.sh` | mementos, sojiro | as before, plus: refuses an empty `UNITS`; an over-current cut latches for the window; 12.0 A held for 5 min also cuts |
+| `make-units.py`, `wed-rows.py` | makoto | the run's schedule as units and timers per host (Tuesday in make-units, Wednesday in wed-rows, which make-units runs) |
+| `install-units.sh [--dry] [host ...]`, `units-prune.sh` | makoto, each host | copies each host's scripts to `/var/tmp` and its units to `/etc/systemd/system`, enables the timers, and prunes the run's units no longer generated |
+| `restore-guard.sh <unit> <family regex> <restore>` | mementos, ryuji (`ExecStopPost`) | runs the restore unless another active unit with the same restore still holds the fans |
+| `prove-fallbacks.sh <name> ...` | makoto | proves once per unit type that stopping it puts production back (quiet first phases only) |
+| `lab-loadoff-1020.sh`, `stop-all-1020.sh [--samplers]` | each loaded host, makoto | the run's backstop on every loaded host (stops the run's units but itself, kills stress-ng and fio, production control back), and the one-command stop of the whole run |
+| `wait-no-backup.sh` | mementos, sojiro (`ExecStartPre`) | waits while sojiro's nightly backup (syncoid, zfs send and receive) runs on this host, 30 min at most |
+| `ryuji-floor.py`, `mementos-steps.py` | ryuji, mementos | as before, plus this run's plans; ryuji-floor reads only files (the ipmitool collector's textfile, the guard's state) while the guard runs; both take room gates from env, cut a running step at `LOAD_UNTIL` and load nothing during a room wait; mementos-steps adds `NIGHT_FAN_CAP` and nice 19 |
+| `noise-sweep.py <plan>`, `r720-notch-sweep.py [plan]` | mementos | plans by argument (shelf, r720, proof; notch 38-44% in 90 s steps); SES only while the sweep holds md1200-fan stopped, the enclosure found by type and model |
+| `sojiro-floor.py <label> [plan]` | sojiro | plans `t1b_idle`, `t3a_aba` and `t3a_aba5` (under its own load); back to -80 at CPU 90C or MB_TEMP1 77C |
+| `sweep-aba.py` | anywhere | takes the level column from the CSV header (`makoto/miclevels.py`'s `dba_bg`) |
+| `mic-phase.py MIC.csv PHASES.csv`, `aec-spectra.py DUMP MIC.csv OUT.npz START END` | makoto | mirror-mic levels per phase against A/B/A anchors, from `makoto/miclevels.py`'s CSV; compact spectra of the test windows (no audio kept) |
+| `pi-soc-sampler.sh OUT.csv UNTIL` | makoto | the mirror Pi's SoC temperature and load every 60 s over ssh: a room-reference proxy |
+| `tests/run-all.sh` | makoto | 171 fake-clock cases for disk-soak, lr-cut and lab-load (fake hosts built from `tests/fixtures/`, each box's sensor layout from the 10-19 survey); passes only if every case passes and no command reached even a fake binary |
 
 ## Deploying a controller
 

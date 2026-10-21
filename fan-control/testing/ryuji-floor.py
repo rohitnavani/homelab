@@ -19,7 +19,21 @@
 # which puts -80 back by itself from any non-guard offset on its first check.
 # Run as root on ryuji:
 #   systemd-run --unit=ryuji-profile -p ExecStopPost=/var/tmp/ryuji-profile-restore.sh python3 /var/tmp/ryuji-profile.py <label> [plan]
-import glob, os, re, subprocess, sys, time
+# 2026-10-20 (new-spot run, notes ~/lab-thermal-2026-10-20):
+# - No in-band BMC access while ryuji-fan-guard runs (hard rule: the guard's own ipmitool reads go to Performance after
+#   5 failures). Guard in control: sensors() reads only files, the ipmitool_sensor.prom that the collectors package's
+#   timer writes every minute (stale when older than FILE_MAX_AGE s or without CPU0_TEMP / SIO Temp 1) and the guard's
+#   /run/ryuji-fan-guard.state (stale after the same age), so dcmi_w stays empty; fan_min_now() is None. The SEL is
+#   read only with the guard stopped: at start if it is stopped, else right after the first guard stop, and before
+#   every guard restart (the last one is the end count). STALE_MAX stale reads in a row are logged and allowed; the
+#   next one drops the load (the guard keeps running) and exits 3. Guard stopped (fixed offsets): the direct ipmitool
+#   reads as before (the tool replaces the controller then).
+# - Load off at CPU 80 (was 82), SIO1 80, DIMM 80, VR 95; ROOM_START / ROOM_STOP from the env (28 / 29: load off at an
+#   R720 inlet of 30C or more). LOAD_UNTIL also drops the load of a step that is still running when it passes.
+# - Phase boundaries also go to <CSV>-phases.csv (epoch, phase, level, workers) to cut the mic data by phase.
+#   systemd-run --unit=ryuji-floor-<x> -p ExecStopPost=/var/tmp/ryuji-profile-restore.sh \
+#     python3 -I /var/tmp/ryuji-floor-1020.py <label> <plan>
+import glob, json, os, re, subprocess, sys, time
 
 LABEL = sys.argv[1] if len(sys.argv) > 1 else 'run'
 CSV = f'/var/tmp/ryuji-profile-{LABEL}.csv'
@@ -190,21 +204,69 @@ PLANS = {
     'fin_burst': [('b_ref', G, 0, 5)] + seq(BURST_ALL) + [('b_unwind', G, 0, 20)],
     'fin_soak': [('s_ref', G, 0, 5), ('s_33w', G, 33, 120), ('s_unwind', G, 0, 25)],
     'dry': [('d_idle', G, 0, 1), ('d_1t', G, 1, 1), ('d_cool', G, 0, 1)],
+    # ---- 2026-10-20 new-spot run (rack a few inches off a wall, one PSU; notes ~/lab-thermal-2026-10-20) ----
+    # T1b (2026-10-20): idle offsets at the mirror mic, 3-min holds against -80 anchors, guard stopped; then the guard.
+    't1b_idleoff': [('i80_a', -80, 0, 3), ('i127', -127, 0, 3), ('i80_b', -80, 0, 3), ('i40', -40, 0, 3),
+                    ('i80_c', -80, 0, 3), ('i0', 0, 0, 3), ('i80_d', -80, 0, 3), ('i_guard', G, 0, 5)],
+    # T2 (2026-10-20): ryuji alone, 165 min. 2, 4 and 11 workers at -80 (10 min each), then fin_heavy1's one-PSU A/B/A
+    # at 22 and 33 workers (-80/-127/-80, 20-min holds): did v2.11's -127 crossover (in 220 W, out 200 W) move?
+    't2_alone': [('t2_ref', -80, 0, 5), ('t2_2w', -80, 2, 10), ('t2_4w', -80, 4, 10), ('t2_11w', -80, 11, 10),
+                 ('k80_a', -80, 22, 20), ('k127', -127, 22, 20), ('k80_b', -80, 22, 20),
+                 ('m80_a', -80, 33, 20), ('m127', -127, 33, 20), ('m80_b', -80, 33, 20), ('t2_cool', G, 0, 10)],
+    # T4 (2026-10-20, T3b + T4): 44 workers under the guard from T3b through T4 (mementos and every pool join in T4),
+    # then the unwind.
+    't4_comb': [('c_ref', G, 0, 3), ('c_44w', G, 44, 94), ('c_unwind', G, 0, 25)],
+    # E1 (2026-10-20): ryuji's half of the everyday mix (mementos 12 workers and shelf sequential reads alongside);
+    # 40-min hold (review B2, was 60).
+    'e1_mix': [('x_ref', G, 0, 5), ('x_11w', G, 11, 40), ('x_unwind', G, 0, 15)],
+    # E2 (2026-10-20): fin_burstm unchanged, 55 min (30 min of 0-11 worker bursts under the guard, ref and unwind).
+    'e2_burst': [('bm_ref', G, 0, 5)] + seq(BURST_MED) + [('bm_unwind', G, 0, 20)],
+    # E3 (2026-10-20, only on a proven mic): light A/B/A, -80/-60/-80 at 4 and 11 workers, 20-min holds after a 20-min
+    # pre-warm at 4 workers (the PSU tone takes 10-25 min to settle), guard stopped; then the guard's unwind. Review B2:
+    # a 15-min pre-warm at 11 workers before l11_a1 too (the first A started with the PSU still at its 4-worker heat).
+    'e3_light': [('e_ref', G, 0, 5), ('l4_warm', -80, 4, 20), ('l4_a1', -80, 4, 20), ('l4_b', -60, 4, 20),
+                 ('l4_a2', -80, 4, 20), ('l11_warm', -80, 11, 15), ('l11_a1', -80, 11, 20), ('l11_b', -60, 11, 20),
+                 ('l11_a2', -80, 11, 20), ('e_unwind', G, 0, 10)],
+    # W2 rack-only phase (2026-10-21, WED-NOTES.md): 44 workers under the guard for 40 min with mementos at 48 and shelf
+    # random reads (shelf boxes and sojiro idle), after both W2 units end; then the unwind. 63 min.
+    'w2_rack': [('r_ref', G, 0, 3), ('r_44w', G, 44, 40), ('r_unwind', G, 0, 20)],
 }
-PLAN = PLANS[sys.argv[2] if len(sys.argv) > 2 else 'floor']
+PLAN_NAME = sys.argv[2] if len(sys.argv) > 2 else 'floor'
+PLAN = PLANS[PLAN_NAME]
+# 2026-10-20 (review B4): A/B/A sets run whole or not at all. Before a set's first phase: if its holds, 1 min per floor
+# watch below -80 and SET_MARGIN min cannot end by LOAD_UNTIL, the set and every later phase up to the plan's closing
+# unwind (its trailing guard-idle phases) are skipped. T2 gets its own LOAD_UNTIL (13:05) for this.
+SETS = {'t2_alone': [('k80_a', 'k127', 'k80_b'), ('m80_a', 'm127', 'm80_b')]}
+SET_MARGIN = 1
 # Room gating. makoto's lab-inlet-guard writes "<epoch> <mementos inlet>" to ROOM_FILE every minute. A load step
 # starts only at <= ROOM_START (waits up to WAIT_MAX, else it is skipped) and its load is dropped above ROOM_STOP or
 # if the reading is more than 3 min old. 10-06: Rohit's 27C rule until 08:4x, then up to 29C allowed.
-ROOM_FILE, ROOM_START, ROOM_STOP, WAIT_MAX = '/run/room-inlet', 26, 27, 25 * 60
+# 2026-10-20: the writer is tools/room-feed-local.sh on ryuji (the R720 inlet that fan-watchdog publishes, from
+# Prometheus on futaba, only while fan-watchdog's state is fresh; no BMC access). Gates from the env, 28 / 29 by
+# default: a load step starts at 28C or less, and its load drops when the inlet reads 30C or more.
+ROOM_FILE, WAIT_MAX = '/run/room-inlet', 25 * 60
+ROOM_START = int(os.environ.get('ROOM_START', '28'))
+ROOM_STOP = int(os.environ.get('ROOM_STOP', '29'))
 # 2026-10-12: LOAD_UNTIL (epoch, env) = no load step starts after it; the phase runs idle instead (a quiet night).
+# 2026-10-20: a step still loaded when LOAD_UNTIL passes drops its load too (the rest of the phase runs idle).
 LOAD_UNTIL = float(os.environ.get('LOAD_UNTIL', 'inf'))
 FAN_FLOOR = 1000
 floor_hit = set()   # offsets that took a fan under FAN_FLOOR
 # E5-2696 v4 (2026-10-12): BMC CPU thresholds 82 upper non-critical / 85 critical, coretemp high 83 / crit 85, so the
 # CPU limits sit under them (were 82 / 86 on the E5-2650 v3s). 10-13 full-load profile: load off at the BMC's own
 # warning (82; the evening's light tests used 80), Full Speed and exit at 84.
-LOAD_STOP = {'sio1': 80, 'cpu': 82, 'vr': 95, 'dimm': 80}
+# 2026-10-20 (brief B7): load off at CPU 80 (the sustained target is 75; the guard goes Full at 83).
+LOAD_STOP = {'sio1': 80, 'cpu': 80, 'vr': 95, 'dimm': 80}
 ABORT = {'sio1': 83, 'cpu': 84}
+# 2026-10-20: BMC sensors from files while ryuji-fan-guard is in control (no in-band reads next to it)
+PROM = '/var/lib/node_exporter/textfile_collector/ipmitool_sensor.prom'   # -> /var/lib/prometheus/node-exporter/
+GSTATE = '/run/ryuji-fan-guard.state'   # the guard writes it after every good read (every ~60 s)
+FILE_MAX_AGE = 150                      # s: older than this = stale (both are written about once a minute)
+STALE_MAX = int(os.environ.get('STALE_MAX', '3'))   # stale reads in a row that are allowed; the next one ends the run
+PROM_LINE = re.compile(r'^node_ipmi_(?:temperature_celsius|speed_rpm)\{[^}]*sensor="([^"]+)"[^}]*\}\s+([-0-9.e+]+)\s*$',
+                       re.M)
+stale = {'n': 0}
+sel = {'start': None, 'last': None}   # SEL entry counts (read with the guard stopped only)
 
 def sh(*a, **k):
     return subprocess.run(a, capture_output=True, text=True, timeout=60, **k)
@@ -215,6 +277,9 @@ def note(msg):
     print(msg, flush=True)
 
 def set_offset(o):
+    if not inband_ok():   # 2026-10-20: never set the BMC next to the guard
+        note(f'BMC set {o} refused: ryuji-fan-guard is in control; stopping')
+        sys.exit(2)
     r = sh(*OFFSET_TOOL, 'set', str(o), env=ENV)
     got = re.search(r'now (-?\d+)', r.stdout)
     if r.returncode != 0 or not got or int(got.group(1)) != o:
@@ -234,15 +299,74 @@ def hdd_max():
             m = max(m or 0, int(x.group(1)))
     return m
 
+def age(path):
+    return time.time() - os.stat(path).st_mtime
+
+prom_good = {'mtime': None, 't': {}}   # the newest .prom reading that had CPU0_TEMP and SIO Temp 1
+
+def files():
+    """2026-10-20, guard in control: the BMC sensors from files only. Returns ({sensor: value} from the .prom, the
+    guard's state, '' or why the read is stale). Stale = no good .prom reading (one with CPU0_TEMP and SIO Temp 1)
+    younger than FILE_MAX_AGE (a failed ipmitool run leaves an empty file with a fresh mtime, so the good reading before
+    it still counts while it is young enough), or the guard's state missing, unreadable or older than FILE_MAX_AGE."""
+    why = ''
+    try:
+        mt, txt = os.stat(PROM).st_mtime, open(PROM).read()
+        t = {}
+        for name, v in PROM_LINE.findall(txt):
+            try:
+                t[name] = int(round(float(v)))
+            except ValueError:
+                pass
+        if 'CPU0_TEMP' in t and 'SIO Temp 1' in t:
+            prom_good.update(mtime=mt, t=t)
+        else:
+            why = 'ipmitool_sensor.prom without CPU0_TEMP / SIO Temp 1'
+    except OSError as ex:
+        why = f'ipmitool_sensor.prom unreadable ({ex.strerror})'
+    if prom_good['mtime'] is None:
+        return {}, {}, why or 'no good ipmitool_sensor.prom reading yet'
+    a = time.time() - prom_good['mtime']
+    if a > FILE_MAX_AGE:
+        return {}, {}, f'newest good ipmitool_sensor.prom reading {a:.0f} s old' + (f' ({why})' if why else '')
+    t = dict(prom_good['t'])
+    try:
+        a, g = age(GSTATE), json.loads(open(GSTATE).read())
+    except (OSError, ValueError) as ex:
+        return {}, {}, f'guard state unreadable ({ex.__class__.__name__})'
+    if a > FILE_MAX_AGE:
+        return {}, {}, f'guard state {a:.0f} s old'
+    return t, (g if isinstance(g, dict) else {}), ''
+
+RUNNING = ('active', 'activating', 'deactivating', 'reloading')   # 'activating' = waiting out RestartSec too
+
+def guard_state():
+    return sh('systemctl', 'is-active', 'ryuji-fan-guard').stdout.strip()
+
+def inband_ok():
+    """2026-10-20: in-band BMC access only while this tool holds the guard stopped, checked live before every call"""
+    if guard_on:
+        return False
+    st = guard_state()
+    if st in RUNNING:
+        note(f'ryuji-fan-guard is {st} although this tool stopped it: no BMC access; load off, stopping')
+        load(0)
+        sys.exit(2)
+    return True
+
 def sensors():
-    t = {}
-    for typ in ('Temperature', 'Fan'):
-        for line in sh('ipmitool', 'sdr', 'type', typ).stdout.splitlines():
-            f = [x.strip() for x in line.split('|')]
-            m = re.match(r'(\d+) (degrees|RPM)', f[4]) if len(f) >= 5 else None
-            if m:
-                t[f[0]] = int(m.group(1))
-    w = re.search(r'Instantaneous power reading:\s+(\d+)', sh('ipmitool', 'dcmi', 'power', 'reading').stdout)
+    w = None
+    if not inband_ok():   # 2026-10-20: never in-band while the guard runs
+        t, g, why = files()
+    else:
+        t, g, why = {}, {}, ''
+        for typ in ('Temperature', 'Fan'):
+            for line in sh('ipmitool', 'sdr', 'type', typ).stdout.splitlines():
+                f = [x.strip() for x in line.split('|')]
+                m = re.match(r'(\d+) (degrees|RPM)', f[4]) if len(f) >= 5 else None
+                if m:
+                    t[f[0]] = int(m.group(1))
+        w = re.search(r'Instantaneous power reading:\s+(\d+)', sh('ipmitool', 'dcmi', 'power', 'reading').stdout)
     sysf = [v for k, v in t.items() if k.startswith('SYS_FAN')]
     fans = [v for k, v in t.items() if k.endswith('_FAN') or k.startswith('SYS_FAN')]
     return {
@@ -253,6 +377,7 @@ def sensors():
         'cpu_fan0': t.get('CPU0_FAN'), 'cpu_fan1': t.get('CPU1_FAN'),
         'sys_fan': round(sum(sysf) / len(sysf)) if sysf else None,
         'dcmi_w': int(w.group(1)) if w else None,
+        'src': ('stale' if why else 'file') if guard_on else 'ipmi', 'why': why, 'g': g,
     }
 
 ZONES = sorted(glob.glob('/sys/class/powercap/intel-rapl:[01]'))
@@ -260,27 +385,43 @@ def energy():
     return [int(open(f'{z}/energy_uj').read()) for z in ZONES]
 
 stress = None
+stress_n = 0   # 2026-10-20: workers of the running stress-ng (for the phase marks)
 def load(pct):
-    global stress
+    global stress, stress_n
     if stress and stress.poll() is None:
         stress.terminate()
         try:
             stress.wait(15)
         except subprocess.TimeoutExpired:
             stress.kill()
-    stress = None
+    stress, stress_n = None, pct
     if pct:
         stress = subprocess.Popen(['nice', '-n', '10', 'stress-ng', '--cpu', str(pct), '--cpu-method', 'matrixprod',
                                    '--quiet'],
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def guard(on):
-    sh('systemctl', 'start' if on else 'stop', 'ryuji-fan-guard')
-    note(f'ryuji-fan-guard {"started" if on else "stopped"}')
+    """2026-10-20: keeps guard_on true to the unit's state; the SEL is read only while the guard is stopped"""
+    global guard_on
+    if on:
+        sel_mark('before ryuji-fan-guard starts again')   # the last in-band read before the guard runs
+        sh('systemctl', 'start', 'ryuji-fan-guard')
+        guard_on = True
+        note('ryuji-fan-guard started')
+        return
+    sh('systemctl', 'stop', 'ryuji-fan-guard')
+    st = guard_state()
+    if st in RUNNING:
+        note(f'ryuji-fan-guard is still {st} after the stop; stopping without any BMC access')
+        sys.exit(2)
+    guard_on = False
+    note('ryuji-fan-guard stopped')
+    if sel['start'] is None:
+        sel_mark('right after the first guard stop')
 
 def guard_offset():
     try:
-        return re.search(r'"offset": (-?\d+)', open('/run/ryuji-fan-guard.state').read()).group(1)
+        return re.search(r'"offset": (-?\d+)', open(GSTATE).read()).group(1)
     except (OSError, AttributeError):
         return ''
 
@@ -292,7 +433,8 @@ def room():
         return None
 
 cols = ['epoch', 'time_utc', 'phase', 'phase_min', 'offset', 'load', 'cpu0', 'cpu1', 'sio1', 'sio2', 'pch', 'vr', 'dimm',
-        'hdd', 'cpu_fan0', 'cpu_fan1', 'sys_fan', 'fan_min', 'dcmi_w', 'pkg0_w', 'pkg1_w', 'room', 'thr_core', 'thr_pkg']
+        'hdd', 'cpu_fan0', 'cpu_fan1', 'sys_fan', 'fan_min', 'dcmi_w', 'pkg0_w', 'pkg1_w', 'room', 'thr_core', 'thr_pkg',
+        'src']   # 2026-10-20: ipmi (guard stopped), file (guard in control), stale (no fresh file reading)
 
 def throttles():
     """2026-10-13: cumulative thermal-throttle events (kernel thermal_throttle counters): all cores, and each package once"""
@@ -310,6 +452,8 @@ def throttles():
     return core, pkg
 
 def fan_min_now():
+    if not inband_ok():   # 2026-10-20: no in-band read next to the guard (floor_check needs it only below -80)
+        return None
     vals = []
     for line in sh('ipmitool', 'sdr', 'type', 'Fan').stdout.splitlines():
         f = [x.strip() for x in line.split('|')]
@@ -327,13 +471,51 @@ def floor_check(off, label):
     if fm is not None and fm < FAN_FLOOR:
         set_offset(-80); current = -80
         floor_hit.add(off)
+        phase_mark(f'{label}_floor', -80)   # 2026-10-20
         note(f'{label}: a fan read {fm} rpm (< {FAN_FLOOR}) at offset {off}: back to -80; offsets <= {off} skipped')
         return False
     return True
 
 def sel_count():
+    if not inband_ok():   # 2026-10-20: in-band, so only with the guard stopped
+        return None
     m = re.search(r'Entries\s*:\s*(\d+)', sh('ipmitool', 'sel', 'info').stdout)
     return int(m.group(1)) if m else None
+
+def sel_mark(where):
+    """2026-10-20: the SEL count, read only with the guard stopped. The first read is the start count; every later one
+    lists the entries added since the read before it (so nothing in-band is left for after the guard restarts)."""
+    n = sel_count()
+    if n is None:
+        note(f'BMC SEL not read {where}' + (' (ryuji-fan-guard runs)' if guard_on else ' (read failed)'))
+        return
+    if sel['start'] is None:
+        sel['start'] = sel['last'] = n
+        note(f'BMC SEL entries {where}: {n} (start count)')
+        return
+    if n > sel['last']:
+        new = sh('ipmitool', 'sel', 'list').stdout.strip().splitlines()[-(n - sel['last']):]
+        note(f'new SEL entries {where}: ' + ' || '.join(new))
+    note(f'BMC SEL entries {where}: {n} (start {sel["start"]})')
+    sel['last'] = n
+
+PHASES = CSV[:-4] + '-phases.csv'   # 2026-10-20: one row per boundary (offset change, load change) for the mic
+last_mark = [None]
+
+def phase_mark(label, off):
+    """2026-10-20: a boundary for the mic analysis: the phase, its offset (or the guard) and the workers running now.
+    Written at the offset change itself (so the 60 s floor watch below -80 counts to the new phase) and again when the
+    load changes; a mark identical to the last one is skipped."""
+    key = (label, 'guard' if off is None else off, stress_n if loaded() else 0)
+    if key == last_mark[0]:
+        return
+    last_mark[0] = key
+    new = not os.path.exists(PHASES)
+    with open(PHASES, 'a') as f:
+        if new:
+            f.write('epoch,phase,level,workers\n')
+        f.write(f'{int(time.time())},{key[0]},{key[1]},{key[2]}\n')
+
 if not os.path.exists(CSV):
     with open(CSV, 'w') as f:
         f.write(','.join(cols) + '\n')
@@ -353,34 +535,79 @@ def log_row(label, off, t0, st, workers):
                pkg0_w=pw[0] if pw else '', pkg1_w=pw[1] if len(pw) > 1 else '', room=room())
     with open(CSV, 'a') as f:
         f.write(','.join('' if row.get(c) is None else str(row.get(c)) for c in cols) + '\n')
-    if s['sio1'] is None or s['cpu0'] is None:
-        note('sensor read failed; stopping'); sys.exit(3)
-    vals = dict(s, cpu=max(s['cpu0'] or 0, s['cpu1'] or 0))
-    hot = [f'{k}={vals[k]}' for k, lim in ABORT.items() if vals[k] is not None and vals[k] >= lim]
-    if hot:
-        load(0)
-        if guard_on:
-            note(f'ABORT at {", ".join(hot)} (guard in control)')
-        else:
-            note(f'ABORT at {", ".join(hot)}: setting Full Speed'); set_offset(127)
-        sys.exit(4)
-    warm = [f'{k}={vals[k]}' for k, lim in LOAD_STOP.items() if vals[k] is not None and vals[k] >= lim]
-    if warm and cur:
-        load(0)
-        note(f'{label}: load stopped ({", ".join(warm)})')
+    if s['src'] == 'stale':   # 2026-10-20: guard in control and no fresh file reading, so no limits to check
+        stale['n'] += 1
+        note(f'{label}: stale read {stale["n"]} in a row ({s["why"]}); {STALE_MAX} allowed')
+        if stale['n'] > STALE_MAX:
+            load(0)
+            phase_mark(f'{label}_stale', off)
+            note(f'{label}: {stale["n"]} stale reads in a row: load stopped, ryuji-fan-guard left running; stopping')
+            sys.exit(3)
+    else:
+        stale['n'] = 0
+        if s['sio1'] is None or s['cpu0'] is None:
+            note('sensor read failed; stopping'); sys.exit(3)
+        vals = dict(s, cpu=max(s['cpu0'] or 0, s['cpu1'] or 0))
+        for k, gk in (('cpu', 'cpu'), ('sio1', 'sio'), ('vr', 'vr'), ('dimm', 'dimm')):   # 2026-10-20: the guard's too
+            gv = s['g'].get(gk)
+            if isinstance(gv, (int, float)) and (vals.get(k) is None or gv > vals[k]):
+                vals[k] = gv
+        hot = [f'{k}={vals[k]}' for k, lim in ABORT.items() if vals[k] is not None and vals[k] >= lim]
+        if hot:
+            load(0)
+            phase_mark(f'{label}_abort', off)
+            if guard_on:
+                note(f'ABORT at {", ".join(hot)} (guard in control)')
+            else:
+                note(f'ABORT at {", ".join(hot)}: setting Full Speed'); set_offset(127)
+            sys.exit(4)
+        warm = [f'{k}={vals[k]}' for k, lim in LOAD_STOP.items() if vals[k] is not None and vals[k] >= lim]
+        if warm and loaded():
+            drop(label, off, ', '.join(warm))
     r = row['room']
-    if cur and (r is None or r > ROOM_STOP):
-        load(0)
-        note(f'{label}: load stopped (room {r}C)')
+    if loaded() and (r is None or r > ROOM_STOP):
+        drop(label, off, f'room {r}C')
+    if loaded() and time.time() > LOAD_UNTIL:   # 2026-10-20: no load past LOAD_UNTIL, even mid-step
+        drop(label, off, 'past LOAD_UNTIL')
 
-note(f'start {LABEL}; HDDs {HDDS}')
-sel0 = sel_count()
-note(f'BMC SEL entries at start: {sel0}')
+def loaded():
+    return stress is not None and stress.poll() is None
+
+def drop(label, off, why):
+    """2026-10-20: load off for the rest of the phase, noted in the CSV and the phases file"""
+    load(0)
+    note(f'{label}: load stopped ({why})')
+    phase_mark(f'{label}_loadoff', off)
+
+# 2026-10-20: the guard's state first, before any BMC access (activating = it comes back by itself: running)
+guard_on = guard_state() in RUNNING
+note(f'start {LABEL}, plan {PLAN_NAME} ({sum(p[3] for p in PLAN):g} min of holds); HDDs {HDDS}; ryuji-fan-guard '
+     f'{"active" if guard_on else "not active"}; room gates {ROOM_START}/{ROOM_STOP}C; LOAD_UNTIL '
+     f'{time.strftime("%F %T", time.localtime(LOAD_UNTIL)) if LOAD_UNTIL != float("inf") else "none"}')
+if guard_on:
+    note('BMC SEL not read at start: ryuji-fan-guard runs (the start count is read right after the first guard stop)')
+else:
+    sel_mark('at start')
 fan_idle = {}   # offset -> median idle fan_min
-guard_on = sh('systemctl', 'is-active', 'ryuji-fan-guard').stdout.strip() == 'active'
 current = None   # offset this script last set (one BMC login per change, not per phase)
+sets = {s[0]: s for s in SETS.get(PLAN_NAME, [])}
+tail = len(PLAN)   # the closing unwind: the plan's trailing guard-idle phases
+while tail > 0 and PLAN[tail - 1][1] is None and PLAN[tail - 1][2] == 0:
+    tail -= 1
+to_unwind = False
 try:
-    for label, off, pct, mins in PLAN:
+    for i, (label, off, pct, mins) in enumerate(PLAN):
+        if to_unwind and i < tail:
+            continue
+        if label in sets and LOAD_UNTIL != float('inf'):   # 2026-10-20 (review B4)
+            ph = [p for p in PLAN if p[0] in sets[label]]
+            need = (sum(p[3] for p in ph) + sum(1 for p in ph if p[1] is not None and p[1] < -80) + SET_MARGIN) * 60
+            if time.time() + need > LOAD_UNTIL:
+                note(f'{label}: the A/B/A set {"/".join(sets[label])} needs {need / 60:.0f} min and cannot end by '
+                     f'LOAD_UNTIL {time.strftime("%T", time.localtime(LOAD_UNTIL))}: skipped, with every later step up '
+                     f'to the unwind')
+                to_unwind = True
+                continue
         if off == LOW:
             off = next((o for o in (-127, -100) if o not in floor_hit and not any(h >= o for h in floor_hit)), None)
             if off is None:
@@ -397,12 +624,13 @@ try:
                 floor_hit.add(-127)
                 continue
         if off is None and not guard_on:
-            guard(True); guard_on = True; current = None
+            guard(True); current = None
         if off is not None:
             if guard_on:
-                guard(False); guard_on = False
+                guard(False)
             if off != current:
                 set_offset(off); current = off
+                phase_mark(label, off)   # 2026-10-20: the boundary is the offset change itself
                 ok = True
                 for _ in range(12):   # watch the first 60 s closely below -80
                     if off >= -80:
@@ -419,7 +647,9 @@ try:
         if pct:
             r = room()
             if r is None or r > ROOM_START:
+                load(0)   # 2026-10-20: the previous step's load kept running through the wait before
                 note(f'{label}: room {r}C, waiting for <= {ROOM_START}C before adding load')
+                phase_mark(f'{label}_wait', off)
                 tw = time.time()
                 while (r is None or r > ROOM_START) and time.time() - tw < WAIT_MAX:
                     time.sleep(30)
@@ -428,12 +658,17 @@ try:
                 if r is None or r > ROOM_START:
                     note(f'{label}: skipped (room {r}C after {WAIT_MAX // 60} min)')
                     continue
+                if time.time() > LOAD_UNTIL:   # 2026-10-20: the wait can run past it
+                    note(f'{label}: past LOAD_UNTIL after the room wait, running it idle'); pct = 0
         load(pct)
         note(f'phase {label}: offset {"guard" if off is None else off}, {pct} busy threads, {mins} min, room {room()}C')
+        phase_mark(label, off)
         t0 = time.time()
         fm_samples = []
         while time.time() - t0 < mins * 60:
-            time.sleep(15 if pct else 30)   # 2026-10-13: faster under load (150 W CPUs heat ~5C per 30 s)
+            # 2026-10-13: faster under load (150 W CPUs heat ~5C per 30 s); 2026-10-20: the last sleep is only the rest
+            # of the hold, so holds end on time (the 3-min mic holds)
+            time.sleep(min(15 if pct else 30, max(1, mins * 60 - (time.time() - t0))))
             log_row(label, off, t0, st, pct)
             if not floor_check(off, label):
                 break
@@ -446,12 +681,12 @@ try:
     if current is not None and current != -80:
         set_offset(-80); current = -80
     if not guard_on:
-        guard(True)
-    sel1 = sel_count()
-    note(f'BMC SEL entries at end: {sel1} (start {sel0})')
-    if sel0 is not None and sel1 is not None and sel1 > sel0:
-        new = sh('ipmitool', 'sel', 'list').stdout.strip().splitlines()[-(sel1 - sel0):]
-        note('new SEL entries: ' + ' || '.join(new))
+        guard(True)   # 2026-10-20: reads the SEL (the end count) before the guard starts
+    if sel['start'] is None:
+        note('BMC SEL not read: ryuji-fan-guard was in control for the whole plan')
+    else:
+        note(f'BMC SEL entries: start {sel["start"]}, end {sel["last"]} (read before the last guard start)')
+    phase_mark('end', None)
     note('done')
 finally:
     load(0)

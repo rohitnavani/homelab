@@ -5,8 +5,8 @@
 # fans at idle; the curves still ramp with temperature). Its noise is the CPU fan (3,400 rpm at idle at offset 0).
 # usage (root, on sojiro): sojiro-floor.py <label> [plan]   CSV /var/tmp/sojiro-floor-<label>.csv (every 20 s)
 # Safety: back to production (-80) at once and exit if SYS_FAN1 reads under 600 rpm or not at all (it idles at 600, its
-# BMC lower-critical), CPU0_FAN under 1,000 rpm, CPU0_TEMP 85C or more (Xeon D-1521: coretemp high 92, crit 102) or
-# MB_TEMP1 75C or more (it idles at 65-67C; BMC thresholds 55/60 are wrong for this board and never acted on).
+# BMC lower-critical), CPU0_FAN under 1,000 rpm, CPU0_TEMP 90C or more (Xeon D-1521: coretemp high 92, crit 102) or
+# MB_TEMP1 77C or more (it idles at 66-70C; BMC thresholds 55/60 are wrong for this board and never acted on).
 # Any BMC set that fails exits (no retries). The end of the plan and any stop leave the offset at -80 (production since
 # 2026-10-15); ExecStopPost sojiro-floor-restore.sh does the same if the unit is stopped. The first set switches the BMC
 # to user mode.
@@ -21,6 +21,14 @@ PLANS = {
               ('o0_b', 0, 6)],
     'dry': [('d0', 0, 0.5), ('d61', -61, 0.5), ('d0b', 0, 0.5)],
     'proof': [('o100', -100, 5)],  # night-safe (quieter than production only): stop the unit early to prove the restore
+    # 2026-10-20 new-spot run (sojiro on top of the rack): T1b noise yardstick at idle, 3-min holds against -80;
+    # T3a under its own load (lab-load: 8 threads + random reads), -80 against 0 and -40, 10-min holds.
+    't1b_idle': [('i80_a', -80, 3), ('i0', 0, 3), ('i80_b', -80, 3)],
+    't3a_aba': [('a80_a', -80, 10), ('a0', 0, 10), ('a80_b', -80, 10), ('a40', -40, 10), ('a80_c', -80, 10)],
+    # 2026-10-20 review B3: T3a in 34 min (13:16-13:50, out of T3b's way): -80 for 9 min while sojiro's own load
+    # (lab-load) warms it, then -80/0/-80/-40/-80 in 5-min holds.
+    't3a_aba5': [('w80', -80, 9), ('b80_a', -80, 5), ('b0', 0, 5), ('b80_b', -80, 5), ('b40', -40, 5),
+                 ('b80_c', -80, 5)],
 }
 PLAN = PLANS[sys.argv[2] if len(sys.argv) > 2 else 'steps']
 CSV = f'/var/tmp/sojiro-floor-{LABEL}.csv'
@@ -28,7 +36,9 @@ PROD = -80
 BMC_IP = '/usr/local/sbin/sojiro-bmc-ip'
 LOGIN_FAILED = '/run/sojiro-bmc-login-failed'
 ENV = dict(os.environ, BMC_PWFILE='/root/.bmc-pass', BMC_USER='root')
-STOP = {'cpu_fan_min': 1000, 'sys_fan_min': 600, 'cpu': 85, 'mb': 75}
+# 2026-10-20 run copy: the brief's stop lines for sojiro on top of the rack (CPU stop 92C: BMC 99/102C; MB_TEMP1 8C
+# over its 66-70C idle), a little inside them. lab-load's own CPU stop on sojiro is 92C.
+STOP = {'cpu_fan_min': 1000, 'sys_fan_min': 600, 'cpu': 90, 'mb': 77}
 
 
 def sh(*a, **k):

@@ -2,22 +2,32 @@
 # sweep-aba (2026-10-15): A/B/A noise table for noise-sweep.py / r720-notch-sweep.py runs. Segments are runs of rows with
 # the same phase label (the reference holds repeat one label). Each step is compared with the mean of the reference
 # segments right before and after it (dB(A) medians, first SKIP s of every segment dropped: fans settle in ~20-30 s).
-# usage: sweep-aba.py <mic.csv> <sweep.csv> [--skip S]
+# usage: sweep-aba.py <mic.csv> <sweep.csv> [--skip S] [--col COLUMN]
+# 2026-10-20: the level column is picked from the mic CSV's header: A (morgana's mic-level-log.py) or else dba_bg (the
+# mirror mic's miclevels.py: the quietest half of each clip's 0.5 s blocks, so speech and bangs fall out); --col
+# overrides. Without this, a miclevels.py CSV matched no row and the table came out empty.
 import statistics as st, sys
 
 args = sys.argv[1:]
 skip = 30
 if '--skip' in args:
     i = args.index('--skip'); skip = float(args[i + 1]); args = args[:i] + args[i + 2:]
+col = None
+if '--col' in args:
+    i = args.index('--col'); col = args[i + 1]; args = args[:i] + args[i + 2:]
 mic_p, sw_p = args
 mic = []
 mh = None
 for line in open(mic_p):
     f = line.rstrip('\n').split(',')
     if mh is None:
-        mh = f; continue
+        mh = f
+        col = col or ('A' if 'A' in mh else 'dba_bg')
+        if col not in mh:
+            sys.exit(f'no level column {col!r} in {mic_p} (columns: {", ".join(mh)})')
+        continue
     try:
-        r = dict(zip(mh, f)); r['t'] = float(r['epoch']); r['A'] = float(r['A'])
+        r = dict(zip(mh, f)); r['t'] = float(r['epoch']); r['A'] = float(r[col])
         r['tones'] = next((v for k, v in r.items() if k.startswith('tones')), '')
         mic.append(r)
     except (ValueError, KeyError):
@@ -65,6 +75,7 @@ def tone(s):
     return f'{st.median(x[0] for x in best):.0f} Hz, {st.median(x[1] for x in best):.0f}' if best else ''
 
 
+print(f'level column: {col}; first {skip:g} s of each segment skipped')
 print('| step | box | % | rpm | dB(A) | refs before / after | vs refs | tone 300-2000 Hz |')
 print('|---|---|---|---|---|---|---|---|')
 for i, s in enumerate(segs):

@@ -1,0 +1,406 @@
+{
+ "host": "yusuke",
+ "collected": "2026-10-19 23:51:49 EDT",
+ "hwmon": [
+  {
+   "hwmon": "hwmon0",
+   "name": "AC",
+   "device": "pci0000:00/0000:00:14.3/PNP0C09:00/ACPI0003:00/power_supply/AC",
+   "temps": [],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon1",
+   "name": "acpitz",
+   "device": "virtual/thermal/thermal_zone0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": null,
+     "input": 44.0,
+     "path": "/sys/class/hwmon/hwmon1/temp1_input"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon2",
+   "name": "BAT0",
+   "device": "LNXSYSTM:00/LNXSYBUS:00/PNP0A08:00/device:47/PNP0C09:00/PNP0C0A:00/power_supply/BAT0",
+   "temps": [],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon3",
+   "name": "nvme",
+   "device": "pci0000:00/0000:00:02.4/0000:02:00.0/nvme/nvme0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "Composite",
+     "input": 35.85,
+     "path": "/sys/class/hwmon/hwmon3/temp1_input",
+     "max": 85.85,
+     "crit": 86.85,
+     "min": -273.15,
+     "alarm": "0"
+    },
+    {
+     "id": "temp2",
+     "label": "Sensor 1",
+     "input": 38.85,
+     "path": "/sys/class/hwmon/hwmon3/temp2_input",
+     "max": 65261.85,
+     "min": -273.15
+    },
+    {
+     "id": "temp3",
+     "label": "Sensor 2",
+     "input": 35.85,
+     "path": "/sys/class/hwmon/hwmon3/temp3_input",
+     "max": 65261.85,
+     "min": -273.15
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon4",
+   "name": "thinkpad",
+   "device": "platform/thinkpad_hwmon",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "CPU",
+     "input": 44.0,
+     "path": "/sys/class/hwmon/hwmon4/temp1_input"
+    },
+    {
+     "id": "temp2",
+     "label": "GPU",
+     "input": null,
+     "path": "/sys/class/hwmon/hwmon4/temp2_input"
+    },
+    {
+     "id": "temp3",
+     "label": null,
+     "input": 44.0,
+     "path": "/sys/class/hwmon/hwmon4/temp3_input"
+    },
+    {
+     "id": "temp4",
+     "label": null,
+     "input": 0.0,
+     "path": "/sys/class/hwmon/hwmon4/temp4_input"
+    },
+    {
+     "id": "temp5",
+     "label": null,
+     "input": null,
+     "path": "/sys/class/hwmon/hwmon4/temp5_input"
+    },
+    {
+     "id": "temp6",
+     "label": null,
+     "input": 44.0,
+     "path": "/sys/class/hwmon/hwmon4/temp6_input"
+    },
+    {
+     "id": "temp7",
+     "label": null,
+     "input": 44.0,
+     "path": "/sys/class/hwmon/hwmon4/temp7_input"
+    },
+    {
+     "id": "temp8",
+     "label": null,
+     "input": null,
+     "path": "/sys/class/hwmon/hwmon4/temp8_input"
+    }
+   ],
+   "fans": [
+    {
+     "id": "fan1",
+     "label": null,
+     "rpm": 0.0,
+     "path": "/sys/class/hwmon/hwmon4/fan1_input"
+    },
+    {
+     "id": "fan2",
+     "label": null,
+     "rpm": 0.0,
+     "path": "/sys/class/hwmon/hwmon4/fan2_input"
+    }
+   ],
+   "pwm": [
+    {
+     "id": "pwm1",
+     "value": "255",
+     "enable": "2",
+     "mode": null,
+     "path": "/sys/class/hwmon/hwmon4/pwm1"
+    }
+   ],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon5",
+   "name": "ucsi_source_psy_USBC000:001",
+   "device": "platform/USBC000:00/power_supply/ucsi-source-psy-USBC000:001",
+   "temps": [],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon6",
+   "name": "k10temp",
+   "device": "pci0000:00/0000:00:18.3",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "Tctl",
+     "input": 45.125,
+     "path": "/sys/class/hwmon/hwmon6/temp1_input"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon7",
+   "name": "ucsi_source_psy_USBC000:002",
+   "device": "platform/USBC000:00/power_supply/ucsi-source-psy-USBC000:002",
+   "temps": [],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon8",
+   "name": "ath11k_hwmon",
+   "device": "pci0000:00/0000:00:02.2/0000:01:00.0/ieee80211/phy0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": null,
+     "input": null,
+     "path": "/sys/class/hwmon/hwmon8/temp1_input"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [],
+   "freq": []
+  },
+  {
+   "hwmon": "hwmon9",
+   "name": "amdgpu",
+   "device": "pci0000:00/0000:00:08.1/0000:c3:00.0",
+   "temps": [
+    {
+     "id": "temp1",
+     "label": "edge",
+     "input": 41.0,
+     "path": "/sys/class/hwmon/hwmon9/temp1_input"
+    }
+   ],
+   "fans": [],
+   "pwm": [],
+   "power": [
+    {
+     "id": "power1_average",
+     "label": "PPT",
+     "watts": 7.201,
+     "path": "/sys/class/hwmon/hwmon9/power1_average"
+    },
+    {
+     "id": "power1_input",
+     "label": "PPT",
+     "watts": 17.229,
+     "path": "/sys/class/hwmon/hwmon9/power1_input"
+    }
+   ],
+   "freq": [
+    {
+     "id": "freq1",
+     "label": "sclk",
+     "mhz": 800.0,
+     "path": "/sys/class/hwmon/hwmon9/freq1_input"
+    }
+   ]
+  }
+ ],
+ "thermal_zones": [
+  {
+   "zone": "thermal_zone0",
+   "type": "acpitz",
+   "temp": 44.0,
+   "mode": "enabled",
+   "policy": "step_wise",
+   "path": "/sys/class/thermal/thermal_zone0/temp",
+   "trips": [
+    {
+     "type": "critical",
+     "temp": 113.0,
+     "hyst": 0.0
+    },
+    {
+     "type": "hot",
+     "temp": 112.9,
+     "hyst": 0.0
+    }
+   ]
+  }
+ ],
+ "power_supply": [
+  {
+   "name": "AC",
+   "type": "Mains",
+   "online": "1"
+  },
+  {
+   "name": "BAT0",
+   "type": "Battery",
+   "status": "Not charging",
+   "capacity": "76",
+   "charge_control_start_threshold": "75",
+   "charge_control_end_threshold": "80",
+   "cycle_count": "24",
+   "manufacturer": "SMP",
+   "model_name": "5B10W51875",
+   "technology": "Li-poly",
+   "power_now": "0",
+   "energy_now": "42160000",
+   "energy_full": "54960000",
+   "energy_full_design": "57000000",
+   "charge_behaviour": "[auto] inhibit-charge force-discharge"
+  },
+  {
+   "name": "ucsi-source-psy-USBC000:001",
+   "type": "USB",
+   "online": "1"
+  },
+  {
+   "name": "ucsi-source-psy-USBC000:002",
+   "type": "USB",
+   "online": "0"
+  }
+ ],
+ "thinkpad_proc": {
+  "fan": "status:\t\tenabled\nspeed:\t\t0\nlevel:\t\tauto",
+  "thermal": "temperatures:\t44 -128 44 0 -128 44 44 -128"
+ },
+ "dell_ddv_wmi": false,
+ "throttle": {
+  "cpus_with_counters": 0,
+  "core_throttle_count_sum": 0,
+  "core_throttle_count_max": 0,
+  "core_throttle_total_time_ms_sum": 0,
+  "core_nonzero": {},
+  "packages": {}
+ },
+ "rapl": [
+  {
+   "zone": "intel-rapl:0",
+   "name": "package-0",
+   "enabled": "0",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "65532610987",
+   "constraints": []
+  },
+  {
+   "zone": "intel-rapl:0:0",
+   "name": "core",
+   "enabled": "0",
+   "energy_uj_readable": true,
+   "max_energy_range_uj": "65532610987",
+   "constraints": []
+  }
+ ],
+ "rapl_watts": {
+  "intel-rapl:0 package-0": 2.49,
+  "intel-rapl:0:0 core": 0.03
+ },
+ "cpufreq": {
+  "scaling_driver": "amd-pstate-epp",
+  "scaling_governor": "powersave",
+  "cpuinfo_min_freq": "400000",
+  "cpuinfo_max_freq": "5132000",
+  "scaling_min_freq": "400000",
+  "scaling_max_freq": "5132000",
+  "energy_performance_preference": "performance",
+  "amd_pstate_max_freq": "5132000",
+  "amd_pstate_highest_perf": "196",
+  "amd_pstate_lowest_nonlinear_freq": "1099000",
+  "amd_pstate_hw_prefcore": "enabled",
+  "cur_mhz": {
+   "min": 400,
+   "avg": 540,
+   "max": 1647
+  },
+  "cpuinfo_max_freq_all": [
+   5132
+  ],
+  "scaling_max_freq_all": [
+   5132
+  ],
+  "amd_pstate_status": "active",
+  "amd_pstate_prefcore": "enabled"
+ },
+ "platform_profile": {
+  "current": "balanced",
+  "choices": "low-power balanced performance"
+ },
+ "drives": [
+  {
+   "dev": "nvme0n1",
+   "serial": "4YC5N00971150562T",
+   "model": "SKHynix_HFS512GEJ9X164N",
+   "tran": "nvme",
+   "rota": false,
+   "size": "476.9G",
+   "smartctl_rc": 4,
+   "messages": [
+    "Read Self-test Log failed: Invalid Field in Command (0x002)"
+   ],
+   "temp": 36,
+   "nvme_sensors": [
+    38,
+    36
+   ],
+   "nvme_warning_temp_time_min": 0,
+   "nvme_critical_comp_time_min": 0,
+   "nvme_wctemp": 86,
+   "nvme_cctemp": 87,
+   "smart_passed": true,
+   "power_on_hours": 793
+  }
+ ],
+ "textfile": {
+  "/var/lib/node_exporter/textfile_collector/drivecheck.prom": [
+   "drivecheck_drive_info{host=\"yusuke\",device=\"/dev/nvme0\",serial=\"4YC5N00971150562T\",class=\"nvme\",model=\"SKHynix_HFS512GEJ9X164N\",firmware=\"51790C30\",kind=\"nvme\"} 1",
+   "drivecheck_temperature_celsius{host=\"yusuke\",device=\"/dev/nvme0\",serial=\"4YC5N00971150562T\",class=\"nvme\",model=\"SKHynix_HFS512GEJ9X164N\"} 35",
+   "drivecheck_temperature_limit_celsius{host=\"yusuke\",device=\"/dev/nvme0\",serial=\"4YC5N00971150562T\"} 86",
+   "drivecheck_temperature_margin_celsius{host=\"yusuke\",device=\"/dev/nvme0\",serial=\"4YC5N00971150562T\"} 51"
+  ]
+ },
+ "skipped": []
+}
