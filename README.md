@@ -170,6 +170,9 @@ bridged to the LAN on `br0`.
   (NFS speed, not backed up).
 - Hosts with `br0`: mementos, ryuji, tinynas, futaba, makoto, morgana, yusuke, tinypc. Not sojiro or akechi.
 - Big or AVX2 VMs (Rocky 10, Kubernetes) go on ryuji; mementos's Ivy Bridge Xeons lack AVX2.
+- Every VM gets one socket with N cores. Windows VMs also get the full Hyper-V enlightenment set (synic, stimer,
+  avic and the rest), which virt-install 4.1 leaves out. To add them to an older VM, apply the same `--xml` edits
+  with `virt-xml <vm> --edit`, then shut it down and start it (a reboot from inside Windows keeps the old config).
 
 ## Not in the repo
 

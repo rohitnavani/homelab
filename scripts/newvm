@@ -119,7 +119,8 @@ DS=${BASE:+$BASE/$name}
 DIR=$MP/$name
 DISK=$DIR/$name.qcow2
 # on the share the disk is made beforehand (root can't write there), so virt-install gets no size
-args=(--name "$name" --memory "$ram" --vcpus "$cpu"
+# one socket with $cpu cores: virt-install's default is a socket per vCPU, and Windows 10/11 Pro use 2 sockets at most
+args=(--name "$name" --memory "$ram" --vcpus "$cpu,sockets=1,cores=$cpu,threads=1"
       --disk "path=$DISK,${DS:+size=$size,}format=qcow2,bus=virtio,discard=unmap"
       --osinfo "${osinfo:-detect=on,require=off}"
       --machine q35
@@ -133,6 +134,13 @@ if [ "$windows" = yes ]; then
   args+=(--boot "uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=yes"
          --tpm backend.type=emulator,backend.version=2.0,model=tpm-crb
          --disk "path=$VIRTIO,device=cdrom")
+  # the full Hyper-V enlightenment set; virt-install 4.1 adds only relaxed, vapic and spinlocks, and its
+  # --features doesn't know the rest. synic + stimer let an idle guest stop taking timer-tick exits;
+  # avic keeps the host's APICv working with synic on
+  for f in relaxed vapic spinlocks vpindex runtime synic stimer stimer/direct reset frequencies tlbflush ipi avic; do
+    args+=(--xml "./features/hyperv/$f/@state=on")
+  done
+  args+=(--xml ./features/hyperv/@mode=custom --xml ./features/hyperv/spinlocks/@retries=8191)
 else
   # plain UEFI: any ISO boots, and DKMS modules (zfs, nvidia) don't need MOK signing
   args+=(--boot "uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=no")
