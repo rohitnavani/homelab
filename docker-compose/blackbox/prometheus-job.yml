@@ -11,12 +11,29 @@
           - 'https://jellyfin.rohitnavani.com/health'
           - 'https://cockpit.rohitnavani.com'
           - 'https://grafana.rohitnavani.com/api/health'
+          - 'https://money.rohitnavani.com/healthz'
         labels: {module: http_2xx}
       - targets: ['https://homelab.rohitnavani.com']
         labels: {module: http_2xx_or_401}
     relabel_configs:
       - source_labels: [module]
         target_label: __param_module
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'blackbox-exporter:9115'
+  - job_name: 'money_health'
+    # money-mcp's own view of itself (see config.yml http_money_healthy); a separate job so SiteDown,
+    # which watches job 'blackbox', doesn't fire twice. Added 2026-10-27.
+    scrape_interval: 300s
+    scrape_timeout: 15s
+    metrics_path: /probe
+    params: {module: [http_money_healthy]}
+    static_configs:
+      - targets: ['https://money.rohitnavani.com/healthz']
+    relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]

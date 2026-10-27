@@ -17,3 +17,12 @@ groups:
         annotations:
           summary: 'TLS cert for {{ $labels.instance }} expires in {{ $value | printf "%.0f" }} days'
           description: "Renewal should happen 30 days before expiry. Jellyfin renews with snap certbot on tinynas; Cloudflare renews its edge certificates itself."
+      # money-mcp answers but reports itself unhealthy: its syncs have failed for 12 h or its config doesn't load.
+      # A site that doesn't answer at all is SiteDown's job; this fires only on a 200 that fails the body check.
+      - alert: MoneyMcpUnhealthy
+        expr: probe_success{job="money_health"} == 0 and on(instance) probe_http_status_code{job="money_health"} == 200
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "money-mcp unhealthy: {{ $labels.instance }}"
+          description: "Its /healthz says which (sync_fresh, budget_config_ok). Logs on makoto: sudo docker compose -f ~/money-mcp/compose.yaml logs --since 2h"
