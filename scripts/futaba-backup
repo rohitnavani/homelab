@@ -25,6 +25,7 @@ for f in /home/rohit/monitoring/docker-compose.yml /home/rohit/monitoring/promet
          /home/rohit/homepage/docker-compose.yml /home/rohit/homepage/glance.yml \
          /home/rohit/adguard/docker-compose.yml /home/rohit/resume-site/docker-compose.yml \
          /etc/nginx/sites-available/*.conf /etc/cockpit/cockpit.conf /etc/systemd/system/cockpit.socket.d/listen.conf \
+         /etc/needrestart/conf.d/cockpit.conf \
          /usr/local/bin/resume-uptime /usr/local/bin/futaba-backup /etc/cron.d/resume-uptime /etc/cron.d/futaba-backup; do
   redact < "$f" | put "$f"
 done
