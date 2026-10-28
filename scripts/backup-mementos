@@ -9,7 +9,7 @@ KEY="/root/.ssh/id_ed25519_backuppull"
 DEST="homePool/backups/mementos"
 LOGDIR="/var/log/replication"
 DATASETS=(
-  dataPool/nextcloud
+  vmPool/data/nextcloud        # dataPool/nextcloud until 2026-10-28 (MD1200 retired; replica renamed to match)
   vmPool/docker
   vmPool/docker-compose/nextcloud-aio
 )

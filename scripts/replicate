@@ -1,7 +1,7 @@
 #!/bin/bash
 # Offsite backup: pull ZFS datasets into backupPool (pull, never push).
 # Each entry is "<user@host> <dataset>"; the copy lands at backupPool/<dataset>, keeping the source pool name
-# (homePool/nvmePool = tinynas, dataPool/vmPool = mementos), so pool names must stay unique across machines.
+# (homePool/nvmePool = tinynas, vmPool = mementos), so pool names must stay unique across machines.
 # tinynas accepts this box's root key (from="10.0.0.8", root). mementos accepts the same key only for the
 # unprivileged backuppull user, which may only `zfs send`/`hold` its datasets (hence --no-privilege-elevation).
 #
@@ -17,7 +17,7 @@
 #   VMs      not backed up by choice: tinynas /pool/kvm, mementos vmPool/kvm (2k25-test, backed up by an agent
 #            inside the guest), futaba /var/lib/libvirt/images (haos).
 #   HA       Home Assistant's own encrypted backups go over NFS from HAOS (10.0.0.11, its only client) to the
-#            "labshare" backup mount, dataset dataPool/labShare/homeassistant (2026-10-17).
+#            "labshare" backup mount, dataset vmPool/data/labShare/homeassistant (2026-10-17).
 #   Other    /dataPool/backups on labShare also holds tinypc's Open WebUI and config backups.
 # Also not pulled, by choice: Docker data-roots except AIO's, vmPool/labShare, Jellyfin, the iSCSI zvol, samba,
 # downloads and the hosts' own logs datasets except tinynas's and mementos's. Stale replicas from before 2026-10-05
@@ -37,12 +37,14 @@ SOURCES=(
   "root@10.0.0.5 nvmePool/mcserver2"
   "root@10.0.0.5 nvmePool/mcserver3"
   "root@10.0.0.5 nvmePool/mcserver4"
-  # mementos (Nextcloud since 2026-10-05: files, Docker data-root with AIO's database, AIO compose dir; its logs)
-  "backuppull@10.0.0.10 dataPool/nextcloud"
+  # mementos (Nextcloud since 2026-10-05: files, Docker data-root with AIO's database, AIO compose dir; its logs).
+  # dataPool (the MD1200 shelf) moved into vmPool/data on 2026-10-28 with the same mount paths; the replicas here
+  # were renamed from backupPool/dataPool/... to match, so the pulls stayed incremental.
+  "backuppull@10.0.0.10 vmPool/data/nextcloud"
   "backuppull@10.0.0.10 vmPool/docker"
   "backuppull@10.0.0.10 vmPool/docker-compose/nextcloud-aio"
   "backuppull@10.0.0.10 vmPool/logs"
-  "backuppull@10.0.0.10 dataPool/labShare"   # lab NFS bulk share, all of it (Rohit 2026-10-14): homelab/ + backups/ + homeassistant
+  "backuppull@10.0.0.10 vmPool/data/labShare"   # the /dataPool NFS share, all of it (Rohit 2026-10-14): homelab/ + backups/ + homeassistant
 )
 
 mkdir -p "$LOGDIR"
