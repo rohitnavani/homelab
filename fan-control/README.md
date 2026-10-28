@@ -135,6 +135,9 @@ thresholds from the hardware above. What carries over and what to change:
 - Logs each of the four fans from that same SES read (v3.3): at start, and whenever one fan is 250 rpm (10%) off the
   others, reports a fault, or the average is 150 rpm off; the state file keeps them. Firmware surges of a few seconds
   are cancelled by the 2 s re-send long before the takeover check, so the average alone never showed them.
+- `MD1200_FAN_MIN` raises the floor (10-45, default 10; a bad value keeps 10) from a systemd drop-in (v3.4). Since
+  2026-10-28 mementos runs 14% (`md1200-fan.service.d/floor.conf`) to test whether a failing fan, which trips the
+  firmware's all-fan surge at 10%, holds steady a little faster. 10 -> 15% costs about 0.4 dB(A) at the rack.
 - Finds the shelf's SES device at start by type and model (`/sys/class/scsi_generic`, type 13, model MD1200), so a
   renumbered `/dev/sgN` after a reboot or an HBA change does not break the fan-speed check (v3.2).
 - Never send `_shutup` below 10. Never hot-insert or remove EMMs or PSUs (the shelf loops resets until power-cycled).

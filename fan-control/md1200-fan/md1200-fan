@@ -31,7 +31,11 @@
 # yields each Cooling element's speed, status and Fail bit: logged at start, whenever one fan is off from the others,
 # a fan reports a fault, or the average is off the expected speed, and kept in the state file. Control is unchanged
 # (same average of the last 4 speeds). No second SES reader: an extra read while this runs can fail fan-watchdog's.
+# v3.4 (2026-10-28): the floor can be raised with MD1200_FAN_MIN (10 to NORMAL_MAX; default 10) without a code
+# change. v3.3 caught the cause at 14:09: fan F3 alone sags (2,040 vs 2,330-2,400), the firmware ramps all four,
+# the re-send pulls them back. Failing fans tend to misbehave at their lowest speed, so the first test runs at 14%.
 import json, re, subprocess, sys, time, serial
+import os
 
 PORT, SG = '/dev/ttyUSB0', '/dev/sg39'
 STATE = '/run/md1200-fan.state'
@@ -50,6 +54,10 @@ DOWN_MARGIN = {'drive': 1.5, 'backplane': 2.0, 'SIM': 3.0, 'expander': 3.0}  # c
 URGENT = {'drive': 53, 'backplane': 48, 'SIM': 61, 'expander': 90}           # raw temps: +5%, then +5% per URGENT_EVERY
 FLOORS = [('drive', 56, 60), ('drive', 58, 80), ('backplane', 50, 80), ('SIM', 64, 80), ('expander', 95, 80)]
 MIN, NORMAL_MAX, MAX = 10, 45, 80   # normal range tops out at a medium level; only floors/urgent go higher
+try:   # v3.4; never below 10, and a bad value keeps the default rather than leaving the shelf in its loud default
+    MIN = max(10, min(NORMAL_MAX, int(os.environ.get('MD1200_FAN_MIN') or MIN)))
+except ValueError:
+    pass
 NUDGE_UP = 600     # seconds since the last change before a 1-2% step up
 NUDGE_DOWN = 1200  # seconds since the last change before a 1% step down
 NUDGE_DOWN_FAST = 300   # ... while the hottest drive is at least FAST_BELOW under target
@@ -261,7 +269,7 @@ last_urgent = 0
 last_verify, last_role, role, drift_since, takeovers, temps = 0, 0, '?', None, 0, None
 last_send, send_now, echo_misses, last_echo_log = 0, True, 0, 0
 fan_key, fan_logged, fans_seen = '', 0, False
-log(f'starting (v3.3, SES {SG})')
+log(f'starting (v3.4, SES {SG}, floor {MIN}%)')
 while True:
     try:
         now = time.time()
