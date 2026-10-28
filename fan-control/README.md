@@ -132,6 +132,9 @@ thresholds from the hardware above. What carries over and what to change:
   a command sent to it only lasts about 15 s before the primary takes over.
 - Re-sends every 2 s as insurance against the shelf firmware's own thermal ramp (a single command to the primary
   held for 45 min in testing), checks the echo, and compares the SES fan speed (`sg_ses -p 2`) with the expected one.
+- Logs each of the four fans from that same SES read (v3.3): at start, and whenever one fan is 250 rpm (10%) off the
+  others, reports a fault, or the average is 150 rpm off; the state file keeps them. Firmware surges of a few seconds
+  are cancelled by the 2 s re-send long before the takeover check, so the average alone never showed them.
 - Finds the shelf's SES device at start by type and model (`/sys/class/scsi_generic`, type 13, model MD1200), so a
   renumbered `/dev/sgN` after a reboot or an HBA change does not break the fan-speed check (v3.2).
 - Never send `_shutup` below 10. Never hot-insert or remove EMMs or PSUs (the shelf loops resets until power-cycled).

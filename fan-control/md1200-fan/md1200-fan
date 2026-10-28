@@ -25,6 +25,12 @@
 # chosen % is re-sent every RESEND seconds, and the actual fan speed is checked against SES:
 # if it drifts from what the % should give, that's logged as a takeover and re-sent at once.
 # Measured 2026-10-05: 10% ~2330, 15% ~2800, 20% ~3290, 25% ~3770, 30% ~4250 rpm.
+# v3.3 (2026-10-28): logs each shelf fan. Rohit heard loud spin-ups that the average missed: the SES average dips
+# then overshoots (13:32: 2,258 -> 2,530 rpm at a steady 10%), the firmware's own ramp, cancelled by the next 2 s
+# re-send long before the 20 s takeover check, ~1/day on 10-25 and 5 in 2.5 h on 10-28. The same SES read now also
+# yields each Cooling element's speed, status and Fail bit: logged at start, whenever one fan is off from the others,
+# a fan reports a fault, or the average is off the expected speed, and kept in the state file. Control is unchanged
+# (same average of the last 4 speeds). No second SES reader: an extra read while this runs can fail fan-watchdog's.
 import json, re, subprocess, sys, time, serial
 
 PORT, SG = '/dev/ttyUSB0', '/dev/sg39'
@@ -32,6 +38,9 @@ STATE = '/run/md1200-fan.state'
 INTERVAL = 30   # temp check
 RESEND = 2      # seconds between _shutup re-sends (also sent at once on a change or takeover)
 VERIFY = 10     # seconds between SES fan-speed checks
+FAN_GAP, FAN_ODD = 250, 0.10   # v3.3: log a fan this far (rpm, and share) from the median of the others
+OFF_AVG = 150   # v3.3: log the average this far from the expected speed (the takeover check acts at 300)
+FAN_LOG_EVERY = 600   # repeat a lasting fan note this often
 TICK = 2        # loop period
 ROLE_EVERY = 1800   # re-check the EMM role this often (every 60s while it isn't primary)
 # Targets (smoothed temps). Rohit's choice: hottest drive about 50C at idle. ST8000NM0075 trips at 60C;
@@ -138,10 +147,49 @@ def find_ses():
         pass
     return SG
 
+def parse_fans(out):
+    # each Cooling element of `sg_ses -p 2` (sg3-utils 1.46 layout), skipping the overall descriptor
+    fans, kind, cur = [], None, None
+    for line in out.splitlines():
+        m = re.match(r'\s*Element type: ([^,]+),', line)
+        if m:
+            kind, cur = m.group(1).strip(), None
+        elif kind == 'Cooling' and re.match(r'\s*Element \d+ descriptor:', line):
+            cur = {}
+            fans.append(cur)
+        elif kind == 'Cooling' and re.match(r'\s*Overall descriptor:', line):
+            cur = None
+        elif cur is not None:
+            for k, pat in (('status', r'status: (.+?)\s*$'), ('fail', r'\bFail=(\d)'), ('predicted', r'Predicted failure=(\d)'),
+                           ('rpm', r'Actual speed=(\d+) rpm'), ('code', r'rpm, Fan (.+?)\s*$')):
+                m = re.search(pat, line)
+                if m:
+                    cur[k] = int(m.group(1)) if k in ('fail', 'predicted', 'rpm') else m.group(1)
+    return [f for f in fans if 'rpm' in f]
+
 def fan_rpm():
+    # one SES read: the average the loop acts on (the last 4 speeds, as before v3.3) and each fan for the log
     out = subprocess.run(['sg_ses', '-p', '2', SG], capture_output=True, text=True).stdout
     rpm = [int(x) for x in re.findall(r'Actual speed=(\d+) rpm', out)][-4:]
-    return sum(rpm) / len(rpm) if rpm else None
+    return (sum(rpm) / len(rpm) if rpm else None), parse_fans(out)
+
+def fan_notes(fans, rpm, exp, settled):
+    # what is off about the fans right now; speeds only count once a change has settled
+    notes = []
+    for i, f in enumerate(fans):
+        if f.get('status', 'OK') != 'OK' or f.get('fail') or f.get('predicted'):
+            notes.append(f"F{i} {f.get('status', '?')}{' Fail' if f.get('fail') else ''}{' predicted-failure' if f.get('predicted') else ''}")
+        others = sorted(g['rpm'] for j, g in enumerate(fans) if j != i)
+        if settled and others:
+            med = (others[(len(others) - 1) // 2] + others[len(others) // 2]) / 2
+            if abs(f['rpm'] - med) >= max(FAN_GAP, FAN_ODD * med):
+                notes.append(f"F{i} {'slow' if f['rpm'] < med else 'fast'}")
+    if settled and rpm is not None and abs(rpm - exp) >= OFF_AVG:
+        notes.append('average over' if rpm > exp else 'average under')
+    return notes
+
+def fmt_fans(fans):
+    return ', '.join(f"F{i}={f['rpm']} {f.get('status', '?')}" for i, f in enumerate(fans))
 
 def expected_rpm(pct):
     # measured points, linear in between and beyond (about 96 rpm per %)
@@ -212,7 +260,8 @@ pct, changed, checked, last_good, last_nudge, smooth = None, 0, 0, time.time(), 
 last_urgent = 0
 last_verify, last_role, role, drift_since, takeovers, temps = 0, 0, '?', None, 0, None
 last_send, send_now, echo_misses, last_echo_log = 0, True, 0, 0
-log(f'starting (v3.2, SES {SG})')
+fan_key, fan_logged, fans_seen = '', 0, False
+log(f'starting (v3.3, SES {SG})')
 while True:
     try:
         now = time.time()
@@ -254,20 +303,34 @@ while True:
         # closed loop: the fans should settle near the expected speed within ~20s of a change
         if role == 'primary' and time.time() - last_verify >= VERIFY:
             last_verify = time.time()
-            rpm = fan_rpm()
+            rpm, fans = fan_rpm()
             exp = expected_rpm(pct)
             if rpm is not None and time.time() - changed > 25 and abs(rpm - exp) > max(300, 0.15 * exp):
                 if drift_since is None:
                     drift_since = time.time()
                 elif time.time() - drift_since >= VERIFY:
                     takeovers += 1
-                    log(f'takeover: fans at {rpm:.0f} rpm, expected about {exp} for {pct}% (count {takeovers}); re-sending')
+                    log(f'takeover: fans at {rpm:.0f} rpm, expected about {exp} for {pct}% (count {takeovers}); '
+                        f're-sending ({fmt_fans(fans)})')
                     send_now, drift_since = True, None
             else:
                 drift_since = None
+            if not fans_seen and rpm is not None:
+                fans_seen = True
+                log(f'fans at start: {fmt_fans(fans)}' if fans else 'no Cooling elements parsed from SES; logging the average only')
+            if rpm is not None:                      # a failed SES read changes nothing
+                notes = fan_notes(fans, rpm, exp, time.time() - changed > 25)
+                key = ' '.join(notes)
+                if notes and (key != fan_key or time.time() - fan_logged >= FAN_LOG_EVERY):
+                    log(f'fans: {fmt_fans(fans)}; average {rpm:.0f}, expected {exp} for {pct}% ({", ".join(notes)})')
+                    fan_logged = time.time()
+                elif fan_key and not notes:
+                    log(f'fans back in line: {fmt_fans(fans)}; average {rpm:.0f}')
+                fan_key = key
             with open(STATE, 'w') as f:
                 json.dump({'time': time.strftime('%F %T'), 'pct': pct, 'rpm': rpm, 'expected_rpm': exp,
-                           'temps': temps, 'role': role, 'takeovers': takeovers, 'echo_misses': echo_misses}, f)
+                           'temps': temps, 'role': role, 'takeovers': takeovers, 'echo_misses': echo_misses,
+                           'fans': [[f['rpm'], f.get('status', '?')] for f in fans]}, f)
     except Exception as ex:
         log(f'error: {ex!r}')
         time.sleep(10)
