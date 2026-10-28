@@ -1,5 +1,6 @@
 #!/bin/bash
-# lab-scripts - keeps the lab's scripts in one place: this repo, on mementos's dataPool (2026-10-16).
+# lab-scripts - keeps the lab's scripts in one place: this repo, on mementos's /dataPool share (2026-10-16; the
+# share's dataset is vmPool/data/labShare since 2026-10-28, when the MD1200's dataPool was retired).
 #
 #   lab-scripts [status] [-v] [HOST...]  what is out of line: work in this repo (and private/) that is not committed
 #                                         or not on GitHub, and hosts whose files differ from deploy.list and main
@@ -329,11 +330,12 @@ if grep -qs "labShare[[:space:]]\+/dataPool[[:space:]]" /etc/fstab; then
     printf "%s\n" "[Unit]" "# The lab scripts run from this share (lab-scripts). Keep retrying the mount: early requests at boot, before the" "# network is up, must never leave /dataPool unmounted for good (ryuji, 2026-10-17)." "StartLimitIntervalSec=0" > $d/lab-scripts.conf
     systemctl daemon-reload; echo "wrote $d/lab-scripts.conf"
   fi
-elif zfs list -H -o name dataPool/labShare >/dev/null 2>&1; then
-  # mementos: the share is local; give it the same path as the NFS clients
+elif [ "$(findmnt -n -o FSTYPE /dataPool/labShare 2>/dev/null)" = zfs ]; then
+  # mementos: the share is local (vmPool/data/labShare since 2026-10-28, dataPool/labShare before); give it the
+  # same path as the NFS clients
   [ -e /dataPool/homelab ] || { ln -s labShare/homelab /dataPool/homelab; echo "linked /dataPool/homelab -> labShare/homelab"; }
 else
-  echo "$(hostname -s): no share here (no NFS mount in /etc/fstab, no local dataPool/labShare); it keeps [copies]"; exit 0
+  echo "$(hostname -s): no share here (no NFS mount in /etc/fstab, no local ZFS share at /dataPool/labShare); it keeps [copies]"; exit 0
 fi
 want=$(cat <<EOF
 # Lab scripts: the homelab repo on mementos (dataPool/labShare), the same path on every lab host. Written by
