@@ -4,6 +4,7 @@
 # v3 (2026-10-07 20:5x): FanControllerStale and R720FansInIdracAuto stay quiet while a fan-control test unit is
 # active on that host (node_exporter's systemd collector; the unit names of fan-control/testing and tools), because
 # tests stop the controllers or force fan modes on purpose. A test unit with another name still alerts.
+# v4 (2026-11-04): the MD1200 shelf is retired, so md1200-fan, ShelfDriveHot and ShelfEmmNotPrimary are gone.
 groups:
   - name: lab-thermal
     rules:
@@ -19,8 +20,6 @@ groups:
       - alert: ThermalMetricsMissing
         expr: |
           label_replace((up{job="node"} * on(instance) group_left(nodename) node_uname_info{nodename="mementos"}) == 1
-            unless on(instance) lab_controller_state_age_seconds{controller="md1200-fan"}, "controller", "md1200-fan", "", "")
-          or label_replace((up{job="node"} * on(instance) group_left(nodename) node_uname_info{nodename="mementos"}) == 1
             unless on(instance) lab_controller_state_age_seconds{controller="fan-watchdog"}, "controller", "fan-watchdog", "", "")
           or label_replace((up{job="node"} * on(instance) group_left(nodename) node_uname_info{nodename="ryuji"}) == 1
             unless on(instance) lab_controller_state_age_seconds{controller="ryuji-fan-guard"}, "controller", "ryuji-fan-guard", "", "")
@@ -38,20 +37,6 @@ groups:
         annotations:
           summary: "mementos fans on iDRAC auto for 15 min (loud)"
           description: "fan-watchdog handed the R720 fans to iDRAC auto (an emergency temperature or a failed sensor read) and has not taken them back."
-      - alert: ShelfDriveHot
-        expr: lab_md1200_temp_celsius{sensor="drive"} >= 54
-        for: 10m
-        labels: {severity: warning}
-        annotations:
-          summary: "MD1200 hottest drive {{ $value }}C"
-          description: "md1200-fan v3.2 targets 50C, goes urgent at 53 and floors the fans at 60% from 56; the drives trip at 60C."
-      - alert: ShelfEmmNotPrimary
-        expr: lab_md1200_primary == 0
-        for: 10m
-        labels: {severity: warning}
-        annotations:
-          summary: "md1200-fan sees its EMM as not primary"
-          description: "The serial cable must be on the TOP (primary) EMM; while it is not primary md1200-fan holds its fan commands and the shelf runs its own curve."
       - alert: RyujiSioHot
         expr: lab_ryuji_temp_celsius{sensor="sio1"} >= 82
         for: 10m
