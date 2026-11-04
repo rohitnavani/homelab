@@ -6,7 +6,7 @@ under heavy work, loud only at full load or when something is genuinely hot. Bui
 
 | Controller | Runs on | Controls | Installs to |
 |---|---|---|---|
-| `md1200-fan` | mementos | MD1200 shelf fans, via the EMM serial console (`_shutup <pct>` over an FTDI adapter, `/dev/ttyUSB0`, cable on the TOP EMM) | `/usr/local/bin/md1200-fan` |
+| `md1200-fan` | mementos until 2026-11-04 (retired with the shelf; kept for anyone with an MD1200) | MD1200 shelf fans, via the EMM serial console (`_shutup <pct>` over an FTDI adapter, `/dev/ttyUSB0`, cable on the TOP EMM) | `/usr/local/bin/md1200-fan` |
 | `fan-watchdog` | mementos | Dell R720xd fans, via `ipmitool raw 0x30 0x30` | `/usr/local/sbin/fan-watchdog` |
 | `ryuji-fan-guard` | ryuji | Gigabyte MD70-HB0 BMC (Avocent) fan offset, via the BMC's own web API | `/usr/local/sbin/ryuji-fan-guard` |
 | `makoto-fan` | makoto | its CPU heatsink fan and case fan, via the ASRock Rack BMC (`ipmitool raw 0x3a 0x01`) | `/usr/local/sbin/makoto-fan` |
@@ -24,7 +24,7 @@ Recorded 2026-10-06, makoto 2026-10-19 (read with `dmidecode`, `lscpu`, `lspci`,
 `sg_inq`, `lsblk`). The controller hosts run Ubuntu 24.04.5 LTS (kernel 6.8), Python 3.12, ipmitool 1.8.19,
 smartmontools 7.4, sg3-utils 1.46, python3-serial 3.5.
 
-### mementos: Dell PowerEdge R720xd (runs `fan-watchdog` and `md1200-fan`)
+### mementos: Dell PowerEdge R720xd (runs `fan-watchdog`; ran `md1200-fan` until 2026-11-04)
 
 | Part | What is installed |
 |---|---|
@@ -33,19 +33,22 @@ smartmontools 7.4, sg3-utils 1.46, python3-serial 3.5.
 | CPUs | 2x Intel Xeon E5-2697 v2 (Ivy Bridge-EP, 12 cores / 24 threads, 130 W TDP each); 48 threads total |
 | Memory | 16x 16 GB DDR3-1600 dual-rank RDIMM (256 GB), 8 slots empty |
 | Front bays | 24x Seagate ST1200MM0007 (1.2 TB 10K SAS, 2.5"), ZFS `vmPool` |
-| Rear bays | 2x HGST HUSMM8080ASS20 (800 GB SAS SSD), SLOG for `dataPool` |
+| Rear bays | 2x HGST HUSMM8080ASS20 (800 GB SAS SSD): the boot disk, and `vmPool`'s SLOG and L2ARC (it was `dataPool`'s SLOG too until 2026-11-04) |
 | Storage controllers | Dell H710P mini (internal bays) and Dell H810 (external, to the MD1200), both crossflashed to IT mode; both show as Broadcom/LSI SAS2308 |
 | Fans | 6 system fans (`Fan1`-`Fan6` in IPMI); 10% is about 3,400 rpm, 35% about 7,600 rpm |
 | Power | One working PSU (PS2). PS1 is a unit with a failed fan, left in its bay uncorded as a blank (the R720 needs a PSU or a blank in every bay for its airflow); the iDRAC reports it, expected |
 | Serial adapter | FTDI FT232R USB-UART (USB ID 0403:6001), `/dev/ttyUSB0`, to the MD1200's top EMM |
 
-### MD1200 shelf (controlled from mementos by `md1200-fan`)
+### MD1200 shelf (controlled from mementos by `md1200-fan`; retired 2026-11-04)
+
+The shelf was switched off on 2026-11-04 to be sold (its data moved into `vmPool`); the table records the
+hardware `md1200-fan` was built and tested on.
 
 | Part | What is installed |
 |---|---|
 | Enclosure | Dell PowerVault MD1200 (2U, 12x 3.5" bays), SES product revision 1.06 |
 | EMMs | 2 EMMs, firmware 1.06. The TOP EMM is the primary; the bottom EMM is secondary and carries the SAS links |
-| Drives | 11x Seagate ST8000NM0075 and 1x ST8000NM0185 (8 TB 7.2K SAS), ZFS `dataPool` raidz2 |
+| Drives | 11x Seagate ST8000NM0075 and 1x ST8000NM0185 (8 TB 7.2K SAS), ZFS `dataPool` raidz2 (destroyed 2026-11-04) |
 | Fans | No separate fan modules: 2 PSU/cooling modules with 2 fans each, set together as one % |
 | Fan speeds | Measured: 10% 2,330 rpm, 15% 2,800, 20% 3,290, 25% 3,770, 30% 4,250; firmware default about 5,000; thermal ramp about 7,600 |
 | Control path | EMM serial console at 38400 baud, 8N1 (pyserial defaults), from the FTDI adapter on mementos; SES (`sg_ses`) through the H810: the sg number moves (`/dev/sg39` until 2026-10-13, `/dev/sg38` since), so md1200-fan finds it by type |
@@ -121,6 +124,7 @@ thresholds from the hardware above. What carries over and what to change:
 
 ## md1200-fan (MD1200 shelf)
 
+- Retired in this lab on 2026-11-04 with the shelf (unit removed from mementos). The last version was v3.4.
 - Holds the hottest shelf drive near 50C (v3.2; v3.1 held 48.5C), with backplane 46C, SIM 58C and expander 86C as
   guards. Steps 1-2% up at most every 10 min and 1% down at most every 20 min, because the drives take 20-35 min to
   settle after a change. While the hottest drive is 5C or more under target it eases down every 5 min instead (v3.2),
