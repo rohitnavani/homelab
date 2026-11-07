@@ -205,6 +205,24 @@ Tuned to this lab's drives, so change these first elsewhere:
 - DriveTempNearLimit uses each drive's own limit: the SATA specified maximum, the SAS drive trip temperature or the
   NVMe warning temperature, as drivecheck reads them.
 
+## Core alert rules
+
+`alerts-rules.yml` holds the stack's first rules, live on futaba as `prometheus/rules/alerts.yml` (copy it by hand,
+then reload as above). The probe jobs' own rules are in `../docker-compose/blackbox/blackbox.yml`, tested with
+`blackbox.test.yml` there.
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| TargetDown | a scrape target answers no scrape for 5 min, except the probe jobs `blackbox` and `money_health` (their `up` is the prober's; ProberDown covers it) | critical |
+| DriveCheckStale | a host's drivecheck hasn't run for 2 days | warning |
+| DriveHealthNotOK | a drive's SMART overall health isn't OK | critical |
+| DriveSelftestFailed | a drive's last SMART self-test failed | warning |
+| DriveCheckAlert | drivecheck counted any issue on a host | warning |
+| NVMeSpareLow | an NVMe drive's available spare is under 70% | critical |
+| SASUncorrectedErrors | a SAS drive counts uncorrected errors | warning |
+| RootDiskFull | `/` has under 10% free for 15 min | warning |
+| PDUNearOverload | the rack PDU draws 12 A or more for 5 min | warning |
+
 ## Hardware and software it has run on
 
 As of 2026-10-16:

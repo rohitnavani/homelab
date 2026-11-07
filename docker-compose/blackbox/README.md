@@ -12,7 +12,13 @@ Runs on **futaba** (Lenovo 10HY002AUS mini PC: Core i5-6500T, 32 GB DDR4, 256 GB
 | `compose-service.yml` | the `services:` list of the monitoring `docker-compose.yml` | The exporter container, with `./blackbox` mounted read-only |
 | `config.yml` | `/home/rohit/monitoring/blackbox/config.yml` | Modules `http_2xx`, `http_2xx_or_401` for a site behind basic auth (homelab), and `http_money_healthy`, which also needs `"healthy":true` in money-mcp's /healthz |
 | `prometheus-job.yml` | the `scrape_configs:` list of `prometheus.yml` | Job `blackbox`: one probe per site every 60 s; each target's `module` label picks its module. Job `money_health`: money-mcp's /healthz with `http_money_healthy` every 5 min |
-| `blackbox.yml` | `/home/rohit/monitoring/prometheus/rules/` | `SiteDown` (a probe failing for 5 min, critical), `CertExpiringSoon` (under 14 days left, warning) and `MoneyMcpUnhealthy` (money-mcp answers but reports unhealthy for 1 h, warning) |
+| `blackbox.yml` | `/home/rohit/monitoring/prometheus/rules/` | `ProberDown` (the exporter can't be scraped for 5 min, warning), `SiteDown` (a probe failing for 5 min, critical), `CertExpiringSoon` (under 14 days left, warning) and `MoneyMcpUnhealthy` (money-mcp answers but reports unhealthy for 1 h, warning) |
+| `blackbox.test.yml` | `/home/rohit/monitoring/prometheus/tests/blackbox_test.yml`, with rule paths `../rules/blackbox.yml` and `../rules/alerts.yml` | promtool tests: a dead prober is one ProberDown, a dead host is still TargetDown, one failing site is SiteDown only |
+
+- **A dead prober is not a site outage.** If the exporter stops, every probe target reads `up = 0` and no site is
+  checked. ProberDown sends one alert for that, and TargetDown (`../../monitoring/alerts-rules.yml`) leaves the
+  probe jobs out. On 2026-11-07 the exporter died in a power cut and Docker never restarted it, while every site was
+  fine.
 
 The probes go out through the internet and Cloudflare like a visitor's. Jellyfin is the exception: its address is
 direct, so its probe loops back inside the router. When every tunnel site fails at once and Jellyfin stays up, the

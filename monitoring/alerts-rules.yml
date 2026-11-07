@@ -1,0 +1,71 @@
+# Core alert rules: scrape targets, drivecheck freshness and v1 drive checks, root disk, rack PDU load.
+# Live on futaba as ~/monitoring/prometheus/rules/alerts.yml (copied by hand; Prometheus loads every rules/*.yml).
+groups:
+  - name: pipeline
+    rules:
+      # Any scrape target not responding (node_exporter, PDU snmp) - "not receiving data". Not the probe jobs (blackbox,
+      # money_health): their up is the prober's health, not the site's, and ProberDown in blackbox.yml reports it once.
+      - alert: TargetDown
+        expr: up{job!~"blackbox|money_health"} == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Scrape target down: {{ $labels.job }} {{ $labels.instance }}"
+          description: "Prometheus on futaba has not been able to scrape {{ $labels.instance }} (job {{ $labels.job }}) for 5m."
+      # Drive data went stale (drivecheck stopped running on a host, even though node_exporter is up)
+      - alert: DriveCheckStale
+        expr: time() - max by(host)(drivecheck_last_run_timestamp_seconds) > 172800
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "drivecheck stale on {{ $labels.host }} (>2 days since last run)"
+          description: "No fresh SMART/drive metrics from {{ $labels.host }}; the daily drivecheck may have stopped."
+  - name: drives
+    rules:
+      - alert: DriveHealthNotOK
+        expr: drivecheck_health_ok == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "SMART health not OK: {{ $labels.host }} {{ $labels.device }} ({{ $labels.model }})"
+      - alert: DriveSelftestFailed
+        expr: drivecheck_selftest_passed == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "SMART self-test failed: {{ $labels.host }} {{ $labels.device }}"
+      - alert: DriveCheckAlert
+        expr: drivecheck_alerts_total > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "drivecheck found {{ $value }} issue(s) on {{ $labels.host }}"
+          description: "See /var/log/drive_logs (or /pool/drive_logs on tinynas) on {{ $labels.host }}."
+      - alert: NVMeSpareLow
+        expr: drivecheck_nvme_available_spare_percent < 70
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "NVMe spare low: {{ $labels.host }} {{ $labels.device }} ({{ $value }}%)"
+      - alert: SASUncorrectedErrors
+        expr: drivecheck_sas_uncorrected_errors > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "SAS uncorrected errors: {{ $labels.host }} {{ $labels.device }}"
+  - name: hosts
+    rules:
+      - alert: RootDiskFull
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Root filesystem <10% free on {{ $labels.instance }}"
+  - name: pdu
+    rules:
+      - alert: PDUNearOverload
+        expr: cyberpower_pdu_bank_load_deciamps{bank="1"} / 10 >= 12
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Rack PDU load {{ $value }}A (nearload 12A, overload 16A)"

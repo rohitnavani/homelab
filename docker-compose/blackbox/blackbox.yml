@@ -1,6 +1,17 @@
 groups:
   - name: blackbox
     rules:
+      # The prober itself can't be scraped (the blackbox-exporter container stopped, or Prometheus can't reach it), so
+      # every probe target reads up=0 at once and no site is being checked. One alert for all of them; TargetDown in
+      # alerts.yml leaves the probe jobs out. It says nothing about the sites: on 2026-11-07 the exporter died in a
+      # power cut and stayed down while every site was fine.
+      - alert: ProberDown
+        expr: count(up{job=~"blackbox|money_health"} == 0) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Site checks not running: {{ $value }} probe(s) can't be scraped from blackbox-exporter on futaba"
+          description: "This is the prober, not the sites. On futaba: cd ~/monitoring && docker compose ps -a blackbox-exporter, then docker compose up -d blackbox-exporter."
       # A public site stopped answering (probed every 60s from futaba through Cloudflare; Jellyfin direct)
       - alert: SiteDown
         expr: probe_success{job="blackbox"} == 0
