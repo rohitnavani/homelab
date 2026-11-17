@@ -61,7 +61,7 @@ Every ZFS host keeps `/var/log` on a pool dataset, so logs are snapshotted too.
 | `snapshot`, `retention` | tinynas | hourly, daily | All datasets |
 | `zfs-snapshot`, `zfs-retention` | mementos, ryuji, sojiro, makoto | hourly, 01:00 | Datasets listed in `/etc/zfs-snapshot-targets` |
 | `backup-mementos` | tinynas | 02:00 | Onsite copy of mementos's Nextcloud datasets |
-| `replicate`, `prune-replica` | sojiro | 08:00 | syncoid pull of tinynas, mementos's Nextcloud and all of `vmPool/data/labShare`, over the VPN from Rohit's mom's house since 2026-11-16 |
+| `replicate`, `prune-replica` | sojiro | 12:00 | syncoid pull of tinynas, mementos's Nextcloud and all of `vmPool/data/labShare`, over the VPN from Rohit's mom's house since 2026-11-16 |
 
 - Snapshots keep 168 hourly plus 4 weekly, 6 monthly and 2 yearly; replicas keep 72 hourly, 14 daily, 8 weekly and
   6 monthly.
