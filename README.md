@@ -9,8 +9,8 @@ Ubuntu Server 24.04; the storage and compute hosts keep their data on ZFS.
 
 | Host | Hardware | Function |
 |---|---|---|
-| **tinynas** | ASUS PRIME B650M-A AX II, Ryzen 5 9600X (6c/12t), 64 GB DDR5, 8x HGST Ultrastar 4 TB SATA, 2x Crucial P3 Plus 1 TB NVMe | Always-on main NAS and services box: Jellyfin, game servers (Valheim, Minecraft), Samba, iSCSI for tinypc, the downloader VM, the fallback DNS resolver (an AdGuard Home replica of futaba's) and a second Cloudflare DDNS updater, a second Cloudflare Tunnel connector, and node-exporter and cAdvisor for its own metrics. Jellyfin is the only site it serves (directly, with its own certificate) |
-| **mementos** | Dell PowerEdge R720xd, 2x Xeon E5-2697 v2 (12c/24t each), 256 GB DDR3-1600 RDIMM, 24x Seagate ST1200MM0007 1.2 TB 10K SAS, 2x HGST HUSMM8080 800 GB SAS SSD (rear bays), H710P mini and H810 both in IT mode (the H810, for the retired MD1200, comes out to be sold with it), iDRAC7 | Primary storage and VM host: Nextcloud AIO (Docker on `vmPool` since 2026-10-14, user files on `vmPool/data` since 2026-10-28), libvirt VMs, the lab NFS shares, and VictoriaMetrics, the lab's long-term metrics store (since 2026-10-18, see Monitoring). Runs the R720xd fan controller (`fan-control/`). It runs on one power supply: PS1's fan failed, so that unit stays seated but unplugged |
+| **tinynas** | ASUS PRIME B650M-A AX II, Ryzen 5 9600X (6c/12t), 64 GB DDR5, 8x HGST Ultrastar 4 TB SATA, 2x Crucial P3 Plus 1 TB NVMe | Always-on main NAS and services box: Jellyfin, game servers (Valheim, Minecraft), Samba, iSCSI for tinypc, the downloader VM, the fallback DNS resolver (an AdGuard Home replica of futaba's) and a second Cloudflare DDNS updater, a second Cloudflare Tunnel connector, and node-exporter and cAdvisor for its own metrics, plus Immich's machine learning (faces, smart search; since 2026-11-17). It serves Jellyfin and Immich directly (the UDW forwards 80/443 here; one certificate each); Immich's nginx site proxies to the server on mementos |
+| **mementos** | Dell PowerEdge R720xd, 2x Xeon E5-2697 v2 (12c/24t each), 256 GB DDR3-1600 RDIMM, 24x Seagate ST1200MM0007 1.2 TB 10K SAS, 2x HGST HUSMM8080 800 GB SAS SSD (rear bays), H710P mini and H810 both in IT mode (the H810, for the retired MD1200, comes out to be sold with it), iDRAC7 | Primary storage and VM host: Nextcloud AIO (Docker on `vmPool` since 2026-10-14, user files on `vmPool/data` since 2026-10-28), Immich for photos (since 2026-11-17, see `docker-compose/immich/`), libvirt VMs, the lab NFS shares, and VictoriaMetrics, the lab's long-term metrics store (since 2026-10-18, see Monitoring). Runs the R720xd fan controller (`fan-control/`). It runs on one power supply: PS1's fan failed, so that unit stays seated but unplugged |
 | **MD1200 shelf** | Dell PowerVault MD1200, 2 EMMs (fw 1.06), 12x 8 TB Seagate SAS (11x ST8000NM0075, 1x ST8000NM0185) | Retired 2026-11-04 and for sale: its data moved into `vmPool/data` on 2026-10-28, `dataPool` was destroyed and the shelf switched off |
 | **ryuji** | Gigabyte MD70-HB0 in a 2U 12-bay chassis, 2x Xeon E5-2696 v4 (22c/44t each), 128 GB DDR4-2133, onboard LSI SAS3008 to a 12-bay backplane, onboard Intel X540-AT2 (2x 10GBASE-T, one port linked at 1 GbE), 2x Toshiba MG04 4 TB (its other four went to sojiro on 2026-10-15), Avocent BMC, one power supply | Compute box (`computePool`), no workload yet. Runs `ryuji-fan-guard` (`fan-control/`). For now it also holds sojiro's four old drives, not imported, as the rollback for sojiro's pool move |
 | **sojiro** | Gigabyte MB10-series board, Xeon D-1521 (4c/8t), 32 GB DDR4, 4x Toshiba MG04 4 TB (from ryuji since 2026-10-15; before that 2x 2 TB and 2x 4 TB) | Backup target: pulls ZFS replicas from tinynas and mementos nightly. Moves offsite later |
@@ -47,7 +47,7 @@ The two switches each uplink to the UDW and are not linked to each other. Smart-
 |---|---|---|---|
 | tinynas | `homePool` | 8x 4 TB raidz2; SLOG and L2ARC on partitions of one NVMe | Media, game servers, Samba, VM images, the iSCSI zvol, logs and `/etc` backups |
 | tinynas | `nvmePool` | One NVMe partition (no redundancy) | Minecraft servers, SSD-backed VM images |
-| mementos | `vmPool` | 24x 1.2 TB as 12 two-way mirrors; SLOG and L2ARC on a rear SSD | VMs and VM disks; Docker's data-root `vmPool/docker` (Nextcloud AIO's database, app and containers) and AIO's compose folder; the lab's fast NFS share `vmPool/labShare`; `vmPool/data`, mounted at `/dataPool` (since 2026-10-28, when the MD1200's `dataPool` was retired): Nextcloud's user files (`vmPool/data/nextcloud`, files at `/pool/nextcloud/data`) and the lab's second NFS share `vmPool/data/labShare` |
+| mementos | `vmPool` | 24x 1.2 TB as 12 two-way mirrors; SLOG and L2ARC on a rear SSD | VMs and VM disks; Docker's data-root `vmPool/docker` (Nextcloud AIO's database, app and containers) and AIO's compose folder; the lab's fast NFS share `vmPool/labShare`; `vmPool/data`, mounted at `/dataPool` (since 2026-10-28, when the MD1200's `dataPool` was retired): Nextcloud's user files (`vmPool/data/nextcloud`, files at `/pool/nextcloud/data`), Immich's library and Postgres (`vmPool/data/immich`, compose folder `vmPool/docker-compose/immich`) and the lab's second NFS share `vmPool/data/labShare` |
 | ryuji | `computePool` | 2x 4 TB mirror (3 mirrors of 4 TB until 2026-10-15) | Compute working storage (empty so far) and logs |
 | sojiro | `backupPool` | 4x 4 TB raidz1 (since 2026-10-15; 2 mirrors of 2 TB and 4 TB pairs before) | Replicas of tinynas and mementos |
 | makoto | `backupPool` | 3x 1 TB SATA SSD, striped (no redundancy) | Logs; was the tinynas replica target until 2026-09-26 |
@@ -60,14 +60,15 @@ Every ZFS host keeps `/var/log` on a pool dataset, so logs are snapshotted too.
 |---|---|---|---|
 | `snapshot`, `retention` | tinynas | hourly, daily | All datasets |
 | `zfs-snapshot`, `zfs-retention` | mementos, ryuji, sojiro, makoto | hourly, 01:00 | Datasets listed in `/etc/zfs-snapshot-targets` |
-| `backup-mementos` | tinynas | 02:00 | Onsite copy of mementos's Nextcloud datasets |
-| `replicate`, `prune-replica` | sojiro | 12:00 | syncoid pull of tinynas, mementos's Nextcloud and all of `vmPool/data/labShare`, over the VPN from Rohit's mom's house since 2026-11-16 |
+| `backup-mementos` | tinynas | 02:00 | Onsite copy of mementos's Nextcloud and Immich datasets |
+| `replicate`, `prune-replica` | sojiro | 12:00 | syncoid pull of tinynas, mementos's Nextcloud and Immich and all of `vmPool/data/labShare`, over the VPN from Rohit's mom's house since 2026-11-16 |
 
 - Snapshots keep 168 hourly plus 4 weekly, 6 monthly and 2 yearly; replicas keep 72 hourly, 14 daily, 8 weekly and
   6 monthly.
 - `vmPool/data/labShare` (the `/dataPool` share) also carries this repo's clone, futaba's config backups, tinypc's
   Open WebUI backups and Home Assistant's own backups, so all of them reach sojiro.
-- Not backed up, by choice: VMs, Docker data other than Nextcloud's, Jellyfin, Samba, the iSCSI zvol and
+- Not backed up, by choice: VMs, Docker data other than Nextcloud's (Immich keeps its data in bind mounts on
+  `vmPool/data/immich`, which is backed up), Jellyfin, Samba, the iSCSI zvol and
   `vmPool/labShare`.
 
 ## Monitoring
@@ -124,6 +125,7 @@ To change a script: edit in `/dataPool/homelab`, commit, `lab-scripts push`. Hos
 │   ├── blackbox/               # Probes of the public sites with site-down and cert-expiry alerts (futaba)
 │   ├── cloudflare-ddns/        # Dynamic DNS for rohitnavani.com (futaba; docker-compose.tinynas.yml for tinynas)
 │   ├── exporters/              # node-exporter (tinynas)
+│   ├── immich/                 # Immich photos: server on mementos, machine learning and the nginx front on tinynas
 │   └── resume-site/            # nginx for the rohitnavani.com resume site, with its host nginx site (futaba)
 ├── fail2ban/                   # sshd jails for futaba (reachable from the internet) and tinynas
 ├── fan-control/                # Fan controllers for mementos, ryuji and makoto (and the retired MD1200 shelf), with tests and test tools
@@ -133,7 +135,7 @@ To change a script: edit in `/dataPool/homelab`, commit, `lab-scripts push`. Hos
 │                               #   storage and lab-sync alert rules, with promtool tests
 └── scripts/                    # Installed on the hosts by lab-sync (cron, services), or run by hand from bin/
     ├── autorar                 # Compresses finished downloads (tinynas; from bin/)
-    ├── backup-mementos         # Nightly syncoid pull of mementos's Nextcloud datasets, the onsite copy (tinynas; sbin)
+    ├── backup-mementos         # Nightly syncoid pull of mementos's Nextcloud and Immich datasets, the onsite copy (tinynas; sbin)
     ├── drive-selftest          # Starts SMART self-tests on every SATA, SAS and NVMe drive (weekly short, monthly long)
     ├── drivecheck              # Daily SMART check of SATA, SAS and NVMe drives (v2: Python, smartctl JSON), Prometheus
     │                           #   textfile output (all hosts)

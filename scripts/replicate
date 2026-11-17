@@ -8,9 +8,10 @@
 # both hosts see it as 10.0.0.3 (10.0.0.8 is its home address).
 #
 # Where the lab's data lives (2026-10-17) and how it gets here:
-#   Docker   tinynas: compose dirs on homePool/docker-compose (AdGuard replica, DDNS, cloudflared, exporters),
-#            data-root /pool/docker. mementos: Nextcloud AIO only, data-root vmPool/docker (moved from dataPool
-#            2026-10-14), compose dir vmPool/docker-compose/nextcloud-aio. futaba (no ZFS): monitoring, Glance,
+#   Docker   tinynas: compose dirs on homePool/docker-compose (AdGuard replica, DDNS, cloudflared, exporters,
+#            immich-ml), data-root /pool/docker. mementos: Nextcloud AIO, data-root vmPool/docker (moved from
+#            dataPool 2026-10-14), compose dir vmPool/docker-compose/nextcloud-aio; Immich (2026-11-17), compose dir
+#            vmPool/docker-compose/immich, library and Postgres in vmPool/data/immich. futaba (no ZFS): monitoring, Glance,
 #            AdGuard, resume site in /home/rohit/<project>, data-root /var/lib/docker; its futaba-backup tars the
 #            configs, secrets redacted, to /dataPool/backups/futaba on labShare each night at 21:50.
 #   Scripts  one copy, the homelab repo clone /dataPool/homelab on labShare (2026-10-16). The hosts run it through
@@ -45,6 +46,8 @@ SOURCES=(
   "backuppull@10.0.0.10 vmPool/data/nextcloud"
   "backuppull@10.0.0.10 vmPool/docker"
   "backuppull@10.0.0.10 vmPool/docker-compose/nextcloud-aio"
+  "backuppull@10.0.0.10 vmPool/data/immich"            # Immich (2026-11-17): library/ (photos, thumbs, DB dumps) + postgres/
+  "backuppull@10.0.0.10 vmPool/docker-compose/immich"  # its compose file and .env
   "backuppull@10.0.0.10 vmPool/data/labShare"   # the /dataPool NFS share, all of it (Rohit 2026-10-14): homelab/ + backups/ + homeassistant
 )
 

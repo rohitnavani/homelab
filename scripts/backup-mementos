@@ -1,6 +1,7 @@
 #!/bin/bash
-# Onsite backup of Nextcloud from mementos: its files, the Docker data-root (AIO's database and volumes)
-# and the AIO compose dir, pulled into homePool/backups/mementos/<pool>/<dataset> (read-only copies).
+# Onsite backup of Nextcloud and Immich from mementos: Nextcloud's files, the Docker data-root (AIO's database
+# and volumes) and the AIO compose dir; Immich's library + Postgres (vmPool/data/immich, since 2026-11-17) and
+# its compose dir. Pulled into homePool/backups/mementos/<pool>/<dataset> (read-only copies).
 # Pull, never push: mementos accepts this key only from 10.0.0.5, for the unprivileged backuppull user,
 # which may only `zfs send`/`hold` these datasets. Rides mementos's hourly @<epoch> snapshots.
 set -uo pipefail
@@ -12,6 +13,8 @@ DATASETS=(
   vmPool/data/nextcloud        # dataPool/nextcloud until 2026-10-28 (MD1200 retired; replica renamed to match)
   vmPool/docker
   vmPool/docker-compose/nextcloud-aio
+  vmPool/data/immich           # Immich library/ + postgres/ (2026-11-17)
+  vmPool/docker-compose/immich
 )
 
 mkdir -p "$LOGDIR"

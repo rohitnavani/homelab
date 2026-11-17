@@ -1,0 +1,27 @@
+# Immich machine learning for the Immich server on mementos (since 2026-11-17).
+# Faces, smart search (CLIP) and OCR run here on the 9600X instead of mementos's Ivy Bridge Xeons
+# (no AVX2, and heavy jobs there spin up the rack fans). mementos reaches it as immich-machine-learning
+# (extra_hosts -> 10.0.0.5) on :3003. The port has no auth: LAN only, never in a port forward.
+# cpus caps it at half the box so Jellyfin and the game servers stay responsive during bulk imports.
+# Keep IMMICH_VERSION in .env equal to mementos /vmPool/docker-compose/immich/.env.
+name: immich-ml
+
+services:
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:?set IMMICH_VERSION in .env}
+    volumes:
+      - model-cache:/cache
+    env_file:
+      - .env
+    environment:
+      MACHINE_LEARNING_MODEL_REVISION: v2
+    ports:
+      - '3003:3003'
+    cpus: 6
+    restart: always
+    healthcheck:
+      disable: false
+
+volumes:
+  model-cache:
