@@ -2,8 +2,10 @@
 # Offsite backup: pull ZFS datasets into backupPool (pull, never push).
 # Each entry is "<user@host> <dataset>"; the copy lands at backupPool/<dataset>, keeping the source pool name
 # (homePool/nvmePool = tinynas, vmPool = mementos), so pool names must stay unique across machines.
-# tinynas accepts this box's root key (from="10.0.0.8", root). mementos accepts the same key only for the
+# tinynas accepts this box's root key (from="10.0.0.3,10.0.0.8", root). mementos accepts the same key only for the
 # unprivileged backuppull user, which may only `zfs send`/`hold` its datasets (hence --no-privilege-elevation).
+# Since 2026-11-16 sojiro is offsite and pulls over the strongSwan VPN; futaba masquerades VPN clients, so
+# both hosts see it as 10.0.0.3 (10.0.0.8 is its home address).
 #
 # Where the lab's data lives (2026-10-17) and how it gets here:
 #   Docker   tinynas: compose dirs on homePool/docker-compose (AdGuard replica, DDNS, cloudflared, exporters),
