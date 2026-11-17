@@ -22,7 +22,8 @@
 #            "labshare" backup mount, dataset vmPool/data/labShare/homeassistant (2026-10-17).
 #   Other    /dataPool/backups on labShare also holds tinypc's Open WebUI and config backups.
 # Also not pulled, by choice: Docker data-roots except AIO's, vmPool/labShare, Jellyfin, the iSCSI zvol, samba,
-# downloads and the hosts' own logs datasets except tinynas's and mementos's. Stale replicas from before 2026-10-05
+# downloads and every host's logs datasets (tinynas's and mementos's too since 2026-11-16, when sojiro went offsite;
+# their replicas stay frozen). Stale replicas from before 2026-10-05
 # (backupPool/homePool/docker, kvm and the moved compose dirs) and the empty backupPool/dataPool/docker-compose
 # no longer receive; prune-replica keeps their last snapshots.
 set -uo pipefail
@@ -32,20 +33,18 @@ SOURCES=(
   # tinynas
   "root@10.0.0.5 homePool/docker-compose"    # tinynas's own services only (web and monitoring moved to futaba 2026-10-14)
   "root@10.0.0.5 homePool/etcBackup"         # hourly rsync of tinynas's /etc
-  "root@10.0.0.5 homePool/logBackup"         # tinynas's /var/log
   "root@10.0.0.5 homePool/scripts"           # tinynas's installed root scripts (the source is /dataPool/homelab)
   "root@10.0.0.5 homePool/game-servers"
   "root@10.0.0.5 nvmePool/mcserver"
   "root@10.0.0.5 nvmePool/mcserver2"
   "root@10.0.0.5 nvmePool/mcserver3"
   "root@10.0.0.5 nvmePool/mcserver4"
-  # mementos (Nextcloud since 2026-10-05: files, Docker data-root with AIO's database, AIO compose dir; its logs).
+  # mementos (Nextcloud since 2026-10-05: files, Docker data-root with AIO's database and config.php, AIO compose dir).
   # dataPool (the MD1200 shelf) moved into vmPool/data on 2026-10-28 with the same mount paths; the replicas here
   # were renamed from backupPool/dataPool/... to match, so the pulls stayed incremental.
   "backuppull@10.0.0.10 vmPool/data/nextcloud"
   "backuppull@10.0.0.10 vmPool/docker"
   "backuppull@10.0.0.10 vmPool/docker-compose/nextcloud-aio"
-  "backuppull@10.0.0.10 vmPool/logs"
   "backuppull@10.0.0.10 vmPool/data/labShare"   # the /dataPool NFS share, all of it (Rohit 2026-10-14): homelab/ + backups/ + homeassistant
 )
 
