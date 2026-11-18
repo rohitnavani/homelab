@@ -9,7 +9,7 @@
           - 'https://nextcloud.rohitnavani.com/status.php'
           - 'https://ha.rohitnavani.com'
           - 'https://jellyfin.rohitnavani.com/health'
-          - 'https://immich.rohitnavani.com/api/server/ping'   # LAN rewrite: tinynas nginx + mementos, not the port forward (2026-11-17)
+          - 'https://immich.rohitnavani.com/api/server/ping'   # loops back through the UDW: port forward + tinynas nginx + mementos (2026-11-17)
           - 'https://cockpit.rohitnavani.com'
           - 'https://grafana.rohitnavani.com/api/health'
           - 'https://money.rohitnavani.com/healthz'

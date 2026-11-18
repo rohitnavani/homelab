@@ -13,8 +13,9 @@ own `docker-compose.yml`, split across two hosts.
 
 - **No Cloudflare tunnel.** The tunnel caps a request at 100 MB, and the Immich app uploads each file in one request,
   so phone videos would fail. `immich` is a DNS-only CNAME to `direct-ip.rohitnavani.com` (kept current by
-  cloudflare-ddns), the UDW forwards 80/443 to tinynas, and an AdGuard rewrite sends LAN clients straight to
-  10.0.0.5. The first-run admin sign-up is allowed from the LAN only.
+  cloudflare-ddns) and the UDW forwards 80/443 to tinynas; LAN clients loop back through the UDW like Jellyfin.
+  No AdGuard rewrite: one (2026-11-17, removed the same night) broke phone uploads over the client VPN. The
+  first-run admin sign-up is allowed from the LAN only.
 - **Machine learning on tinynas** because mementos's Ivy Bridge Xeons lack AVX2 and heavy jobs there spin up the rack
   fans. The server finds it through `extra_hosts: immich-machine-learning:10.0.0.5`, so Immich's default ML URL needs
   no setting.
